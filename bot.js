@@ -5,7 +5,9 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
     polling: true 
 });
 
+console.log('🔧 Initializing Google Sheets service...');
 const sheetsService = new GoogleSheetsService();
+
 const userStates = new Map();
 
 // Главное меню
@@ -13,8 +15,7 @@ function getMainMenu() {
     return {
         reply_markup: {
             keyboard: [
-                ['➕ Добавить слово'],
-                ['📝 Мои слова']
+                ['➕ Добавить слово']
             ],
             resize_keyboard: true
         }
@@ -34,15 +35,7 @@ bot.on('message', async (msg) => {
 
     if (text === '➕ Добавить слово') {
         userStates.set(chatId, { state: 'waiting_word' });
-        bot.sendMessage(chatId, 'Введите слово:');
-    }
-    else if (text === '📝 Мои слова') {
-        const words = await sheetsService.getUserWords(chatId);
-        let message = 'Ваши слова:\n\n';
-        words.forEach((word, index) => {
-            message += `${index + 1}. ${word.word} - ${word.translation}\n`;
-        });
-        bot.sendMessage(chatId, message || 'Слов нет', getMainMenu());
+        bot.sendMessage(chatId, 'Введите слово на английском:');
     }
     else {
         const userState = userStates.get(chatId);
@@ -51,19 +44,21 @@ bot.on('message', async (msg) => {
                 state: 'waiting_translation',
                 tempWord: text
             });
-            bot.sendMessage(chatId, 'Введите перевод:');
+            bot.sendMessage(chatId, 'Введите перевод на русский:');
         }
         else if (userState?.state === 'waiting_translation') {
+            console.log(`🔄 Processing word: ${userState.tempWord} -> ${text}`);
+            
             const success = await sheetsService.addWord(chatId, userState.tempWord, text);
             userStates.delete(chatId);
             
             if (success) {
-                bot.sendMessage(chatId, '✅ Слово добавлено!', getMainMenu());
+                bot.sendMessage(chatId, '✅ Слово добавлено в таблицу!', getMainMenu());
             } else {
-                bot.sendMessage(chatId, '❌ Ошибка сохранения', getMainMenu());
+                bot.sendMessage(chatId, '❌ Ошибка сохранения. Проверьте логи.', getMainMenu());
             }
         }
     }
 });
 
-console.log('🤖 Бот запущен с Google Таблицами');
+console.log('🤖 Бот запущен');
