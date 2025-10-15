@@ -34,21 +34,22 @@ export class ExampleGeneratorService {
         try {
             console.log(`🔍 Yandex API call for: "${word}"`);
             
+            // ✅ ОБНОВЛЕННЫЙ ЗАПРОС С ФЛАГОМ ДЛЯ ПРИМЕРОВ
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
                     key: process.env.YANDEX_DICTIONARY_API_KEY,
                     lang: 'en-ru',
                     text: word,
-                    ui: 'ru'
+                    ui: 'ru',
+                    flags: 0x0004 // Флаг для включения примеров
                 },
                 timeout: 10000
             });
 
             console.log('✅ Yandex API response received');
             
-            // ✅ ЛОГИРУЕМ ПОЛНЫЙ ОТВЕТ ДЛЯ ДЕБАГА
-            console.log('📊 Full Yandex response structure:');
-            console.log(JSON.stringify(response.data, null, 2));
+            // ✅ ЛОГИРУЕМ СТРУКТУРУ ОТВЕТА
+            console.log('📊 Yandex response has definitions:', response.data.def ? response.data.def.length : 0);
             
             return this.extractExamplesFromYandex(response.data, word);
             
@@ -56,7 +57,9 @@ export class ExampleGeneratorService {
             console.error('❌ Yandex API error:', error.message);
             if (error.response) {
                 console.error('Yandex response status:', error.response.status);
-                console.error('Yandex response data:', error.response.data);
+                if (error.response.data) {
+                    console.error('Yandex error details:', JSON.stringify(error.response.data, null, 2));
+                }
             }
             return [];
         }
@@ -73,64 +76,63 @@ export class ExampleGeneratorService {
         const examples = [];
         let totalExamplesFound = 0;
 
-        // ✅ ДЕТАЛЬНО ИССЛЕДУЕМ СТРУКТУРУ КАЖДОГО ОПРЕДЕЛЕНИЯ
         data.def.forEach((definition, defIndex) => {
-            console.log(`\n🔍 Definition ${defIndex + 1}:`);
-            console.log('   Text:', definition.text);
-            console.log('   POS:', definition.pos);
-            console.log('   Has tr:', !!definition.tr);
-            console.log('   tr count:', definition.tr ? definition.tr.length : 0);
+            console.log(`\n🔍 Definition ${defIndex + 1}: "${definition.text}"`);
 
             if (definition.tr && Array.isArray(definition.tr)) {
                 definition.tr.forEach((translation, trIndex) => {
                     console.log(`   🔍 Translation ${trIndex + 1}: "${translation.text}"`);
-                    console.log('      Has ex:', !!translation.ex);
-                    console.log('      ex count:', translation.ex ? translation.ex.length : 0);
-
-                    // ✅ ИЩЕМ ПРИМЕРЫ В КАЖДОМ ПЕРЕВОДЕ
+                    
+                    // ✅ ПРОВЕРЯЕМ РАЗЛИЧНЫЕ ВАРИАНТЫ ГДЕ МОГУТ БЫТЬ ПРИМЕРЫ
+                    
+                    // 1. Основные примеры в поле "ex"
                     if (translation.ex && Array.isArray(translation.ex)) {
-                        console.log(`      Processing ${translation.ex.length} example(s)...`);
-                        
-                        translation.ex.forEach((example, exIndex) => {
-                            if (totalExamplesFound >= 3) return;
-                            
-                            console.log(`      🔍 Example ${exIndex + 1}:`);
-                            console.log('         English:', example.text);
-                            console.log('         Has tr:', !!example.tr);
-                            console.log('         tr:', example.tr);
-
-                            if (example.text && example.tr && Array.isArray(example.tr) && example.tr[0]?.text) {
-                                const englishExample = example.text.trim();
-                                const russianExample = example.tr[0].text.trim();
-                                
-                                if (englishExample && russianExample) {
-                                    const formattedExample = `${englishExample} - ${russianExample}`;
-                                    examples.push(formattedExample);
-                                    totalExamplesFound++;
-                                    console.log(`      ✅ ADDED: "${formattedExample}"`);
-                                } else {
-                                    console.log('      ❌ Example missing English or Russian text');
-                                }
-                            } else {
-                                console.log('      ❌ Example structure invalid');
+                        console.log(`      Found ${translation.ex.length} example(s) in 'ex' field`);
+                        this.processExamples(translation.ex, examples, totalExamplesFound);
+                    }
+                    
+                    // 2. Примеры в синонимах
+                    if (translation.syn && Array.isArray(translation.syn)) {
+                        translation.syn.forEach((synonym, synIndex) => {
+                            if (synonym.ex && Array.isArray(synonym.ex)) {
+                                console.log(`      Found ${synonym.ex.length} example(s) in synonym ${synIndex + 1}`);
+                                this.processExamples(synonym.ex, examples, totalExamplesFound);
                             }
                         });
-                    } else {
-                        console.log('      ❌ No examples in this translation');
+                    }
+                    
+                    // 3. Если примеров нет, создаем из самого перевода
+                    if (examples.length === 0 && translation.text) {
+                        console.log('      Creating example from translation');
+                        const example = `${originalWord} - ${translation.text}`;
+                        examples.push(example);
+                        totalExamplesFound++;
+                        console.log(`      ✅ CREATED: "${example}"`);
                     }
                 });
-            } else {
-                console.log('   ❌ No translations in this definition');
             }
         });
 
-        console.log(`\n📊 FINAL: Extracted ${examples.length} examples from Yandex`);
-        
-        if (examples.length === 0) {
-            console.log('❌ No examples could be extracted from Yandex response');
-        }
+        console.log(`\n📊 FINAL: ${examples.length} examples extracted`);
+        return examples.slice(0, 3); // Ограничиваем 3 примерами
+    }
 
-        return examples;
+    processExamples(examplesArray, examples, totalExamplesFound) {
+        examplesArray.forEach((example, exIndex) => {
+            if (totalExamplesFound >= 3) return;
+            
+            if (example.text && example.tr && Array.isArray(example.tr) && example.tr[0]?.text) {
+                const englishExample = example.text.trim();
+                const russianExample = example.tr[0].text.trim();
+                
+                if (englishExample && russianExample) {
+                    const formattedExample = `${englishExample} - ${russianExample}`;
+                    examples.push(formattedExample);
+                    totalExamplesFound++;
+                    console.log(`      ✅ ADDED: "${formattedExample}"`);
+                }
+            }
+        });
     }
 
     getGenericExamples(word, translation) {
