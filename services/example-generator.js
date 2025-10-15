@@ -67,4 +67,16 @@ export class ExampleGeneratorService {
         console.log(`📝 Generated ${examples.length} contextual examples`);
         return examples.slice(0, 3);
     }
+
+    // ✅ ДОБАВЛЯЕМ МЕТОД ДЛЯ ПРОВЕРКИ API
+    async checkApisAvailability() {
+        const availableApis = [];
+        
+        if (this.yandexApiKey) {
+            availableApis.push('Yandex Dictionary');
+        }
+        
+        console.log(`🔧 Available example generation: Contextual examples${availableApis.length > 0 ? ' + ' + availableApis.join(', ') : ''}`);
+        return availableApis;
+    }
 }
