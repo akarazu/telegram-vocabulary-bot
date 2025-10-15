@@ -131,24 +131,35 @@ function addAudioToHistory(chatId, audioUrl, word) {
     }
 }
 // Функция для определения части речи по переводу
-function detectPartOfSpeech(translation) {
-    if (!translation) return '';
+async function detectPartOfSpeechFromYandex(word, translation) {
+    if (!process.env.YANDEX_DICTIONARY_API_KEY) {
+        return detectPartOfSpeech(translation); // fallback на локальную функцию
+    }
     
-    const lowerTranslation = translation.toLowerCase();
+    try {
+        const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
+            params: {
+                key: process.env.YANDEX_DICTIONARY_API_KEY,
+                lang: 'en-ru',
+                text: word,
+                ui: 'ru'
+            },
+            timeout: 5000
+        });
+
+        if (response.data && response.data.def && response.data.def.length > 0) {
+            const firstDefinition = response.data.def[0];
+            // Яндекс возвращает часть речи в поле "pos"
+            if (firstDefinition.pos) {
+                console.log(`✅ Yandex part of speech: ${firstDefinition.pos}`);
+                return firstDefinition.pos.toLowerCase();
+            }
+        }
+    } catch (error) {
+        console.log('❌ Yandex part of speech detection failed, using fallback');
+    }
     
-    // Простые эвристики для определения части речи
-    if (/(ся$|ть$|ил$|ала$|ует$|ает$|ить$|ать$)/.test(lowerTranslation)) {
-        return 'verb'; // глагол
-    }
-    else if (/(ый$|ий$|ой$|ая$|ое$|ие$|ой$|ский$|ной$)/.test(lowerTranslation)) {
-        return 'adjective'; // прилагательное
-    }
-    else if (/(о$|е$|ско$|чески$)/.test(lowerTranslation)) {
-        return 'adverb'; // наречие
-    }
-    else {
-        return 'noun'; // по умолчанию считаем существительным
-    }
+    return detectPartOfSpeech(translation);
 }
 
 // Функция для сохранения слова с переводом и примерами
@@ -189,14 +200,13 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         // Генерируем примеры
         console.log('🔄 Generating examples...');
         
-        // ✅ ПЕРЕДАЕМ ЧАСТЬ РЕЧИ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ
-        const partOfSpeech = detectPartOfSpeech(translation);
-        const examples = await exampleGenerator.generateExamples(
-            userState.tempWord, 
-            translation, 
-            partOfSpeech
-        );
-        
+// ✅ ИСПОЛЬЗУЕМ УЛУЧШЕННУЮ ЛОГИКУ ОПРЕДЕЛЕНИЯ ЧАСТИ РЕЧИ
+const partOfSpeech = await detectPartOfSpeechFromYandex(userState.tempWord, translation);
+const examples = await exampleGenerator.generateExamples(
+    userState.tempWord, 
+    translation, 
+    partOfSpeech
+);
         console.log(`✅ Generated examples:`, examples);
         
         // ✅ ПРАВИЛЬНО ОБРАБАТЫВАЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
@@ -630,6 +640,7 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
 
 
