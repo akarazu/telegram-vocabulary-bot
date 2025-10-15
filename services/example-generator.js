@@ -79,7 +79,6 @@ export class ExampleGeneratorService {
         console.log(`🔍 Yandex found ${data.def.length} definition(s) for examples`);
 
         data.def.forEach((definition) => {
-            // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ ПОЛЯ "ex"
             if (definition.ex && Array.isArray(definition.ex)) {
                 console.log(`🔍 Processing ${definition.ex.length} example(s) from Yandex`);
                 
@@ -89,18 +88,17 @@ export class ExampleGeneratorService {
                         const russianExample = example.tr[0]?.text?.trim();
                         
                         if (englishExample && russianExample) {
-                            examples.push({
-                                english: englishExample,
-                                russian: russianExample
-                            });
-                            console.log(`✅ Yandex example: "${englishExample}" -> "${russianExample}"`);
+                            // ✅ ФОРМАТИРУЕМ ПРИМЕР КАК СТРОКУ
+                            const formattedExample = `${englishExample} - ${russianExample}`;
+                            examples.push(formattedExample);
+                            console.log(`✅ Yandex example: "${formattedExample}"`);
                         }
                     }
                 });
             }
         });
 
-        return examples.slice(0, 3); // Возвращаем до 3 примеров
+        return examples.slice(0, 3);
     }
 
     async getBackupExamples(word) {
@@ -134,15 +132,12 @@ export class ExampleGeneratorService {
                 entry.meanings.forEach(meaning => {
                     if (meaning.definitions && Array.isArray(meaning.definitions)) {
                         meaning.definitions.forEach(definition => {
-                            // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ ПОЛЯ "example"
                             if (definition.example && definition.example.trim()) {
                                 const englishExample = definition.example.trim();
-                                // Для бэкап словаря создаем упрощенный пример
-                                examples.push({
-                                    english: englishExample,
-                                    russian: `Пример: "${englishExample}"`
-                                });
-                                console.log(`✅ Backup example: "${englishExample}"`);
+                                // ✅ ФОРМАТИРУЕМ ПРИМЕР КАК СТРОКУ
+                                const formattedExample = `${englishExample} - Пример использования`;
+                                examples.push(formattedExample);
+                                console.log(`✅ Backup example: "${formattedExample}"`);
                             }
                         });
                     }
@@ -150,25 +145,33 @@ export class ExampleGeneratorService {
             }
         });
 
-        return examples.slice(0, 3); // Возвращаем до 3 примеров
+        return examples.slice(0, 3);
     }
 
     getGenericExamples(word, translation) {
         const genericExamples = [
-            {
-                english: `I often use the word "${word}" in my conversations.`,
-                russian: `Я часто использую слово "${translation}" в разговорах.`
-            },
-            {
-                english: `Can you give me an example with "${word}"?`,
-                russian: `Можете привести пример с "${translation}"?`
-            },
-            {
-                english: `The word "${word}" is very useful in English.`,
-                russian: `Слово "${translation}" очень полезно в английском языке.`
-            }
+            `I often use the word "${word}" in my conversations. - Я часто использую слово "${translation}" в разговорах.`,
+            `Can you give me an example with "${word}"? - Можете привести пример с "${translation}"?`,
+            `The word "${word}" is very useful in English. - Слово "${translation}" очень полезно в английском языке.`
         ];
 
-        return genericExamples.slice(0, 2); // Возвращаем 2 общих примера
+        return genericExamples.slice(0, 2);
+    }
+
+    // ✅ Дополнительный метод для форматирования примеров в читаемый вид
+    formatExamplesForDisplay(examples) {
+        if (!Array.isArray(examples)) {
+            return '';
+        }
+        
+        return examples.map((example, index) => {
+            if (typeof example === 'string') {
+                return `${index + 1}. ${example}`;
+            } else if (example.english && example.russian) {
+                return `${index + 1}. ${example.english} - ${example.russian}`;
+            } else {
+                return `${index + 1}. ${JSON.stringify(example)}`;
+            }
+        }).join('\n');
     }
 }
