@@ -51,15 +51,6 @@ function getAfterAudioKeyboard() {
     };
 }
 
-// Убираем кнопки из сообщения
-function removeKeyboard() {
-    return {
-        reply_markup: {
-            remove_keyboard: true
-        }
-    };
-}
-
 // Команда /start
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
@@ -189,6 +180,9 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const userState = userStates.get(chatId);
 
+    // Всегда подтверждаем callback без текста (убираем всплывашки)
+    await bot.answerCallbackQuery(callbackQuery.id);
+
     if (data.startsWith('audio_')) {
         const audioId = data.replace('audio_', '');
         const audioUrl = audioUrlStorage.get(audioId);
@@ -215,21 +209,9 @@ bot.on('callback_query', async (callbackQuery) => {
                     getAfterAudioKeyboard()
                 );
                 
-                // Подтверждаем нажатие кнопки
-                await bot.answerCallbackQuery(callbackQuery.id, {
-                    text: 'Аудио отправлено'
-                });
-                
             } catch (error) {
                 console.error('Error sending audio:', error);
-                await bot.answerCallbackQuery(callbackQuery.id, {
-                    text: 'Ошибка отправки аудио'
-                });
             }
-        } else {
-            await bot.answerCallbackQuery(callbackQuery.id, {
-                text: 'Аудио больше не доступно'
-            });
         }
     }
     else if (data === 'enter_translation') {
@@ -267,10 +249,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     ]
                 }
             });
-            
-            await bot.answerCallbackQuery(callbackQuery.id, {
-                text: 'Теперь введите перевод'
-            });
         }
     }
     else if (data === 'back_to_word') {
@@ -298,10 +276,6 @@ bot.on('callback_query', async (callbackQuery) => {
             await bot.sendMessage(chatId, message, {
                 parse_mode: 'HTML',
                 ...getListeningKeyboard(userState.tempAudioId)
-            });
-            
-            await bot.answerCallbackQuery(callbackQuery.id, {
-                text: 'Возврат к слову'
             });
         }
     }
@@ -331,10 +305,6 @@ bot.on('callback_query', async (callbackQuery) => {
                 parse_mode: 'HTML',
                 ...getListeningKeyboard(userState.tempAudioId)
             });
-            
-            await bot.answerCallbackQuery(callbackQuery.id, {
-                text: 'Ввод перевода отменен'
-            });
         }
     }
     else if (data === 'cancel') {
@@ -354,7 +324,6 @@ bot.on('callback_query', async (callbackQuery) => {
         );
 
         await bot.sendMessage(chatId, '❌ Добавление слова отменено', getMainMenu());
-        await bot.answerCallbackQuery(callbackQuery.id);
     }
 });
 
@@ -367,4 +336,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с очисткой кнопок');
+console.log('🤖 Бот запущен без всплывающих сообщений');
