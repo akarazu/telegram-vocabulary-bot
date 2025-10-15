@@ -2,32 +2,32 @@ import axios from 'axios';
 
 export class ExampleGeneratorService {
     constructor() {
-        // Бесплатные API (Merriam-Webster Learners действительно бесплатный)
+        this.yandexApiKey = process.env.YANDEX_DICTIONARY_API_KEY;
+        
+        // Только Яндекс и FreeDictionary
         this.freeApis = [
-            'FreeDictionary',
-            'MerriamWebsterLearners',
-            'WordNik'
+            'YandexDictionary',
+            'FreeDictionary'
         ];
     }
 
     async generateExamples(word, translation = null) {
         try {
-            console.log(`🤖 Generating free examples for: "${word}"`);
+            console.log(`🤖 Generating examples for: "${word}"`);
             
-            // Пробуем все бесплатные API по порядку
+            // Пробуем API по порядку
             for (const apiName of this.freeApis) {
                 console.log(`🔧 Trying ${apiName}...`);
                 let examples = [];
                 
                 switch (apiName) {
+                    case 'YandexDictionary':
+                        if (this.yandexApiKey) {
+                            examples = await this.generateWithYandex(word);
+                        }
+                        break;
                     case 'FreeDictionary':
                         examples = await this.generateWithFreeDictionary(word);
-                        break;
-                    case 'MerriamWebsterLearners':
-                        examples = await this.generateWithMerriamWebsterLearners(word);
-                        break;
-                    case 'WordNik':
-                        examples = await this.generateWithWordNik(word);
                         break;
                 }
                 
@@ -38,13 +38,85 @@ export class ExampleGeneratorService {
             }
             
             // Fallback на базовые примеры
-            console.log('🔧 All free APIs failed, using basic examples');
+            console.log('🔧 All APIs failed, using basic examples');
             return this.generateBasicExamples(word);
             
         } catch (error) {
             console.error('❌ Error generating examples:', error.message);
             return this.generateBasicExamples(word);
         }
+    }
+
+    async generateWithYandex(word) {
+        try {
+            const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
+                params: {
+                    key: this.yandexApiKey,
+                    lang: 'en-ru',
+                    text: word,
+                    ui: 'ru'
+                },
+                timeout: 5000
+            });
+
+            const examples = this.extractExamplesFromYandex(response.data, word);
+            return examples.slice(0, 3);
+            
+        } catch (error) {
+            console.error('❌ Yandex Dictionary error:', error.message);
+            return [];
+        }
+    }
+
+    extractExamplesFromYandex(data, word) {
+        const examples = [];
+        
+        if (!data.def || data.def.length === 0) {
+            return examples;
+        }
+
+        data.def.forEach(definition => {
+            // Ищем примеры в переводах
+            if (definition.tr && definition.tr.length > 0) {
+                definition.tr.forEach(translation => {
+                    // Примеры из основного перевода
+                    if (translation.ex && translation.ex.length > 0) {
+                        translation.ex.forEach(example => {
+                            if (example.text && example.tr && example.tr[0] && example.tr[0].text) {
+                                const englishExample = example.text;
+                                const russianTranslation = example.tr[0].text;
+                                if (englishExample.toLowerCase().includes(word.toLowerCase())) {
+                                    examples.push(englishExample);
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Синонимы тоже могут содержать полезные примеры
+                    if (translation.syn && translation.syn.length > 0) {
+                        translation.syn.forEach(synonym => {
+                            if (synonym.text && synonym.text.length > 10) {
+                                examples.push(synonym.text);
+                            }
+                        });
+                    }
+                });
+            }
+            
+            // Примеры из самого определения
+            if (definition.ex && definition.ex.length > 0) {
+                definition.ex.forEach(example => {
+                    if (example.text && example.tr && example.tr[0] && example.tr[0].text) {
+                        const englishExample = example.text;
+                        if (englishExample.toLowerCase().includes(word.toLowerCase())) {
+                            examples.push(englishExample);
+                        }
+                    }
+                });
+            }
+        });
+
+        return examples;
     }
 
     async generateWithFreeDictionary(word) {
@@ -62,6 +134,7 @@ export class ExampleGeneratorService {
                         for (const meaning of entry.meanings) {
                             if (meaning.definitions && Array.isArray(meaning.definitions)) {
                                 for (const definition of meaning.definitions) {
+                                    // Примеры использования из определений
                                     if (definition.example && definition.example.trim()) {
                                         const cleanExample = definition.example.trim();
                                         if (cleanExample.length > 10 && cleanExample.length < 150) {
@@ -81,100 +154,6 @@ export class ExampleGeneratorService {
             
         } catch (error) {
             console.error('❌ FreeDictionary error:', error.message);
-            return [];
-        }
-    }
-
-    async generateWithMerriamWebsterLearners(word) {
-        try {
-            // Merriam-Webster Learners Dictionary - бесплатный API
-            const response = await axios.get(
-                `https://www.dictionaryapi.com/api/v3/references/learners/json/${word}`,
-                {
-                    params: {
-                        key: process.env.MERRIAM_WEBSTER_LEARNERS_KEY || 'demo' // demo key works for limited requests
-                    },
-                    timeout: 5000
-                }
-            );
-
-            if (response.data && Array.isArray(response.data) && response.data[0]) {
-                const examples = [];
-                const entry = response.data[0];
-                
-                // Ищем примеры в определениях
-                if (entry.def && Array.isArray(entry.def)) {
-                    for (const definition of entry.def) {
-                        if (definition.sseq && Array.isArray(definition.sseq)) {
-                            for (const senseSeq of definition.sseq) {
-                                for (const sense of senseSeq) {
-                                    if (sense[1] && sense[1].dt) {
-                                        for (const dt of sense[1].dt) {
-                                            if (dt[0] === 'vis' && dt[1] && Array.isArray(dt[1].t)) {
-                                                // Примеры использования
-                                                const exampleText = dt[1].t.map(t => t).join(' ');
-                                                if (exampleText && exampleText.includes(word)) {
-                                                    examples.push(exampleText);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Также проверяем короткие определения как примеры
-                if (entry.shortdef && Array.isArray(entry.shortdef)) {
-                    for (const shortdef of entry.shortdef) {
-                        if (shortdef && shortdef.length > 10) {
-                            examples.push(shortdef);
-                        }
-                    }
-                }
-                
-                return examples.slice(0, 3);
-            }
-            
-            return [];
-            
-        } catch (error) {
-            console.error('❌ Merriam-Webster Learners error:', error.message);
-            return [];
-        }
-    }
-
-    async generateWithWordNik(word) {
-        try {
-            // WordNik API - бесплатный с ограничениями
-            const response = await axios.get(
-                `https://api.wordnik.com/v4/word.json/${word}/examples`,
-                {
-                    params: {
-                        includeDuplicates: false,
-                        useCanonical: false,
-                        skip: 0,
-                        limit: 3,
-                        api_key: process.env.WORDNIK_API_KEY || 'demo' // demo key works for limited requests
-                    },
-                    timeout: 5000
-                }
-            );
-
-            if (response.data && response.data.examples && Array.isArray(response.data.examples)) {
-                const examples = response.data.examples
-                    .map(example => example.text?.trim())
-                    .filter(text => text && text.length > 10 && text.length < 200)
-                    .slice(0, 3);
-                
-                return examples;
-            }
-            
-            return [];
-            
-        } catch (error) {
-            console.error('❌ WordNik error:', error.message);
             return [];
         }
     }
@@ -200,8 +179,12 @@ export class ExampleGeneratorService {
 
     // Метод для проверки доступности API
     async checkApisAvailability() {
-        const availableApis = [...this.freeApis];
-        console.log(`🔧 Available free example generation APIs: ${availableApis.join(', ')}`);
+        const availableApis = [];
+        
+        if (this.yandexApiKey) availableApis.push('Yandex Dictionary');
+        availableApis.push('Free Dictionary');
+        
+        console.log(`🔧 Available example generation APIs: ${availableApis.join(', ')}`);
         return availableApis;
     }
 }
