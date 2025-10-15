@@ -54,20 +54,49 @@ function getAfterAudioKeyboard() {
 function canPlayAudio(englishWord, chatId) {
     const key = `${chatId}_${englishWord.toLowerCase()}`;
     
-    // Если аудио уже воспроизводилось для этого чата и слова
     if (audioPlaybackTracker.has(key)) {
         return false;
     }
     
-    // Отмечаем, что аудио будет воспроизведено
     audioPlaybackTracker.set(key, true);
-    
-    // Очищаем трекер через 30 секунд (на случай, если пользователь захочет повторить)
     setTimeout(() => {
         audioPlaybackTracker.delete(key);
     }, 30000);
     
     return true;
+}
+
+// Функция для отправки аудио с защитой от автовоспроизведения
+async function sendAudioSafe(chatId, audioUrl, englishWord) {
+    try {
+        // 1. Сначала отправляем фото или документ чтобы разорвать медиагруппу
+        // Используем прозрачный PNG пиксель (1x1 pixel)
+        const transparentPixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        
+        await bot.sendPhoto(chatId, `data:image/png;base64,${transparentPixel}`, {
+            caption: `🔊 Произношение: ${englishWord}`,
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: '🎵 Слушать', callback_data: 'play_audio' }
+                ]]
+            }
+        });
+
+        // 2. Ждем немного чтобы медиагруппа разорвалась
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // 3. Отправляем аудио как документ (не как аудио файл)
+        // Это предотвращает добавление в аудиоплейлист
+        await bot.sendDocument(chatId, audioUrl, {
+            caption: '🎧 Нажмите чтобы прослушать',
+            reply_to_message_id: null
+        });
+
+        return true;
+    } catch (error) {
+        console.error('Error sending safe audio:', error);
+        return false;
+    }
 }
 
 // Команда /start
@@ -86,7 +115,6 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
-    // Игнорируем команды
     if (text.startsWith('/')) return;
 
     const userState = userStates.get(chatId);
@@ -98,7 +126,6 @@ bot.on('message', async (msg) => {
     else if (userState?.state === 'waiting_english') {
         const englishWord = text.trim();
         
-        // Проверяем что это английское слово
         if (!/^[a-zA-Z\s\-']+$/.test(englishWord)) {
             bot.sendMessage(chatId, 
                 '❌ Это не похоже на английское слово.\n' +
@@ -111,13 +138,11 @@ bot.on('message', async (msg) => {
         
         const result = await transcriptionService.getUKTranscription(englishWord);
         
-        // Сохраняем audioUrl во временное хранилище
         let audioId = null;
         if (result.audioUrl) {
             audioId = Date.now().toString();
         }
         
-        // СОХРАНЯЕМ ВСЕ ДАННЫЕ В СОСТОЯНИИ
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: englishWord,
@@ -146,7 +171,6 @@ bot.on('message', async (msg) => {
         });
     }
     else if (userState?.state === 'waiting_translation') {
-        // Пользователь вводит перевод
         const translation = text.trim();
         
         if (!translation) {
@@ -154,7 +178,6 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ ИЗ СОСТОЯНИЯ
         const success = await sheetsService.addWord(
             chatId, 
             userState.tempWord, 
@@ -163,14 +186,11 @@ bot.on('message', async (msg) => {
             userState.tempAudioUrl
         );
         
-        // Очищаем состояние ПОСЛЕ успешного сохранения
         userStates.delete(chatId);
         
         if (success) {
-            // ИСПОЛЬЗУЕМ ТУ ЖЕ ТРАНСКРИПЦИЮ ДЛЯ СООБЩЕНИЯ
             const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
             
-            // Отправляем сообщение об успешном добавлении
             await bot.sendMessage(chatId, 
                 `✅ <b>Слово добавлено в словарь!</b>\n\n` +
                 `💬 ${userState.tempWord}${transcriptionText} - <b>${translation}</b>\n\n` +
@@ -191,7 +211,6 @@ bot.on('message', async (msg) => {
         }
     }
     else {
-        // Если нет активного состояния И сообщение не команда, показываем главное меню
         await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
     }
 });
@@ -202,7 +221,6 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const userState = userStates.get(chatId);
 
-    // Всегда подтверждаем callback без текста
     await bot.answerCallbackQuery(callbackQuery.id);
 
     if (data.startsWith('audio_')) {
@@ -211,7 +229,6 @@ bot.on('callback_query', async (callbackQuery) => {
         const englishWord = userState?.tempWord;
         
         if (audioUrl && englishWord) {
-            // Проверяем, можно ли воспроизвести аудио (по слову, а не по audioId)
             if (!canPlayAudio(englishWord, chatId)) {
                 await bot.answerCallbackQuery(callbackQuery.id, {
                     text: '🔇 Аудио уже было воспроизведено. Можно повторить через 30 секунд.',
@@ -230,39 +247,35 @@ bot.on('callback_query', async (callbackQuery) => {
                     }
                 );
 
-                // ОТПРАВЛЯЕМ РАЗДЕЛИТЕЛЬ ПЕРЕД АУДИО - это предотвратит автовоспроизведение следующего аудио
-                await bot.sendMessage(chatId, '🎵 Воспроизведение...', {
-                    reply_to_message_id: null
-                });
-
-                // Отправляем аудио сообщение
-                await bot.sendAudio(chatId, audioUrl, {
-                    caption: `🔊 Британское произношение: ${englishWord}`,
-                    reply_to_message_id: null // Важно: не привязывать к предыдущему сообщению
-                });
+                // Используем безопасную отправку аудио
+                const success = await sendAudioSafe(chatId, audioUrl, englishWord);
                 
-                // ОТПРАВЛЯЕМ РАЗДЕЛИТЕЛЬ ПОСЛЕ АУДИО - это гарантирует, что следующее аудио не начнется автоматически
-                await bot.sendMessage(chatId, '────────────', {
-                    reply_to_message_id: null
-                });
-                
-                // Отправляем сообщение с кнопками действий после аудио
-                await bot.sendMessage(chatId, 
-                    '🎵 Вы прослушали произношение. Хотите ввести перевод?',
-                    getAfterAudioKeyboard()
-                );
+                if (success) {
+                    // Ждем немного перед отправкой следующего сообщения
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    await bot.sendMessage(chatId, 
+                        '🎵 Произношение готово к прослушиванию. Хотите ввести перевод?',
+                        getAfterAudioKeyboard()
+                    );
+                }
                 
             } catch (error) {
-                console.error('Error sending audio:', error);
-                // В случае ошибки удаляем отметку о воспроизведении
+                console.error('Error in audio playback:', error);
                 const key = `${chatId}_${englishWord.toLowerCase()}`;
                 audioPlaybackTracker.delete(key);
             }
         }
     }
+    else if (data === 'play_audio') {
+        // Обработка кнопки "Слушать" из безопасного метода
+        await bot.answerCallbackQuery(callbackQuery.id, {
+            text: '🎧 Аудио готово к прослушиванию',
+            show_alert: false
+        });
+    }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
-            // Убираем кнопки из исходного сообщения
             await bot.editMessageReplyMarkup(
                 { inline_keyboard: [] },
                 {
@@ -271,13 +284,11 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
             );
 
-            // Переходим к вводу перевода - СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
                 ...userState,
                 state: 'waiting_translation'
             });
             
-            // Отправляем новое сообщение с запросом перевода
             let translationMessage = `✏️ <b>Введите перевод для слова:</b>\n\n` +
                 `🇬🇧 <b>${userState.tempWord}</b>`;
             
@@ -298,9 +309,7 @@ bot.on('callback_query', async (callbackQuery) => {
         }
     }
     else if (data === 'cancel_translation') {
-        // Отмена ввода перевода
         if (userState) {
-            // Убираем кнопки из сообщения с запросом перевода
             await bot.editMessageReplyMarkup(
                 { inline_keyboard: [] },
                 {
@@ -309,7 +318,6 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
             );
 
-            // Возвращаемся к состоянию показа транскрипции
             userStates.set(chatId, {
                 ...userState,
                 state: 'showing_transcription'
@@ -337,4 +345,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с защитой от автовоспроизведения аудио');
+console.log('🤖 Бот запущен с полной защитой от автовоспроизведения аудио');
