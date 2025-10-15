@@ -50,30 +50,53 @@ function getAfterAudioKeyboard() {
     };
 }
 
-// Клавиатура с вариантами перевода
-function getTranslationKeyboard(translations) {
-    if (!translations || translations.length === 0) {
-        return {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '✏️ Ввести свой перевод', callback_data: 'custom_translation' }],
-                    [{ text: '🔙 Отменить', callback_data: 'cancel_translation' }]
-                ]
+// Клавиатура для выбора переводов с возможностью множественного выбора
+function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
+    const translationButtons = translations.map((translation, index) => {
+        const isSelected = selectedIndices.includes(index);
+        const emoji = isSelected ? '✅' : `${index + 1}️⃣`;
+        return [
+            { 
+                text: `${emoji} ${translation}`, 
+                callback_data: `toggle_translation_${index}` 
             }
-        };
-    }
+        ];
+    });
 
-    // Создаем кнопки для каждого варианта перевода
-    const translationButtons = translations.map((translation, index) => [
-        { text: `${index + 1}️⃣ ${translation}`, callback_data: `translation_${index}` }
+    const actionButtons = [];
+    
+    // Кнопка сохранения показывается только если есть выбранные варианты
+    if (selectedIndices.length > 0) {
+        actionButtons.push([
+            { 
+                text: `💾 Сохранить (${selectedIndices.length})`, 
+                callback_data: 'save_selected_translations' 
+            }
+        ]);
+    }
+    
+    actionButtons.push([
+        { text: '✏️ Добавить свой перевод', callback_data: 'custom_translation' },
+        { text: '🔙 Отменить', callback_data: 'cancel_translation' }
     ]);
 
     return {
         reply_markup: {
             inline_keyboard: [
                 ...translationButtons,
-                [{ text: '✏️ Ввести свой перевод', callback_data: 'custom_translation' }],
-                [{ text: '🔙 Отменить', callback_data: 'cancel_translation' }]
+                ...actionButtons
+            ]
+        }
+    };
+}
+
+// Клавиатура для ручного ввода перевода
+function getManualTranslationKeyboard() {
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '💾 Сохранить перевод', callback_data: 'save_manual_translation' }],
+                [{ text: '🔙 Назад к выбору', callback_data: 'back_to_selection' }]
             ]
         }
     };
@@ -236,7 +259,8 @@ bot.on('message', async (msg) => {
             tempTranscription: result.transcription,
             tempAudioUrl: result.audioUrl,
             tempAudioId: audioId,
-            tempTranslations: result.translations || []
+            tempTranslations: result.translations || [],
+            selectedTranslationIndices: [] // Новое поле для хранения выбранных вариантов
         });
         
         let message = `📝 Слово: ${englishWord}`;
@@ -261,7 +285,7 @@ bot.on('message', async (msg) => {
         await bot.sendMessage(chatId, message, getListeningKeyboard(audioId));
         showMainMenu(chatId);
     }
-    else if (userState?.state === 'waiting_translation') {
+    else if (userState?.state === 'waiting_manual_translation') {
         const translation = text.trim();
         
         if (!translation) {
@@ -269,17 +293,8 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // РАЗДЕЛИТЕЛЬ ДЛЯ НЕСКОЛЬКИХ ПЕРЕВОДОВ
-        const translations = translation.split('/').map(t => t.trim()).filter(t => t);
-        
-        if (translations.length === 0) {
-            showMainMenu(chatId, '❌ Введите хотя бы один вариант перевода:');
-            return;
-        }
-        
-        // Сохраняем первый вариант (или объединяем все через "/")
-        const translationToSave = translations.join(' / ');
-        await saveWordWithTranslation(chatId, userState, translationToSave);
+        // Сохраняем ручной перевод
+        await saveWordWithTranslation(chatId, userState, translation);
     }
     else {
         showMainMenu(chatId);
@@ -345,37 +360,31 @@ bot.on('callback_query', async (callbackQuery) => {
                 { chat_id: chatId, message_id: callbackQuery.message.message_id }
             );
 
-            // ЕСЛИ ЕСТЬ ВАРИАНТЫ ПЕРЕВОДА - ПОКАЗЫВАЕМ ИХ
+            // ЕСЛИ ЕСТЬ ВАРИАНТЫ ПЕРЕВОДА - ПОКАЗЫВАЕМ ИХ С ВОЗМОЖНОСТЬЮ ВЫБОРА
             if (userState.tempTranslations && userState.tempTranslations.length > 0) {
                 userStates.set(chatId, {
                     ...userState,
-                    state: 'choosing_translation'
+                    state: 'choosing_translation',
+                    selectedTranslationIndices: [] // Сбрасываем выбранные варианты
                 });
 
-                let translationMessage = '🎯 Выберите вариант перевода:\n\n' +
+                let translationMessage = '🎯 Выберите варианты перевода (можно несколько):\n\n' +
                     `🇬🇧 ${userState.tempWord}`;
                 
                 if (userState.tempTranscription) {
                     translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
 
-                translationMessage += '\n\n';
-
-                // Показываем варианты перевода
-                userState.tempTranslations.forEach((translation, index) => {
-                    translationMessage += `${index + 1}️⃣ ${translation}\n`;
-                });
-
-                translationMessage += '\n💡 Или введите свой вариант';
+                translationMessage += '\n\n💡 Нажимайте на варианты для выбора, затем нажмите "Сохранить"';
 
                 await bot.sendMessage(chatId, translationMessage, 
-                    getTranslationKeyboard(userState.tempTranslations)
+                    getTranslationSelectionKeyboard(userState.tempTranslations, [])
                 );
             } else {
                 // ЕСЛИ ВАРИАНТОВ НЕТ - ПРОСИМ ВВЕСТИ ВРУЧНУЮ
                 userStates.set(chatId, {
                     ...userState,
-                    state: 'waiting_translation'
+                    state: 'waiting_manual_translation'
                 });
                 
                 let translationMessage = '✏️ Введите перевод для слова:\n\n' +
@@ -385,27 +394,64 @@ bot.on('callback_query', async (callbackQuery) => {
                     translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
                 
-                translationMessage += '\n\n💡 Можно ввести несколько вариантов через "/"\nНапример: солнце / светило\n\nНапишите перевод и отправьте сообщением';
+                translationMessage += '\n\n💡 Можно ввести несколько вариантов через запятую\nНапример: солнце, светило, солнечный свет';
                 
                 showMainMenu(chatId, translationMessage);
             }
         }
     }
-    else if (data.startsWith('translation_')) {
-        const translationIndex = parseInt(data.replace('translation_', ''));
+    else if (data.startsWith('toggle_translation_')) {
+        const translationIndex = parseInt(data.replace('toggle_translation_', ''));
         
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
-            const selectedTranslation = userState.tempTranslations[translationIndex];
+            let selectedIndices = [...(userState.selectedTranslationIndices || [])];
             
-            // Сохраняем выбранный перевод
-            await saveWordWithTranslation(chatId, userState, selectedTranslation);
+            // Переключаем выбор
+            if (selectedIndices.includes(translationIndex)) {
+                // Убираем из выбранных
+                selectedIndices = selectedIndices.filter(idx => idx !== translationIndex);
+            } else {
+                // Добавляем в выбранные
+                selectedIndices.push(translationIndex);
+            }
+            
+            // Обновляем состояние
+            userStates.set(chatId, {
+                ...userState,
+                selectedTranslationIndices: selectedIndices
+            });
+            
+            // Обновляем сообщение с новой клавиатурой
+            await bot.editMessageReplyMarkup(
+                getTranslationSelectionKeyboard(userState.tempTranslations, selectedIndices).reply_markup,
+                {
+                    chat_id: chatId,
+                    message_id: callbackQuery.message.message_id
+                }
+            );
+        }
+    }
+    else if (data === 'save_selected_translations') {
+        if (userState?.state === 'choosing_translation' && userState.selectedTranslationIndices.length > 0) {
+            // Получаем выбранные переводы
+            const selectedTranslations = userState.selectedTranslationIndices
+                .map(index => userState.tempTranslations[index]);
+            
+            // Объединяем через запятую для сохранения в таблице
+            const translationToSave = selectedTranslations.join(', ');
+            
+            // Сохраняем слово
+            await saveWordWithTranslation(chatId, userState, translationToSave);
+            
+            // Удаляем сообщение с выбором переводов
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
         }
     }
     else if (data === 'custom_translation') {
         if (userState?.state === 'choosing_translation') {
             userStates.set(chatId, {
                 ...userState,
-                state: 'waiting_translation'
+                state: 'waiting_manual_translation'
             });
             
             let translationMessage = '✏️ Введите свой вариант перевода:\n\n' +
@@ -415,9 +461,39 @@ bot.on('callback_query', async (callbackQuery) => {
                 translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
             }
             
-            translationMessage += '\n\n💡 Можно ввести несколько вариантов через "/"\nНапример: солнце / светило';
+            translationMessage += '\n\n💡 Можно ввести несколько вариантов через запятую\nНапример: солнце, светило, солнечный свет';
+            
+            // Удаляем предыдущее сообщение с выбором
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
             
             showMainMenu(chatId, translationMessage);
+        }
+    }
+    else if (data === 'save_manual_translation') {
+        // Эта кнопка теперь не используется, так как ручной перевод сохраняется автоматически при отправке сообщения
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Просто отправьте перевод сообщением' });
+    }
+    else if (data === 'back_to_selection') {
+        if (userState?.state === 'waiting_manual_translation' && userState.tempTranslations.length > 0) {
+            userStates.set(chatId, {
+                ...userState,
+                state: 'choosing_translation',
+                selectedTranslationIndices: []
+            });
+            
+            let translationMessage = '🎯 Выберите варианты перевода (можно несколько):\n\n' +
+                `🇬🇧 ${userState.tempWord}`;
+            
+            if (userState.tempTranscription) {
+                translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+            }
+
+            translationMessage += '\n\n💡 Нажимайте на варианты для выбора, затем нажмите "Сохранить"';
+
+            await bot.sendMessage(chatId, translationMessage, 
+                getTranslationSelectionKeyboard(userState.tempTranslations, [])
+            );
+            showMainMenu(chatId);
         }
     }
     else if (data === 'cancel_translation') {
@@ -452,4 +528,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с выбором вариантов перевода');
+console.log('🤖 Бот запущен с улучшенной системой выбора переводов');
