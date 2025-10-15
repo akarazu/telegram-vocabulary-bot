@@ -133,36 +133,37 @@ export class GoogleSheetsService {
         }
     }
 
-    async addWordWithExamples(chatId, english, transcription, translation, audioUrl = '', examples = []) {
-        if (!this.initialized) {
-            console.log('❌ Google Sheets not initialized');
-            return false;
-        }
+  async addWordWithExamples(chatId, english, transcription, translation, audioUrl = '', examples = '') {
+    if (!this.initialized) {
+        console.log('❌ Google Sheets not initialized');
+        return false;
+    }
 
-        try {
-            const examplesText = examples.join(' | ');
-            
-            const response = await this.sheets.spreadsheets.values.append({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:F',
-                valueInputOption: 'RAW',
-                requestBody: {
-                    values: [[
-                        chatId.toString(),
-                        english.toLowerCase(),
-                        transcription || '',
-                        translation,
-                        audioUrl || '',
-                        examplesText
-                    ]]
-                }
-            });
+    try {
+        // ✅ examples уже должна быть строкой, поэтому не вызываем .join()
+        const examplesText = typeof examples === 'string' ? examples : '';
+        
+        const response = await this.sheets.spreadsheets.values.append({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:F',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[
+                    chatId.toString(),
+                    english.toLowerCase(),
+                    transcription || '',
+                    translation,
+                    audioUrl || '',
+                    examplesText
+                ]]
+            }
+        });
 
-            console.log(`✅ Word "${english}" saved with examples to Google Sheets`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error saving word with examples to Google Sheets:', error.message);
-            return false;
-        }
+        console.log(`✅ Word "${english}" saved with examples to Google Sheets`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error saving word with examples to Google Sheets:', error.message);
+        return false;
     }
 }
+
