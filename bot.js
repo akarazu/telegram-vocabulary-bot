@@ -90,18 +90,6 @@ function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
     };
 }
 
-// Клавиатура для ручного ввода перевода
-function getManualTranslationKeyboard() {
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '💾 Сохранить перевод', callback_data: 'save_manual_translation' }],
-                [{ text: '🔙 Назад к выбору', callback_data: 'back_to_selection' }]
-            ]
-        }
-    };
-}
-
 // Функция для принудительного показа меню
 function showMainMenu(chatId, text = '') {
     if (text && text.trim() !== '') {
@@ -296,6 +284,25 @@ bot.on('message', async (msg) => {
         // Сохраняем ручной перевод
         await saveWordWithTranslation(chatId, userState, translation);
     }
+    else if (userState?.state === 'waiting_custom_translation_with_selected') {
+        const customTranslation = text.trim();
+        
+        if (!customTranslation) {
+            showMainMenu(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+            return;
+        }
+        
+        // Объединяем выбранные переводы с пользовательским
+        const selectedTranslations = userState.selectedTranslationIndices
+            .map(index => userState.tempTranslations[index]);
+        
+        // Добавляем пользовательский перевод к выбранным
+        const allTranslations = [...selectedTranslations, customTranslation];
+        const translationToSave = allTranslations.join(', ');
+        
+        // Сохраняем слово
+        await saveWordWithTranslation(chatId, userState, translationToSave);
+    }
     else {
         showMainMenu(chatId);
     }
@@ -449,9 +456,10 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'custom_translation') {
         if (userState?.state === 'choosing_translation') {
+            // Сохраняем выбранные варианты и переходим к вводу пользовательского перевода
             userStates.set(chatId, {
                 ...userState,
-                state: 'waiting_manual_translation'
+                state: 'waiting_custom_translation_with_selected'
             });
             
             let translationMessage = '✏️ Введите свой вариант перевода:\n\n' +
@@ -461,39 +469,19 @@ bot.on('callback_query', async (callbackQuery) => {
                 translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
             }
             
-            translationMessage += '\n\n💡 Можно ввести несколько вариантов через запятую\nНапример: солнце, светило, солнечный свет';
+            // Показываем уже выбранные варианты
+            if (userState.selectedTranslationIndices.length > 0) {
+                const selectedTranslations = userState.selectedTranslationIndices
+                    .map(index => userState.tempTranslations[index]);
+                translationMessage += `\n\n✅ Уже выбрано: ${selectedTranslations.join(', ')}`;
+            }
+            
+            translationMessage += '\n\n💡 Ваш перевод будет добавлен к выбранным вариантам';
             
             // Удаляем предыдущее сообщение с выбором
             await bot.deleteMessage(chatId, callbackQuery.message.message_id);
             
             showMainMenu(chatId, translationMessage);
-        }
-    }
-    else if (data === 'save_manual_translation') {
-        // Эта кнопка теперь не используется, так как ручной перевод сохраняется автоматически при отправке сообщения
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Просто отправьте перевод сообщением' });
-    }
-    else if (data === 'back_to_selection') {
-        if (userState?.state === 'waiting_manual_translation' && userState.tempTranslations.length > 0) {
-            userStates.set(chatId, {
-                ...userState,
-                state: 'choosing_translation',
-                selectedTranslationIndices: []
-            });
-            
-            let translationMessage = '🎯 Выберите варианты перевода (можно несколько):\n\n' +
-                `🇬🇧 ${userState.tempWord}`;
-            
-            if (userState.tempTranscription) {
-                translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-            }
-
-            translationMessage += '\n\n💡 Нажимайте на варианты для выбора, затем нажмите "Сохранить"';
-
-            await bot.sendMessage(chatId, translationMessage, 
-                getTranslationSelectionKeyboard(userState.tempTranslations, [])
-            );
-            showMainMenu(chatId);
         }
     }
     else if (data === 'cancel_translation') {
@@ -519,7 +507,11 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 });
 
-// Обработка ошибок
+// Обработка ошибок транскрипции
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 bot.on('error', (error) => {
     console.error('Bot error:', error);
 });
@@ -528,4 +520,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с улучшенной системой выбора переводов');
+console.log('🤖 Бот запущен с исправленной системой переводов');
