@@ -126,18 +126,26 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // ✅ Проверяем есть ли уже такое слово в словаре
-        const existingWords = await sheetsService.getUserWords(chatId);
-        const isDuplicate = existingWords.some(word => 
-            word.english.toLowerCase() === englishWord.toLowerCase()
-        );
-        
-        if (isDuplicate) {
+        // ✅ ПРОВЕРКА GOOGLE SHEETS И ДУБЛИКАТОВ
+        if (!sheetsService.initialized) {
             showMainMenu(chatId, 
-                `❌ Слово "${englishWord}" уже есть в вашем словаре!\n\n` +
-                'Пожалуйста, введите другое слово:'
+                '❌ Сервис словаря временно недоступен\n\n' +
+                'Попробуйте позже или продолжите без проверки дубликатов.'
             );
-            return;
+            // Пропускаем проверку дубликатов и продолжаем
+        } else {
+            const existingWords = await sheetsService.getUserWords(chatId);
+            const isDuplicate = existingWords.some(word => 
+                word.english.toLowerCase() === englishWord.toLowerCase()
+            );
+            
+            if (isDuplicate) {
+                showMainMenu(chatId, 
+                    `❌ Слово "${englishWord}" уже есть в вашем словаре!\n\n` +
+                    'Пожалуйста, введите другое слово:'
+                );
+                return;
+            }
         }
         
         showMainMenu(chatId, '🔍 Ищу транскрипцию и произношение...');
@@ -182,28 +190,32 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // ✅ Еще раз проверяем дубликат перед сохранением
-        const existingWords = await sheetsService.getUserWords(chatId);
-        const isDuplicate = existingWords.some(word => 
-            word.english.toLowerCase() === userState.tempWord.toLowerCase()
-        );
-        
-        if (isDuplicate) {
-            showMainMenu(chatId, 
-                `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
-                'Пожалуйста, начните заново.'
+        // ✅ ПРОВЕРКА ПЕРЕД СОХРАНЕНИЕМ
+        let success = true;
+        if (sheetsService.initialized) {
+            // Еще раз проверяем дубликат перед сохранением
+            const existingWords = await sheetsService.getUserWords(chatId);
+            const isDuplicate = existingWords.some(word => 
+                word.english.toLowerCase() === userState.tempWord.toLowerCase()
             );
-            userStates.delete(chatId);
-            return;
+            
+            if (isDuplicate) {
+                showMainMenu(chatId, 
+                    `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
+                    'Пожалуйста, начните заново.'
+                );
+                userStates.delete(chatId);
+                return;
+            }
+            
+            success = await sheetsService.addWord(
+                chatId, 
+                userState.tempWord, 
+                userState.tempTranscription,
+                translation,
+                userState.tempAudioUrl
+            );
         }
-        
-        const success = await sheetsService.addWord(
-            chatId, 
-            userState.tempWord, 
-            userState.tempTranscription,
-            translation,
-            userState.tempAudioUrl
-        );
         
         userStates.delete(chatId);
         
@@ -226,7 +238,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Обработка inline кнопок (без изменений)
+// Обработка inline кнопок
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -334,6 +346,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с проверкой дубликатов в Google Таблицах');
-
-
+console.log('🤖 Бот запущен с проверкой дубликатов');
