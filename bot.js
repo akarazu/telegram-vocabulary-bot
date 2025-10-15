@@ -12,9 +12,6 @@ const transcriptionService = new TranscriptionService();
 // Хранилище состояний пользователей
 const userStates = new Map();
 
-// Хранилище для audio URLs (временное)
-const audioUrlStorage = new Map();
-
 // Главное меню
 function getMainMenu() {
     return {
@@ -96,18 +93,13 @@ bot.on('message', async (msg) => {
         let audioId = null;
         if (result.audioUrl) {
             audioId = Date.now().toString();
-            audioUrlStorage.set(audioId, result.audioUrl);
-            
-            // Очищаем старые записи через 10 минут
-            setTimeout(() => {
-                audioUrlStorage.delete(audioId);
-            }, 10 * 60 * 1000);
         }
         
+        // СОХРАНЯЕМ ВСЕ ДАННЫЕ В СОСТОЯНИИ
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: englishWord,
-            tempTranscription: result.transcription,
+            tempTranscription: result.transcription, // ← Сохраняем транскрипцию!
             tempAudioUrl: result.audioUrl,
             tempAudioId: audioId
         });
@@ -140,21 +132,20 @@ bot.on('message', async (msg) => {
             return;
         }
         
+        // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ ИЗ СОСТОЯНИЯ
         const success = await sheetsService.addWord(
             chatId, 
             userState.tempWord, 
-            userState.tempTranscription, 
+            userState.tempTranscription, // ← Используем сохраненную транскрипцию!
             translation,
             userState.tempAudioUrl
         );
         
-        // Очищаем временное хранилище
-        if (userState.tempAudioId) {
-            audioUrlStorage.delete(userState.tempAudioId);
-        }
+        // Очищаем состояние
         userStates.delete(chatId);
         
         if (success) {
+            // ИСПОЛЬЗУЕМ ТУ ЖЕ ТРАНСКРИПЦИЮ ДЛЯ СООБЩЕНИЯ
             const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
             await bot.sendMessage(chatId, 
                 `✅ Слово добавлено в словарь!\n\n` +
@@ -180,12 +171,12 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const userState = userStates.get(chatId);
 
-    // Всегда подтверждаем callback без текста (убираем всплывашки)
+    // Всегда подтверждаем callback без текста
     await bot.answerCallbackQuery(callbackQuery.id);
 
     if (data.startsWith('audio_')) {
         const audioId = data.replace('audio_', '');
-        const audioUrl = audioUrlStorage.get(audioId);
+        const audioUrl = userState?.tempAudioUrl;
         
         if (audioUrl) {
             try {
@@ -225,13 +216,14 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
             );
 
-            // Переходим к вводу перевода
+            // Переходим к вводу перевода - СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
-                ...userState,
+                ...userState, // ← Важно: сохраняем все данные включая транскрипцию!
                 state: 'waiting_translation'
             });
             
             // Отправляем новое сообщение с запросом перевода
+            // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ
             let translationMessage = `✏️ <b>Введите перевод для слова:</b>\n\n` +
                 `🇬🇧 <b>${userState.tempWord}</b>`;
             
@@ -267,7 +259,8 @@ bot.on('callback_query', async (callbackQuery) => {
                 );
             }
 
-            // Возвращаемся к исходному сообщению со словом (но уже без кнопок)
+            // Возвращаемся к исходному сообщению со словом
+            // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ
             const message = `📝 Слово: <b>${userState.tempWord}</b>\n` +
                 (userState.tempTranscription ? `🔤 Транскрипция: <code>${userState.tempTranscription}</code>\n\n` : '\n') +
                 '🎵 Аудио произношение доступно\n\n' +
@@ -291,6 +284,8 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
             );
 
+            // Возвращаемся к состоянию показа транскрипции
+            // СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
                 ...userState,
                 state: 'showing_transcription'
@@ -307,24 +302,6 @@ bot.on('callback_query', async (callbackQuery) => {
             });
         }
     }
-    else if (data === 'cancel') {
-        // Полная отмена добавления слова
-        if (userState?.tempAudioId) {
-            audioUrlStorage.delete(userState.tempAudioId);
-        }
-        userStates.delete(chatId);
-        
-        // Убираем кнопки из сообщения
-        await bot.editMessageReplyMarkup(
-            { inline_keyboard: [] },
-            {
-                chat_id: chatId,
-                message_id: callbackQuery.message.message_id
-            }
-        );
-
-        await bot.sendMessage(chatId, '❌ Добавление слова отменено', getMainMenu());
-    }
 });
 
 // Обработка ошибок
@@ -336,4 +313,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен без всплывающих сообщений');
+console.log('🤖 Бот запущен с исправленной транскрипцией');
