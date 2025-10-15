@@ -15,6 +15,9 @@ const userStates = new Map();
 // Хранилище для отслеживания воспроизведения аудио по словам
 const audioPlaybackTracker = new Map();
 
+// Таймеры для управления задержками между аудио
+const audioCooldowns = new Map();
+
 // Главное меню
 function getMainMenu() {
     return {
@@ -66,35 +69,57 @@ function canPlayAudio(englishWord, chatId) {
     return true;
 }
 
+// Функция для проверки кулдауна между аудио
+function canSendAudio(chatId) {
+    const lastAudioTime = audioCooldowns.get(chatId);
+    if (!lastAudioTime) return true;
+    
+    const timeSinceLastAudio = Date.now() - lastAudioTime;
+    return timeSinceLastAudio > 5000; // 5 секунд между аудио
+}
+
 // Функция для отправки аудио с защитой от автовоспроизведения
 async function sendAudioSafe(chatId, audioUrl, englishWord) {
     try {
-        // 1. Сначала отправляем фото или документ чтобы разорвать медиагруппу
-        // Используем прозрачный PNG пиксель (1x1 pixel)
-        const transparentPixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        // Устанавливаем кулдаун для этого чата
+        audioCooldowns.set(chatId, Date.now());
         
-        await bot.sendPhoto(chatId, `data:image/png;base64,${transparentPixel}`, {
-            caption: `🔊 Произношение: ${englishWord}`,
+        // 1. Отправляем сообщение-разделитель ПЕРЕД аудио
+        await bot.sendMessage(chatId, `🔊 Произношение слова: "${englishWord}"`, {
             reply_markup: {
                 inline_keyboard: [[
-                    { text: '🎵 Слушать', callback_data: 'play_audio' }
+                    { text: '⏸️ Пауза между аудио', callback_data: 'audio_divider' }
                 ]]
             }
         });
 
-        // 2. Ждем немного чтобы медиагруппа разорвалась
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // 2. Ждем немного чтобы разорвать медиагруппу
+        await new Promise(resolve => setTimeout(resolve, 500));
 
-        // 3. Отправляем аудио как документ (не как аудио файл)
-        // Это предотвращает добавление в аудиоплейлист
-        await bot.sendDocument(chatId, audioUrl, {
-            caption: '🎧 Нажмите чтобы прослушать',
-            reply_to_message_id: null
+        // 3. Отправляем аудио
+        await bot.sendAudio(chatId, audioUrl, {
+            caption: '🎧 Нажмите для прослушивания',
+            title: englishWord,
+            performer: 'Британское произношение'
+        });
+
+        // 4. Ждем еще немного
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // 5. Отправляем сообщение-разделитель ПОСЛЕ аудио
+        await bot.sendMessage(chatId, '────────────', {
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: '✅ Аудио завершено', callback_data: 'audio_complete' }
+                ]]
+            }
         });
 
         return true;
     } catch (error) {
         console.error('Error sending safe audio:', error);
+        // Сбрасываем кулдаун при ошибке
+        audioCooldowns.delete(chatId);
         return false;
     }
 }
@@ -229,6 +254,15 @@ bot.on('callback_query', async (callbackQuery) => {
         const englishWord = userState?.tempWord;
         
         if (audioUrl && englishWord) {
+            // Проверяем кулдаун между аудио
+            if (!canSendAudio(chatId)) {
+                await bot.answerCallbackQuery(callbackQuery.id, {
+                    text: '⏳ Пожалуйста, подождите 5 секунд перед следующим аудио',
+                    show_alert: true
+                });
+                return;
+            }
+            
             if (!canPlayAudio(englishWord, chatId)) {
                 await bot.answerCallbackQuery(callbackQuery.id, {
                     text: '🔇 Аудио уже было воспроизведено. Можно повторить через 30 секунд.',
@@ -252,10 +286,10 @@ bot.on('callback_query', async (callbackQuery) => {
                 
                 if (success) {
                     // Ждем немного перед отправкой следующего сообщения
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     await bot.sendMessage(chatId, 
-                        '🎵 Произношение готово к прослушиванию. Хотите ввести перевод?',
+                        '🎵 Произношение отправлено. Хотите ввести перевод?',
                         getAfterAudioKeyboard()
                     );
                 }
@@ -264,11 +298,12 @@ bot.on('callback_query', async (callbackQuery) => {
                 console.error('Error in audio playback:', error);
                 const key = `${chatId}_${englishWord.toLowerCase()}`;
                 audioPlaybackTracker.delete(key);
+                audioCooldowns.delete(chatId);
             }
         }
     }
-    else if (data === 'play_audio') {
-        // Обработка кнопки "Слушать" из безопасного метода
+    else if (data === 'audio_divider' || data === 'audio_complete') {
+        // Просто подтверждаем нажатие на разделители
         await bot.answerCallbackQuery(callbackQuery.id, {
             text: '🎧 Аудио готово к прослушиванию',
             show_alert: false
@@ -345,4 +380,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с полной защитой от автовоспроизведения аудио');
+console.log('🤖 Бот запущен с улучшенной защитой от автовоспроизведения аудио');
