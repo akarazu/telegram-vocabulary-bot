@@ -18,11 +18,11 @@ export class GoogleSheetsService {
         this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
     }
 
-    async addWord(userId, word, transcription, translation) {
+    async addWord(userId, word, transcription, translation, audioUrl = '') {
         try {
             await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
-                range: 'A:E',
+                range: 'A:F', // Добавили колонку для audio URL
                 valueInputOption: 'RAW',
                 requestBody: {
                     values: [[
@@ -30,6 +30,7 @@ export class GoogleSheetsService {
                         word,
                         transcription,
                         translation,
+                        audioUrl,
                         new Date().toISOString()
                     ]]
                 }
