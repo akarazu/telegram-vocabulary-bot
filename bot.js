@@ -15,19 +15,20 @@ const userStates = new Map();
 // Хранилище для отслеживания отправленных аудио в каждом чате
 const sentAudios = new Map();
 
-// Главное меню
+// Главное меню (Reply Keyboard - всегда видно)
 function getMainMenu() {
     return {
         reply_markup: {
             keyboard: [
                 ['➕ Добавить слово']
             ],
-            resize_keyboard: true
+            resize_keyboard: true,
+            one_time_keyboard: false // ✅ Важно: клавиатура не скрывается после использования
         }
     };
 }
 
-// Клавиатура с кнопкой прослушивания
+// Клавиатура с кнопкой прослушивания (Inline Keyboard)
 function getListeningKeyboard(audioId) {
     return {
         reply_markup: {
@@ -39,7 +40,7 @@ function getListeningKeyboard(audioId) {
     };
 }
 
-// Клавиатура действий после прослушивания (без кнопки "Вернуться к слову")
+// Клавиатура действий после прослушивания (Inline Keyboard)
 function getAfterAudioKeyboard() {
     return {
         reply_markup: {
@@ -50,6 +51,14 @@ function getAfterAudioKeyboard() {
     };
 }
 
+// Функция для отправки сообщения с всегда видимым меню
+function sendWithMenu(chatId, text, extra = {}) {
+    return bot.sendMessage(chatId, text, {
+        ...getMainMenu(),
+        ...extra
+    });
+}
+
 // Функция для проверки, есть ли предыдущие аудио в чате
 function hasPreviousAudios(chatId, currentAudioUrl) {
     if (!sentAudios.has(chatId)) {
@@ -57,11 +66,7 @@ function hasPreviousAudios(chatId, currentAudioUrl) {
     }
     
     const chatAudios = sentAudios.get(chatId);
-    
-    // Ищем аудио, которые НЕ являются текущим
     const previousAudios = chatAudios.filter(audio => audio.url !== currentAudioUrl);
-    
-    // Если есть хотя бы одно другое аудио - возвращаем true
     return previousAudios.length > 0;
 }
 
@@ -72,26 +77,14 @@ function addAudioToHistory(chatId, audioUrl, word) {
     }
     
     const chatAudios = sentAudios.get(chatId);
-    
-    // Проверяем, нет ли уже такого аудио в истории
     const existingAudioIndex = chatAudios.findIndex(audio => audio.url === audioUrl);
+    
     if (existingAudioIndex !== -1) {
-        // Обновляем существующее аудио
-        chatAudios[existingAudioIndex] = {
-            url: audioUrl,
-            word: word,
-            timestamp: Date.now()
-        };
+        chatAudios[existingAudioIndex] = { url: audioUrl, word: word, timestamp: Date.now() };
     } else {
-        // Добавляем новое аудио
-        chatAudios.push({
-            url: audioUrl,
-            word: word,
-            timestamp: Date.now()
-        });
+        chatAudios.push({ url: audioUrl, word: word, timestamp: Date.now() });
     }
     
-    // Ограничиваем историю последними 10 аудио (чтобы не накапливать)
     if (chatAudios.length > 10) {
         chatAudios.shift();
     }
@@ -100,11 +93,10 @@ function addAudioToHistory(chatId, audioUrl, word) {
 // Команда /start
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-    bot.sendMessage(chatId, 
+    sendWithMenu(chatId, 
         '📚 Англо-русский словарь\n' +
         '🔤 С транскрипцией и произношением\n' +
-        '🇬🇧 Британский вариант',
-        getMainMenu()
+        '🇬🇧 Британский вариант'
     );
 });
 
@@ -113,39 +105,34 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
-    // Игнорируем команды
     if (text.startsWith('/')) return;
 
     const userState = userStates.get(chatId);
 
     if (text === '➕ Добавить слово') {
         userStates.set(chatId, { state: 'waiting_english' });
-        bot.sendMessage(chatId, '🇬🇧 Введите английское слово:', getMainMenu());
+        sendWithMenu(chatId, '🇬🇧 Введите английское слово:');
     }
     else if (userState?.state === 'waiting_english') {
         const englishWord = text.trim();
         
-        // Проверяем что это английское слово
         if (!/^[a-zA-Z\s\-']+$/.test(englishWord)) {
-            bot.sendMessage(chatId, 
+            sendWithMenu(chatId, 
                 '❌ Это не похоже на английское слово.\n' +
-                'Пожалуйста, введите слово на английском:',
-                getMainMenu()
+                'Пожалуйста, введите слово на английском:'
             );
             return;
         }
         
-        bot.sendMessage(chatId, '🔍 Ищу транскрипцию и произношение...', getMainMenu());
+        sendWithMenu(chatId, '🔍 Ищу транскрипцию и произношение...');
         
         const result = await transcriptionService.getUKTranscription(englishWord);
         
-        // Сохраняем audioUrl во временное хранилище
         let audioId = null;
         if (result.audioUrl) {
             audioId = Date.now().toString();
         }
         
-        // СОХРАНЯЕМ ВСЕ ДАННЫЕ В СОСТОЯНИИ
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: englishWord,
@@ -168,24 +155,23 @@ bot.on('message', async (msg) => {
         
         message += `\n\nВыберите действие:`;
         
+        // Для сообщения с inline кнопками не показываем меню
         await bot.sendMessage(chatId, message, {
             parse_mode: 'HTML',
             ...getListeningKeyboard(audioId)
         });
         
-        // ✅ Показываем меню после сообщения с кнопками
-        bot.sendMessage(chatId, 'Используйте кнопки выше или:', getMainMenu());
+        // Но сразу после показываем меню
+        sendWithMenu(chatId, 'Используйте кнопки выше или:');
     }
     else if (userState?.state === 'waiting_translation') {
-        // Пользователь вводит перевод
         const translation = text.trim();
         
         if (!translation) {
-            bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:', getMainMenu());
+            sendWithMenu(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
             return;
         }
         
-        // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ ИЗ СОСТОЯНИЯ
         const success = await sheetsService.addWord(
             chatId, 
             userState.tempWord, 
@@ -194,36 +180,26 @@ bot.on('message', async (msg) => {
             userState.tempAudioUrl
         );
         
-        // Очищаем состояние ПОСЛЕ успешного сохранения
         userStates.delete(chatId);
         
         if (success) {
-            // ИСПОЛЬЗУЕМ ТУ ЖЕ ТРАНСКРИПЦИЮ ДЛЯ СООБЩЕНИЯ
             const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
             
-            // Отправляем сообщение об успешном добавлении
-            await bot.sendMessage(chatId, 
+            await sendWithMenu(chatId, 
                 `✅ <b>Слово добавлено в словарь!</b>\n\n` +
                 `💬 ${userState.tempWord}${transcriptionText} - <b>${translation}</b>\n\n` +
                 `Теперь оно будет доступно для повторения.`,
-                { 
-                    parse_mode: 'HTML',
-                    ...getMainMenu()
-                }
+                { parse_mode: 'HTML' }
             );
         } else {
-            await bot.sendMessage(chatId, 
+            await sendWithMenu(chatId, 
                 '❌ <b>Ошибка сохранения</b>\n\nНе удалось сохранить слово в словарь. Попробуйте еще раз.',
-                { 
-                    parse_mode: 'HTML',
-                    ...getMainMenu()
-                }
+                { parse_mode: 'HTML' }
             );
         }
     }
     else {
-        // Если нет активного состояния И сообщение не команда, показываем главное меню
-        await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
+        sendWithMenu(chatId, 'Выберите действие:');
     }
 });
 
@@ -233,7 +209,6 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const userState = userStates.get(chatId);
 
-    // Всегда подтверждаем callback без текста
     await bot.answerCallbackQuery(callbackQuery.id);
 
     if (data.startsWith('audio_')) {
@@ -243,27 +218,18 @@ bot.on('callback_query', async (callbackQuery) => {
         
         if (audioUrl && englishWord) {
             try {
-                // Убираем кнопку "Ввести перевод" из исходного сообщения
                 await bot.editMessageReplyMarkup(
                     { inline_keyboard: [] },
-                    {
-                        chat_id: chatId,
-                        message_id: callbackQuery.message.message_id
-                    }
+                    { chat_id: chatId, message_id: callbackQuery.message.message_id }
                 );
 
-                // СНАЧАЛА добавляем аудио в историю (перед проверкой!)
                 addAudioToHistory(chatId, audioUrl, englishWord);
-                
-                // ТЕПЕРЬ проверяем, есть ли предыдущие аудио
                 const hasPrevious = hasPreviousAudios(chatId, audioUrl);
                 
-                // Отправляем аудио сообщение
                 await bot.sendAudio(chatId, audioUrl, {
                     caption: `🔊 Британское произношение: ${englishWord}`
                 });
 
-                // ЕСЛИ ЕСТЬ ПРЕДЫДУЩИЕ АУДИО - показываем инструкцию
                 if (hasPrevious) {
                     await bot.sendMessage(chatId,
                         '⚠️ **Чтобы избежать автовоспроизведения старых аудио:**\n\n' +
@@ -278,14 +244,13 @@ bot.on('callback_query', async (callbackQuery) => {
                     );
                 }
                 
-                // Отправляем сообщение с кнопками действий после аудио
                 await bot.sendMessage(chatId, 
                     '🎵 Вы прослушали произношение. Хотите ввести перевод?',
                     getAfterAudioKeyboard()
                 );
                 
-                // ✅ Показываем меню после всех действий
-                bot.sendMessage(chatId, 'Или используйте:', getMainMenu());
+                // Всегда показываем меню после действий
+                sendWithMenu(chatId, 'Или используйте:');
                 
             } catch (error) {
                 console.error('Error sending audio:', error);
@@ -294,22 +259,16 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
-            // Убираем кнопку "Ввести перевод" из исходного сообщения
             await bot.editMessageReplyMarkup(
                 { inline_keyboard: [] },
-                {
-                    chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                }
+                { chat_id: chatId, message_id: callbackQuery.message.message_id }
             );
 
-            // Переходим к вводу перевода - СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
                 ...userState,
                 state: 'waiting_translation'
             });
             
-            // Отправляем новое сообщение с запросом перевода
             let translationMessage = `✏️ <b>Введите перевод для слова:</b>\n\n` +
                 `🇬🇧 <b>${userState.tempWord}</b>`;
             
@@ -319,29 +278,17 @@ bot.on('callback_query', async (callbackQuery) => {
             
             translationMessage += `\n\n📝 <i>Напишите перевод и отправьте сообщением</i>`;
             
-            await bot.sendMessage(chatId, translationMessage, {
-                parse_mode: 'HTML',
-                ...getMainMenu()
-            });
+            sendWithMenu(chatId, translationMessage, { parse_mode: 'HTML' });
         }
     }
     else if (data === 'cancel_translation') {
-        // Отмена ввода перевода
         if (userState) {
-            // Убираем кнопки из сообщения с запросом перевода
             await bot.editMessageReplyMarkup(
                 { inline_keyboard: [] },
-                {
-                    chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                }
+                { chat_id: chatId, message_id: callbackQuery.message.message_id }
             );
 
-            // Возвращаемся к состоянию показа транскрипции
-            userStates.set(chatId, {
-                ...userState,
-                state: 'showing_transcription'
-            });
+            userStates.set(chatId, { ...userState, state: 'showing_transcription' });
             
             const message = `📝 Слово: <b>${userState.tempWord}</b>\n` +
                 (userState.tempTranscription ? `🔤 Транскрипция: <code>${userState.tempTranscription}</code>\n\n` : '\n') +
@@ -353,8 +300,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 ...getListeningKeyboard(userState.tempAudioId)
             });
             
-            // ✅ Показываем меню после возврата
-            bot.sendMessage(chatId, 'Или используйте:', getMainMenu());
+            sendWithMenu(chatId, 'Или используйте:');
         }
     }
 });
