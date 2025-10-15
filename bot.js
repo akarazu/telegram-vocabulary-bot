@@ -55,8 +55,8 @@ function showMainMenu(chatId, text = '') {
     if (text && text.trim() !== '') {
         return bot.sendMessage(chatId, text, getMainMenu());
     } else {
-        // Вместо пустого сообщения отправляем невидимый символ
-        return bot.sendMessage(chatId, '‧̍̊˙· 𓆝.° ｡˚𓆛˚｡ °.𓆞 ·˙‧̍̊', getMainMenu());
+        // Просто показываем меню без текста
+        return bot.sendMessage(chatId, '👇', getMainMenu());
     }
 }
 
@@ -347,3 +347,4 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с проверкой дубликатов');
+
