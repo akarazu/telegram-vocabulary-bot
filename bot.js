@@ -130,6 +130,26 @@ function addAudioToHistory(chatId, audioUrl, word) {
         chatAudios.shift();
     }
 }
+// Функция для определения части речи по переводу
+function detectPartOfSpeech(translation) {
+    if (!translation) return '';
+    
+    const lowerTranslation = translation.toLowerCase();
+    
+    // Простые эвристики для определения части речи
+    if (/(ся$|ть$|ил$|ала$|ует$|ает$|ить$|ать$)/.test(lowerTranslation)) {
+        return 'verb'; // глагол
+    }
+    else if (/(ый$|ий$|ой$|ая$|ое$|ие$|ой$|ский$|ной$)/.test(lowerTranslation)) {
+        return 'adjective'; // прилагательное
+    }
+    else if (/(о$|е$|ско$|чески$)/.test(lowerTranslation)) {
+        return 'adverb'; // наречие
+    }
+    else {
+        return 'noun'; // по умолчанию считаем существительным
+    }
+}
 
 // Функция для сохранения слова с переводом и примерами
 async function saveWordWithTranslation(chatId, userState, translation) {
@@ -168,24 +188,24 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         
         // Генерируем примеры
         console.log('🔄 Generating examples...');
-        const partOfSpeech = this.detectPartOfSpeech(userState.tempTranslations[0]); // или из Яндекс API
-const examples = await exampleGenerator.generateExamples(
-    userState.tempWord, 
-    translation, 
-    partOfSpeech
-);
+        
+        // ✅ ПЕРЕДАЕМ ЧАСТЬ РЕЧИ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ
+        const partOfSpeech = detectPartOfSpeech(translation);
+        const examples = await exampleGenerator.generateExamples(
+            userState.tempWord, 
+            translation, 
+            partOfSpeech
+        );
+        
         console.log(`✅ Generated examples:`, examples);
         
         // ✅ ПРАВИЛЬНО ОБРАБАТЫВАЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
         let examplesText = '';
         if (Array.isArray(examples)) {
-            // Если examples - массив строк, объединяем их
             examplesText = examples.join(' | ');
         } else if (typeof examples === 'string') {
-            // Если examples уже строка, используем как есть
             examplesText = examples;
         } else {
-            // Если examples - массив объектов, преобразуем в строки
             examplesText = examples.map(ex => {
                 if (typeof ex === 'string') return ex;
                 if (ex.english && ex.russian) return `${ex.english} - ${ex.russian}`;
@@ -203,7 +223,7 @@ const examples = await exampleGenerator.generateExamples(
             userState.tempTranscription,
             translation,
             userState.tempAudioUrl,
-            examplesText // Передаем уже отформатированную строку
+            examplesText
         );
         
         console.log(`📊 Save result: ${success ? 'SUCCESS' : 'FAILED'}`);
@@ -222,7 +242,9 @@ const examples = await exampleGenerator.generateExamples(
             `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n`;
         
         // ✅ ПРАВИЛЬНО ФОРМАТИРУЕМ ПРИМЕРЫ ДЛЯ ОТОБРАЖЕНИЯ
-        const examples = await exampleGenerator.generateExamples(userState.tempWord, translation);
+        const partOfSpeech = detectPartOfSpeech(translation);
+        const examples = await exampleGenerator.generateExamples(userState.tempWord, translation, partOfSpeech);
+        
         if (examples && examples.length > 0) {
             successMessage += '📝 Примеры:\n';
             
@@ -245,6 +267,7 @@ const examples = await exampleGenerator.generateExamples(
         );
     }
 }
+
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -607,6 +630,7 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
 
 
