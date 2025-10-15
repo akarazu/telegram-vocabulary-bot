@@ -21,39 +21,27 @@ export class TranscriptionService {
         let result = { 
             transcription: '', 
             audioUrl: '', 
-            translations: []
+            translations: [],
+            partOfSpeech: '' // ✅ ДОБАВЛЯЕМ ЧАСТЬ РЕЧИ
         };
 
-        // ✅ ПЕРВОЕ: получаем транскрипцию и аудио из Яндекс
+        // ✅ ПЕРВОЕ: получаем ВСЕ данные из Яндекс за один запрос
         if (this.useYandex) {
             try {
-                console.log('🔍 PRIMARY: Getting transcription and audio from Yandex...');
-                const yandexTranscription = await this.yandexService.getTranscription(word);
-                result.transcription = yandexTranscription.transcription || '';
-                result.audioUrl = yandexTranscription.audioUrl || '';
+                console.log('🔍 PRIMARY: Getting all data from Yandex...');
+                const yandexData = await this.getYandexData(word);
+                result.transcription = yandexData.transcription || '';
+                result.audioUrl = yandexData.audioUrl || '';
+                result.translations = yandexData.translations || [];
+                result.partOfSpeech = yandexData.partOfSpeech || ''; // ✅ ЧАСТЬ РЕЧИ
                 
-                if (result.transcription) {
-                    console.log('✅ PRIMARY: Yandex transcription found');
-                }
-                if (result.audioUrl) {
-                    console.log('✅ PRIMARY: Yandex audio found');
-                }
+                if (result.transcription) console.log('✅ PRIMARY: Yandex transcription found');
+                if (result.audioUrl) console.log('✅ PRIMARY: Yandex audio found');
+                if (result.partOfSpeech) console.log(`✅ PRIMARY: Yandex part of speech: ${result.partOfSpeech}`);
+                if (result.translations.length > 0) console.log(`✅ PRIMARY: Yandex translations found: ${result.translations.length}`);
+                
             } catch (error) {
-                console.log('❌ PRIMARY: Yandex transcription failed:', error.message);
-            }
-        }
-
-        // ✅ ВТОРОЕ: получаем переводы из Яндекс
-        if (this.useYandex) {
-            try {
-                console.log('🔍 PRIMARY: Getting translations from Yandex...');
-                const yandexTranslations = await this.getYandexTranslations(word);
-                if (yandexTranslations.length > 0) {
-                    console.log('✅ PRIMARY: Yandex translations found');
-                    result.translations = yandexTranslations;
-                }
-            } catch (error) {
-                console.log('❌ PRIMARY: Yandex translations failed:', error.message);
+                console.log('❌ PRIMARY: Yandex failed:', error.message);
             }
         }
 
@@ -97,15 +85,17 @@ export class TranscriptionService {
         console.log(`📊 Final results for "${word}":`, {
             transcription: result.transcription || '❌ Not found',
             audioUrl: result.audioUrl ? '✅ Found' : '❌ Not found',
-            translations: result.translations.length
+            translations: result.translations.length,
+            partOfSpeech: result.partOfSpeech || '❌ Not found'
         });
 
         return result;
     }
 
-    async getYandexTranslations(word) {
+    // ✅ НОВЫЙ МЕТОД: получаем все данные из Яндекс за один запрос
+    async getYandexData(word) {
         try {
-            console.log(`🔍 Yandex API call for translations: "${word}"`);
+            console.log(`🔍 Yandex API call for: "${word}"`);
             
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
@@ -117,55 +107,66 @@ export class TranscriptionService {
                 timeout: 10000
             });
 
-            console.log('✅ Yandex API response received for translations');
-            return this.extractTranslationsFromYandex(response.data, word);
+            console.log('✅ Yandex API response received');
+            return this.extractDataFromYandex(response.data, word);
             
         } catch (error) {
-            console.error('❌ Yandex translation error:', error.message);
-            if (error.response) {
-                console.error('Yandex response status:', error.response.status);
-                console.error('Yandex response data:', error.response.data);
-            }
-            return [];
+            console.error('❌ Yandex API error:', error.message);
+            return { transcription: '', audioUrl: '', translations: [], partOfSpeech: '' };
         }
     }
 
-    extractTranslationsFromYandex(data, originalWord) {
-        const translations = new Set();
-        
+    // ✅ ОБНОВЛЕННЫЙ МЕТОД: извлекаем все данные из ответа Яндекс
+    extractDataFromYandex(data, originalWord) {
+        const result = {
+            transcription: '',
+            audioUrl: '',
+            translations: [],
+            partOfSpeech: ''
+        };
+
         if (!data.def || data.def.length === 0) {
-            console.log('❌ Yandex: No definitions found in response');
-            return [];
+            console.log('❌ Yandex: No definitions found');
+            return result;
         }
 
-        console.log(`🔍 Yandex found ${data.def.length} definition(s) for translations`);
+        console.log(`🔍 Yandex found ${data.def.length} definition(s)`);
 
-        data.def.forEach((definition, index) => {
-            console.log(`🔍 Definition ${index + 1}:`, definition.text);
-            
-            if (definition.tr && definition.tr.length > 0) {
-                console.log(`🔍 Processing ${definition.tr.length} translation(s)`);
-                
-                definition.tr.forEach((translation, trIndex) => {
-                    console.log(`🔍 Translation ${trIndex + 1}:`, translation.text);
-                    
-                    if (translation.text && translation.text.trim()) {
-                        const russianTranslation = translation.text.trim();
-                        
-                        if (this.isRussianText(russianTranslation) && 
-                            russianTranslation.toLowerCase() !== originalWord.toLowerCase()) {
-                            translations.add(russianTranslation);
-                            console.log(`✅ Added translation: "${russianTranslation}"`);
-                        }
-                    }
-                });
-            }
-        });
-
-        const translationArray = Array.from(translations).slice(0, 4);
-        console.log(`✅ Yandex translations found: ${translationArray.length}`);
+        const firstDefinition = data.def[0];
         
-        return translationArray;
+        // ✅ ИЗВЛЕКАЕМ ТРАНСКРИПЦИЮ
+        if (firstDefinition.ts) {
+            result.transcription = `/${firstDefinition.ts}/`;
+            console.log(`✅ Yandex transcription: ${result.transcription}`);
+        }
+        
+        // ✅ ИЗВЛЕКАЕМ ЧАСТЬ РЕЧИ
+        if (firstDefinition.pos) {
+            result.partOfSpeech = firstDefinition.pos;
+            console.log(`✅ Yandex part of speech: ${result.partOfSpeech}`);
+        }
+        
+        // ✅ ИЗВЛЕКАЕМ ПЕРЕВОДЫ
+        const translations = new Set();
+        if (firstDefinition.tr && Array.isArray(firstDefinition.tr)) {
+            firstDefinition.tr.forEach(translation => {
+                if (translation.text && translation.text.trim()) {
+                    const russianTranslation = translation.text.trim();
+                    if (this.isRussianText(russianTranslation) && 
+                        russianTranslation.toLowerCase() !== originalWord.toLowerCase()) {
+                        translations.add(russianTranslation);
+                        console.log(`✅ Yandex translation: "${russianTranslation}"`);
+                    }
+                }
+            });
+        }
+        
+        result.translations = Array.from(translations).slice(0, 4);
+        
+        // ✅ ГЕНЕРИРУЕМ АУДИО URL
+        result.audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(originalWord)}&tl=en-gb&client=tw-ob`;
+
+        return result;
     }
 
     // ✅ Функция для проверки русского текста
@@ -200,7 +201,6 @@ export class TranscriptionService {
         data.forEach(entry => {
             if (entry.meanings && Array.isArray(entry.meanings)) {
                 entry.meanings.forEach(meaning => {
-                    // Используем partOfSpeech как перевод
                     if (meaning.partOfSpeech) {
                         translations.add(meaning.partOfSpeech);
                     }
@@ -209,7 +209,7 @@ export class TranscriptionService {
                         meaning.definitions.forEach(definition => {
                             if (definition.definition && definition.definition.trim()) {
                                 const shortDef = definition.definition
-                                    .split(/[.,;!?]/)[0] // Берем только первое предложение
+                                    .split(/[.,;!?]/)[0]
                                     .trim();
                                 if (shortDef.length > 0 && shortDef.length < 80) {
                                     translations.add(shortDef);
@@ -221,10 +221,7 @@ export class TranscriptionService {
             }
         });
 
-        const translationArray = Array.from(translations).slice(0, 4);
-        console.log(`✅ FreeDictionary translations found: ${translationArray.length}`);
-        
-        return translationArray;
+        return Array.from(translations).slice(0, 4);
     }
 
     // ✅ Простая генерация транскрипции (fallback)
