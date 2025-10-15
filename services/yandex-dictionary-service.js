@@ -8,15 +8,14 @@ export class YandexDictionaryService {
 
     async getTranscription(word) {
         try {
-            console.log(`🔍 Yandex Tech-Only: Searching for "${word}"`);
+            console.log(`🔍 Yandex: Searching for "${word}"`);
             
-            // Правильные параметры для tech-only API
             const response = await axios.get(this.baseUrl, {
                 params: {
                     key: this.apiKey,
-                    lang: 'en-ru',  // Английский -> Русский
+                    lang: 'en-ru',
                     text: word.toLowerCase(),
-                    flags: 0x0004   // Флаг для получения транскрипции
+                    flags: 0x0004
                 },
                 timeout: 5000
             });
@@ -52,12 +51,10 @@ export class YandexDictionaryService {
         try {
             const definition = data.def[0];
             
-            // Yandex хранит транскрипцию в поле "ts"
             if (definition.ts) {
                 return `/${definition.ts}/`;
             }
             
-            // Также проверяем транскрипцию в переводах
             if (definition.tr && definition.tr.length > 0) {
                 for (const translation of definition.tr) {
                     if (translation.ts) {
@@ -77,17 +74,8 @@ export class YandexDictionaryService {
 
     async getAudioUrl(word) {
         try {
-            // Используем Google TTS для аудио (надежный вариант)
             const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(word)}&tl=en-gb&client=tw-ob`;
-            
-            // Проверяем доступность URL
-            const isAvailable = await this.checkUrlAvailability(googleTtsUrl);
-            
-            if (isAvailable) {
-                return googleTtsUrl;
-            }
-            
-            return '';
+            return googleTtsUrl;
             
         } catch (error) {
             console.error('Audio URL generation failed:', error);
@@ -95,12 +83,8 @@ export class YandexDictionaryService {
         }
     }
 
-    async checkUrlAvailability(url) {
-        try {
-            const response = await axios.head(url, { timeout: 3000 });
-            return response.status === 200;
-        } catch (error) {
-            return false;
-        }
+    // ✅ ДОБАВЛЯЕМ МЕТОД ДЛЯ ПРОВЕРКИ РУССКОГО ТЕКСТА
+    isRussianText(text) {
+        return /[а-яА-Я]/.test(text);
     }
 }
