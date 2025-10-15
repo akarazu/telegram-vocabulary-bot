@@ -99,7 +99,7 @@ bot.on('message', async (msg) => {
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: englishWord,
-            tempTranscription: result.transcription, // ← Сохраняем транскрипцию!
+            tempTranscription: result.transcription,
             tempAudioUrl: result.audioUrl,
             tempAudioId: audioId
         });
@@ -136,31 +136,40 @@ bot.on('message', async (msg) => {
         const success = await sheetsService.addWord(
             chatId, 
             userState.tempWord, 
-            userState.tempTranscription, // ← Используем сохраненную транскрипцию!
+            userState.tempTranscription,
             translation,
             userState.tempAudioUrl
         );
         
-        // Очищаем состояние
+        // Очищаем состояние ПОСЛЕ успешного сохранения
         userStates.delete(chatId);
         
         if (success) {
             // ИСПОЛЬЗУЕМ ТУ ЖЕ ТРАНСКРИПЦИЮ ДЛЯ СООБЩЕНИЯ
             const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
+            
+            // Отправляем сообщение об успешном добавлении
             await bot.sendMessage(chatId, 
-                `✅ Слово добавлено в словарь!\n\n` +
-                `💬 <b>${userState.tempWord}</b>${transcriptionText} - ${translation}`,
+                `✅ <b>Слово добавлено в словарь!</b>\n\n` +
+                `💬 ${userState.tempWord}${transcriptionText} - <b>${translation}</b>\n\n` +
+                `Теперь оно будет доступно для повторения.`,
                 { 
                     parse_mode: 'HTML',
                     ...getMainMenu() 
                 }
             );
         } else {
-            await bot.sendMessage(chatId, '❌ Ошибка сохранения', getMainMenu());
+            await bot.sendMessage(chatId, 
+                '❌ <b>Ошибка сохранения</b>\n\nНе удалось сохранить слово в словарь. Попробуйте еще раз.',
+                { 
+                    parse_mode: 'HTML',
+                    ...getMainMenu() 
+                }
+            );
         }
     }
-    else if (!userState) {
-        // Если нет активного состояния, показываем главное меню
+    else {
+        // Если нет активного состояния И сообщение не команда, показываем главное меню
         await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
     }
 });
@@ -218,12 +227,11 @@ bot.on('callback_query', async (callbackQuery) => {
 
             // Переходим к вводу перевода - СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
-                ...userState, // ← Важно: сохраняем все данные включая транскрипцию!
+                ...userState,
                 state: 'waiting_translation'
             });
             
             // Отправляем новое сообщение с запросом перевода
-            // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ
             let translationMessage = `✏️ <b>Введите перевод для слова:</b>\n\n` +
                 `🇬🇧 <b>${userState.tempWord}</b>`;
             
@@ -260,7 +268,6 @@ bot.on('callback_query', async (callbackQuery) => {
             }
 
             // Возвращаемся к исходному сообщению со словом
-            // ИСПОЛЬЗУЕМ СОХРАНЕННУЮ ТРАНСКРИПЦИЮ
             const message = `📝 Слово: <b>${userState.tempWord}</b>\n` +
                 (userState.tempTranscription ? `🔤 Транскрипция: <code>${userState.tempTranscription}</code>\n\n` : '\n') +
                 '🎵 Аудио произношение доступно\n\n' +
@@ -285,7 +292,6 @@ bot.on('callback_query', async (callbackQuery) => {
             );
 
             // Возвращаемся к состоянию показа транскрипции
-            // СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
                 ...userState,
                 state: 'showing_transcription'
@@ -313,4 +319,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с исправленной транскрипцией');
+console.log('🤖 Бот запущен с исправленным процессом добавления слов');
