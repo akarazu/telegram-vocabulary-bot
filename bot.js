@@ -200,7 +200,7 @@ bot.onText(/\/start/, async (msg) => {
         '📚 Англо-русский словарь\n' +
         '🔤 С транскрипцией и произношением\n' +
         '🇬🇧 Британский вариант\n' +
-        '🤖 С AI-примерами использования'
+        '🤖 С контекстными примерами использования'
     );
 });
 
@@ -264,10 +264,10 @@ bot.on('message', async (msg) => {
                 audioId = Date.now().toString();
             }
             
-            // Генерируем примеры через AI API
-            const aiExamples = await exampleGenerator.generateExamples(englishWord, result.translations?.[0]);
+            // Генерируем общие примеры (без конкретного перевода)
+            const generalExamples = await exampleGenerator.generateExamples(englishWord);
             
-            // Сохраняем ВСЕ данные включая AI-примеры
+            // Сохраняем ВСЕ данные включая примеры
             userStates.set(chatId, {
                 state: 'showing_transcription',
                 tempWord: englishWord,
@@ -275,7 +275,7 @@ bot.on('message', async (msg) => {
                 tempAudioUrl: result.audioUrl || '',
                 tempAudioId: audioId,
                 tempTranslations: result.translations || [],
-                tempExamples: aiExamples, // Используем AI-примеры
+                tempExamples: generalExamples,
                 selectedTranslationIndices: []
             });
             
@@ -296,9 +296,9 @@ bot.on('message', async (msg) => {
                 message += `\n\n🎯 Найдено ${result.translations.length} вариантов перевода`;
             }
 
-            // Показываем AI-примеры использования
-            if (aiExamples && aiExamples.length > 0) {
-                message += `\n\n🤖 Сгенерировано ${aiExamples.length} примеров использования`;
+            // Показываем примеры использования
+            if (generalExamples && generalExamples.length > 0) {
+                message += `\n\n📝 Сгенерировано ${generalExamples.length} примеров использования`;
             }
             
             message += `\n\nВыберите действие:`;
@@ -321,6 +321,11 @@ bot.on('message', async (msg) => {
             return;
         }
         
+        // Генерируем контекстные примеры на основе введенного перевода
+        console.log('🔄 Regenerating examples based on manual translation...');
+        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, translation);
+        userState.tempExamples = contextExamples;
+        
         // Сохраняем ручной перевод
         await saveWordWithTranslation(chatId, userState, translation);
     }
@@ -339,6 +344,12 @@ bot.on('message', async (msg) => {
         // Добавляем пользовательский перевод к выбранным
         const allTranslations = [...selectedTranslations, customTranslation];
         const translationToSave = allTranslations.join(', ');
+        
+        // Генерируем контекстные примеры на основе основного перевода
+        const mainTranslation = selectedTranslations[0] || customTranslation;
+        console.log('🔄 Regenerating examples based on selected translation...');
+        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
+        userState.tempExamples = contextExamples;
         
         // Сохраняем слово
         await saveWordWithTranslation(chatId, userState, translationToSave);
@@ -511,6 +522,12 @@ bot.on('callback_query', async (callbackQuery) => {
                 const selectedTranslations = userState.selectedTranslationIndices
                     .map(index => userState.tempTranslations[index]);
                 
+                // Генерируем контекстные примеры на основе основного перевода
+                const mainTranslation = selectedTranslations[0];
+                console.log('🔄 Regenerating examples based on selected translation...');
+                const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
+                userState.tempExamples = contextExamples;
+                
                 // Объединяем через запятую для сохранения в таблице
                 const translationToSave = selectedTranslations.join(', ');
                 
@@ -607,6 +624,6 @@ bot.on('polling_error', (error) => {
 
 // Проверяем доступные API при запуске
 exampleGenerator.checkApisAvailability().then(availableApis => {
-    console.log('🤖 Бот запущен с AI-генерацией примеров');
-    console.log(`🔧 Доступные API: ${availableApis.length > 0 ? availableApis.join(', ') : 'Базовые примеры'}`);
+    console.log('🤖 Бот запущен с контекстной генерацией примеров');
+    console.log(`🔧 Доступные API: ${availableApis.join(', ')}`);
 });
