@@ -8,31 +8,31 @@ export class ExampleGeneratorService {
     async generateExamples(word, translation) {
         console.log(`🔄 Generating examples for: "${word}" -> "${translation}"`);
         
-        // ✅ ИСПОЛЬЗУЕМ ТОЛЬКО YANDEX API
-        if (this.useYandex) {
-            try {
-                console.log('🔍 PRIMARY: Trying Yandex API for examples...');
-                const yandexExamples = await this.getYandexExamples(word);
-                if (yandexExamples && yandexExamples.length > 0) {
-                    console.log(`✅ PRIMARY: Found ${yandexExamples.length} examples from Yandex`);
-                    return yandexExamples;
-                } else {
-                    console.log('❌ PRIMARY: No examples found in Yandex');
-                    return this.getGenericExamples(word, translation);
-                }
-            } catch (error) {
-                console.log('❌ PRIMARY: Yandex examples failed:', error.message);
+        if (!this.useYandex) {
+            console.log('❌ Yandex API key not available, using generic examples');
+            return this.getGenericExamples(word, translation);
+        }
+
+        try {
+            console.log('🔍 PRIMARY: Trying Yandex API for examples...');
+            const yandexExamples = await this.getYandexExamples(word);
+            
+            if (yandexExamples && yandexExamples.length > 0) {
+                console.log(`✅ PRIMARY: Found ${yandexExamples.length} examples from Yandex`);
+                return yandexExamples;
+            } else {
+                console.log('❌ PRIMARY: No examples found in Yandex response');
                 return this.getGenericExamples(word, translation);
             }
-        } else {
-            console.log('❌ Yandex API key not available, using generic examples');
+        } catch (error) {
+            console.log('❌ PRIMARY: Yandex examples failed:', error.message);
             return this.getGenericExamples(word, translation);
         }
     }
 
     async getYandexExamples(word) {
         try {
-            console.log(`🔍 Yandex API call for examples: "${word}"`);
+            console.log(`🔍 Yandex API call for: "${word}"`);
             
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
@@ -44,11 +44,16 @@ export class ExampleGeneratorService {
                 timeout: 10000
             });
 
-            console.log('📊 Yandex API response received');
+            console.log('✅ Yandex API response received');
+            
+            // ✅ ЛОГИРУЕМ ПОЛНЫЙ ОТВЕТ ДЛЯ ДЕБАГА
+            console.log('📊 Full Yandex response structure:');
+            console.log(JSON.stringify(response.data, null, 2));
+            
             return this.extractExamplesFromYandex(response.data, word);
             
         } catch (error) {
-            console.error('❌ Yandex examples error:', error.message);
+            console.error('❌ Yandex API error:', error.message);
             if (error.response) {
                 console.error('Yandex response status:', error.response.status);
                 console.error('Yandex response data:', error.response.data);
@@ -58,58 +63,77 @@ export class ExampleGeneratorService {
     }
 
     extractExamplesFromYandex(data, originalWord) {
-        // ✅ ВСЕГДА ВОЗВРАЩАЕМ МАССИВ
-        if (!data.def || !Array.isArray(data.def) || data.def.length === 0) {
-            console.log('❌ Yandex: No definitions found for examples');
+        if (!data || !data.def || !Array.isArray(data.def) || data.def.length === 0) {
+            console.log('❌ Yandex: No definitions in response');
             return [];
         }
 
         console.log(`🔍 Yandex found ${data.def.length} definition(s)`);
 
         const examples = [];
-        let exampleCount = 0;
+        let totalExamplesFound = 0;
 
-        // ✅ ПРАВИЛЬНО ОБРАБАТЫВАЕМ СТРУКТУРУ YANDEX API
-        for (const definition of data.def) {
-            if (exampleCount >= 3) break;
-            
-            // ✅ ИЩЕМ ПРИМЕРЫ В ПЕРЕВОДАХ (tr)
+        // ✅ ДЕТАЛЬНО ИССЛЕДУЕМ СТРУКТУРУ КАЖДОГО ОПРЕДЕЛЕНИЯ
+        data.def.forEach((definition, defIndex) => {
+            console.log(`\n🔍 Definition ${defIndex + 1}:`);
+            console.log('   Text:', definition.text);
+            console.log('   POS:', definition.pos);
+            console.log('   Has tr:', !!definition.tr);
+            console.log('   tr count:', definition.tr ? definition.tr.length : 0);
+
             if (definition.tr && Array.isArray(definition.tr)) {
-                for (const translation of definition.tr) {
-                    if (exampleCount >= 3) break;
-                    
-                    // ✅ ПРИМЕРЫ НАХОДЯТСЯ В ПОЛЕ "ex" КАЖДОГО ПЕРЕВОДА
+                definition.tr.forEach((translation, trIndex) => {
+                    console.log(`   🔍 Translation ${trIndex + 1}: "${translation.text}"`);
+                    console.log('      Has ex:', !!translation.ex);
+                    console.log('      ex count:', translation.ex ? translation.ex.length : 0);
+
+                    // ✅ ИЩЕМ ПРИМЕРЫ В КАЖДОМ ПЕРЕВОДЕ
                     if (translation.ex && Array.isArray(translation.ex)) {
-                        console.log(`🔍 Processing ${translation.ex.length} example(s) from translation: "${translation.text}"`);
+                        console.log(`      Processing ${translation.ex.length} example(s)...`);
                         
-                        for (const example of translation.ex) {
-                            if (exampleCount >= 3) break;
+                        translation.ex.forEach((example, exIndex) => {
+                            if (totalExamplesFound >= 3) return;
                             
-                            // ✅ ПРАВИЛЬНАЯ СТРУКТУРА ПРИМЕРА: example.text (англ) и example.tr[0].text (рус)
+                            console.log(`      🔍 Example ${exIndex + 1}:`);
+                            console.log('         English:', example.text);
+                            console.log('         Has tr:', !!example.tr);
+                            console.log('         tr:', example.tr);
+
                             if (example.text && example.tr && Array.isArray(example.tr) && example.tr[0]?.text) {
                                 const englishExample = example.text.trim();
                                 const russianExample = example.tr[0].text.trim();
                                 
                                 if (englishExample && russianExample) {
-                                    // ✅ ФОРМАТИРУЕМ ПРИМЕР КАК СТРОКУ
                                     const formattedExample = `${englishExample} - ${russianExample}`;
                                     examples.push(formattedExample);
-                                    exampleCount++;
-                                    console.log(`✅ Yandex example: "${formattedExample}"`);
+                                    totalExamplesFound++;
+                                    console.log(`      ✅ ADDED: "${formattedExample}"`);
+                                } else {
+                                    console.log('      ❌ Example missing English or Russian text');
                                 }
+                            } else {
+                                console.log('      ❌ Example structure invalid');
                             }
-                        }
+                        });
+                    } else {
+                        console.log('      ❌ No examples in this translation');
                     }
-                }
+                });
+            } else {
+                console.log('   ❌ No translations in this definition');
             }
+        });
+
+        console.log(`\n📊 FINAL: Extracted ${examples.length} examples from Yandex`);
+        
+        if (examples.length === 0) {
+            console.log('❌ No examples could be extracted from Yandex response');
         }
 
-        console.log(`📊 Extracted ${examples.length} examples from Yandex`);
         return examples;
     }
 
     getGenericExamples(word, translation) {
-        // ✅ ВСЕГДА ВОЗВРАЩАЕМ МАССИВ ИЗ 2 СТРОК (fallback)
         console.log('✏️  Using generic examples as fallback');
         return [
             `I often use the word "${word}" in my conversations. - Я часто использую слово "${translation}" в разговорах.`,
@@ -117,43 +141,23 @@ export class ExampleGeneratorService {
         ];
     }
 
-    // ✅ Дополнительный метод для форматирования примеров в читаемый вид
     formatExamplesForDisplay(examples) {
-        // ✅ ЗАЩИТА ОТ НЕКОРРЕКТНЫХ ДАННЫХ
-        if (!examples || !Array.isArray(examples)) {
-            return 'Примеры не найдены';
-        }
-        
-        if (examples.length === 0) {
+        if (!examples || !Array.isArray(examples) || examples.length === 0) {
             return 'Примеры не найдены';
         }
         
         return examples.map((example, index) => {
-            if (typeof example === 'string') {
-                return `${index + 1}. ${example}`;
-            } else {
-                return `${index + 1}. ${String(example)}`;
-            }
+            return `${index + 1}. ${typeof example === 'string' ? example : String(example)}`;
         }).join('\n');
     }
 
-    // ✅ НОВЫЙ МЕТОД: безопасное преобразование примеров для сохранения
     formatExamplesForStorage(examples) {
-        // ✅ ЗАЩИТА ОТ НЕКОРРЕКТНЫХ ДАННЫХ
-        if (!examples || !Array.isArray(examples)) {
+        if (!examples || !Array.isArray(examples) || examples.length === 0) {
             return '';
         }
         
-        if (examples.length === 0) {
-            return '';
-        }
-        
-        // ✅ ПРЕОБРАЗУЕМ ВСЕ ЭЛЕМЕНТЫ В СТРОКИ
-        const stringExamples = examples.map(example => {
-            return typeof example === 'string' ? example : String(example);
-        });
-        
-        // ✅ ОБЪЕДИНЯЕМ ЧЕРЕЗ РАЗДЕЛИТЕЛЬ
-        return stringExamples.join(' | ');
+        return examples.map(example => 
+            typeof example === 'string' ? example : String(example)
+        ).join(' | ');
     }
 }
