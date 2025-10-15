@@ -22,7 +22,7 @@ export class TranscriptionService {
             transcription: '', 
             audioUrl: '', 
             translations: [],
-            partOfSpeech: '' // ✅ ДОБАВЛЯЕМ ЧАСТЬ РЕЧИ
+            translationsWithPOS: [] // ✅ ДОБАВЛЯЕМ ПЕРЕВОДЫ С ЧАСТЯМИ РЕЧИ
         };
 
         // ✅ ПЕРВОЕ: получаем ВСЕ данные из Яндекс за один запрос
@@ -33,12 +33,12 @@ export class TranscriptionService {
                 result.transcription = yandexData.transcription || '';
                 result.audioUrl = yandexData.audioUrl || '';
                 result.translations = yandexData.translations || [];
-                result.partOfSpeech = yandexData.partOfSpeech || ''; // ✅ ЧАСТЬ РЕЧИ
+                result.translationsWithPOS = yandexData.translationsWithPOS || []; // ✅ ЧАСТИ РЕЧИ
                 
                 if (result.transcription) console.log('✅ PRIMARY: Yandex transcription found');
                 if (result.audioUrl) console.log('✅ PRIMARY: Yandex audio found');
-                if (result.partOfSpeech) console.log(`✅ PRIMARY: Yandex part of speech: ${result.partOfSpeech}`);
                 if (result.translations.length > 0) console.log(`✅ PRIMARY: Yandex translations found: ${result.translations.length}`);
+                if (result.translationsWithPOS.length > 0) console.log(`✅ PRIMARY: Yandex translations with POS: ${result.translationsWithPOS.length}`);
                 
             } catch (error) {
                 console.log('❌ PRIMARY: Yandex failed:', error.message);
@@ -86,7 +86,7 @@ export class TranscriptionService {
             transcription: result.transcription || '❌ Not found',
             audioUrl: result.audioUrl ? '✅ Found' : '❌ Not found',
             translations: result.translations.length,
-            partOfSpeech: result.partOfSpeech || '❌ Not found'
+            translationsWithPOS: result.translationsWithPOS.length
         });
 
         return result;
@@ -112,53 +112,58 @@ export class TranscriptionService {
             
         } catch (error) {
             console.error('❌ Yandex API error:', error.message);
-            return { transcription: '', audioUrl: '', translations: [], partOfSpeech: '' };
+            return { transcription: '', audioUrl: '', translations: [], translationsWithPOS: [] };
         }
     }
 
     // ✅ ОБНОВЛЕННЫЙ МЕТОД: извлекаем все данные из ответа Яндекс
-extractDataFromYandex(data, originalWord) {
-    const result = {
-        transcription: '',
-        audioUrl: '',
-        translations: [],
-        translationsWithPOS: [] // ✅ СОХРАНЯЕМ ПЕРЕВОДЫ С ЧАСТЯМИ РЕЧИ
-    };
+    extractDataFromYandex(data, originalWord) {
+        const result = {
+            transcription: '',
+            audioUrl: '',
+            translations: [],
+            translationsWithPOS: [] // ✅ ДОБАВЛЯЕМ ПЕРЕВОДЫ С ЧАСТЯМИ РЕЧИ
+        };
 
-    if (!data.def || data.def.length === 0) {
-        return result;
-    }
+        if (!data.def || data.def.length === 0) {
+            console.log('❌ Yandex: No definitions found');
+            return result;
+        }
 
-    const firstDefinition = data.def[0];
-    
-    // Извлекаем транскрипцию
-    if (firstDefinition.ts) {
-        result.transcription = `/${firstDefinition.ts}/`;
-    }
-    
-    // Извлекаем переводы с частями речи
-    if (firstDefinition.tr && Array.isArray(firstDefinition.tr)) {
-        firstDefinition.tr.forEach(translation => {
-            if (translation.text && translation.text.trim()) {
-                const russianTranslation = translation.text.trim();
-                if (this.isRussianText(russianTranslation)) {
-                    result.translations.push(russianTranslation);
-                    // ✅ СОХРАНЯЕМ ПЕРЕВОД С ЧАСТЬЮ РЕЧИ
-                    result.translationsWithPOS.push({
-                        text: russianTranslation,
-                        pos: translation.pos || firstDefinition.pos || 'unknown'
-                    });
-                }
-            }
-        });
-    }
-    
-    result.audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(originalWord)}&tl=en-gb&client=tw-ob`;
+        console.log(`🔍 Yandex found ${data.def.length} definition(s)`);
 
-    return result;
-}
+        const firstDefinition = data.def[0];
         
-        result.translations = Array.from(translations).slice(0, 4);
+        // ✅ ИЗВЛЕКАЕМ ТРАНСКРИПЦИЮ
+        if (firstDefinition.ts) {
+            result.transcription = `/${firstDefinition.ts}/`;
+            console.log(`✅ Yandex transcription: ${result.transcription}`);
+        }
+        
+        // ✅ ИЗВЛЕКАЕМ ПЕРЕВОДЫ С ЧАСТЯМИ РЕЧИ
+        if (firstDefinition.tr && Array.isArray(firstDefinition.tr)) {
+            const translations = new Set();
+            
+            firstDefinition.tr.forEach(translation => {
+                if (translation.text && translation.text.trim()) {
+                    const russianTranslation = translation.text.trim();
+                    if (this.isRussianText(russianTranslation) && 
+                        russianTranslation.toLowerCase() !== originalWord.toLowerCase()) {
+                        translations.add(russianTranslation);
+                        
+                        // ✅ СОХРАНЯЕМ ПЕРЕВОД С ЧАСТЬЮ РЕЧИ
+                        result.translationsWithPOS.push({
+                            text: russianTranslation,
+                            pos: translation.pos || firstDefinition.pos || 'unknown'
+                        });
+                        
+                        console.log(`✅ Yandex translation: "${russianTranslation}" (${translation.pos || firstDefinition.pos})`);
+                    }
+                }
+            });
+            
+            result.translations = Array.from(translations).slice(0, 4);
+        }
         
         // ✅ ГЕНЕРИРУЕМ АУДИО URL
         result.audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(originalWord)}&tl=en-gb&client=tw-ob`;
@@ -231,4 +236,3 @@ extractDataFromYandex(data, originalWord) {
         return [`перевод для "${word}"`];
     }
 }
-
