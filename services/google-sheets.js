@@ -82,39 +82,72 @@ export class GoogleSheetsService {
         }
     }
 
-    async addWord(chatId, english, transcription, translation, audioUrl = '', examples = '') {
-        if (!this.initialized) {
-            console.log('❌ Google Sheets not initialized');
-            return false;
-        }
+  async addWordWithExamples(chatId, english, transcription, translation, audioUrl = '', examples = []) {
+    console.log(`💾 GoogleSheetsService.addWordWithExamples called:`, {
+        chatId,
+        english,
+        transcription,
+        translation,
+        audioUrl: audioUrl ? 'exists' : 'empty',
+        examplesCount: examples.length
+    });
 
-        try {
-            const timestamp = new Date().toISOString();
-            
-            const response = await this.sheets.spreadsheets.values.append({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:G', // Добавляем колонку для timestamp
-                valueInputOption: 'RAW',
-                requestBody: {
-                    values: [[
-                        chatId.toString(),
-                        english.toLowerCase(),
-                        transcription || '',
-                        translation,
-                        audioUrl || '',
-                        examples || '',
-                        timestamp
-                    ]]
-                }
-            });
-
-            console.log(`✅ Word "${english}" saved to Google Sheets`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error saving word to Google Sheets:', error.message);
-            return false;
-        }
+    if (!this.initialized) {
+        console.log('❌ Google Sheets not initialized');
+        return false;
     }
+
+    if (!this.spreadsheetId) {
+        console.log('❌ No spreadsheetId configured');
+        return false;
+    }
+
+    try {
+        const examplesText = Array.isArray(examples) ? examples.join(' | ') : examples;
+        const timestamp = new Date().toISOString();
+        
+        console.log('📝 Preparing data for Google Sheets:', {
+            examplesText,
+            timestamp
+        });
+        
+        const requestBody = {
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:G',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[
+                    chatId.toString(),
+                    english.toLowerCase(),
+                    transcription || '',
+                    translation,
+                    audioUrl || '',
+                    examplesText,
+                    timestamp
+                ]]
+            }
+        };
+
+        console.log('🔄 Sending request to Google Sheets API...');
+        const response = await this.sheets.spreadsheets.values.append(requestBody);
+
+        console.log('✅ Google Sheets API response:', {
+            status: response.status,
+            updatedRows: response.data.updates?.updatedRows,
+            updatedCells: response.data.updates?.updatedCells
+        });
+
+        console.log(`✅ Word "${english}" saved with examples to Google Sheets`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error saving word with examples to Google Sheets:', {
+            message: error.message,
+            code: error.code,
+            response: error.response?.data
+        });
+        return false;
+    }
+}
 
     async getUserWords(chatId) {
         if (!this.initialized) {
@@ -180,3 +213,4 @@ export class GoogleSheetsService {
         }
     }
 }
+
