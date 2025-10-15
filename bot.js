@@ -168,7 +168,12 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         
         // Генерируем примеры
         console.log('🔄 Generating examples...');
-        const examples = await exampleGenerator.generateExamples(userState.tempWord, translation);
+        const partOfSpeech = this.detectPartOfSpeech(userState.tempTranslations[0]); // или из Яндекс API
+const examples = await exampleGenerator.generateExamples(
+    userState.tempWord, 
+    translation, 
+    partOfSpeech
+);
         console.log(`✅ Generated examples:`, examples);
         
         // ✅ ПРАВИЛЬНО ОБРАБАТЫВАЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
@@ -602,5 +607,6 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
 
