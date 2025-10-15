@@ -132,37 +132,37 @@ function addAudioToHistory(chatId, audioUrl, word) {
     }
 }
 
-// Функция для генерации и показа примеров при выборе перевода
-async function generateAndShowExamples(chatId, userState) {
-    if (userState.selectedTranslationIndices.length === 0) {
-        return;
-    }
-
-    const selectedTranslations = userState.selectedTranslationIndices
-        .map(index => userState.tempTranslations[index]);
-    const mainTranslation = selectedTranslations[0];
-
-    if (!mainTranslation) {
-        return;
-    }
-
+// ✅ НОВАЯ ФУНКЦИЯ: Асинхронная генерация и сохранение примеров после сохранения слова
+async function generateAndSaveExamplesAfterSave(chatId, englishWord, translation) {
     try {
-        console.log(`🔄 Generating examples for selected translation: "${mainTranslation}"`);
-        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
+        console.log(`🔄 Generating examples after save for: "${englishWord}" with translation: "${translation}"`);
         
-        if (contextExamples && contextExamples.length > 0) {
-            // Обновляем примеры в состоянии
-            userState.tempExamples = contextExamples;
+        // Генерируем примеры на основе перевода
+        const examples = await exampleGenerator.generateExamples(englishWord, translation);
+        
+        if (examples && examples.length > 0) {
+            // Сохраняем примеры в Google Sheets
+            const examplesText = examples.join(' | ');
+            const success = await sheetsService.updateWordExamples(chatId, englishWord, examplesText);
             
-            let examplesMessage = `📝 Примеры использования для перевода "${mainTranslation}":\n\n`;
-            contextExamples.forEach((example, index) => {
-                examplesMessage += `${index + 1}️⃣ ${example}\n\n`;
-            });
-            
-            await bot.sendMessage(chatId, examplesMessage);
+            if (success) {
+                console.log(`✅ Examples saved for word "${englishWord}"`);
+                
+                // Отправляем уведомление пользователю
+                let examplesMessage = `📝 Сгенерированы примеры использования для слова "${englishWord}":\n\n`;
+                examples.forEach((example, index) => {
+                    examplesMessage += `${index + 1}️⃣ ${example}\n\n`;
+                });
+                
+                await bot.sendMessage(chatId, examplesMessage);
+            } else {
+                console.log(`❌ Failed to save examples for word "${englishWord}"`);
+            }
+        } else {
+            console.log(`❌ No examples generated for word "${englishWord}"`);
         }
     } catch (error) {
-        console.error('Error generating examples:', error);
+        console.error('Error generating examples after save:', error);
     }
 }
 
@@ -185,15 +185,21 @@ async function saveWordWithTranslation(chatId, userState, translation) {
             return;
         }
         
-        // Сохраняем слово с примерами использования
+        // ✅ Сохраняем слово БЕЗ примеров (они будут сгенерированы позже)
         success = await sheetsService.addWord(
             chatId, 
             userState.tempWord, 
             userState.tempTranscription,
             translation,
             userState.tempAudioUrl,
-            userState.tempExamples?.join(' | ') // Сохраняем примеры через разделитель
+            '' // Пустая строка для примеров - они будут добавлены позже
         );
+
+        // ✅ ЗАПУСКАЕМ АСИНХРОННУЮ ГЕНЕРАЦИЮ ПРИМЕРОВ ПОСЛЕ СОХРАНЕНИЯ
+        if (success) {
+            generateAndSaveExamplesAfterSave(chatId, userState.tempWord, translation)
+                .catch(error => console.error('Background examples generation failed:', error));
+        }
     }
     
     userStates.delete(chatId);
@@ -202,18 +208,8 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
         
         let successMessage = '✅ Слово добавлено в словарь!\n\n' +
-            `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n`;
-        
-        // Показываем примеры в сообщении об успехе
-        if (userState.tempExamples && userState.tempExamples.length > 0) {
-            successMessage += '📝 Примеры использования:\n';
-            userState.tempExamples.forEach((example, index) => {
-                successMessage += `\n${index + 1}️⃣ ${example}`;
-            });
-            successMessage += '\n\n';
-        }
-        
-        successMessage += 'Теперь оно будет доступно для повторения.';
+            `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n` +
+            '🤖 Примеры использования будут сгенерированы и добавлены в течение минуты...';
         
         await showMainMenu(chatId, successMessage);
     } else {
@@ -289,7 +285,6 @@ bot.on('message', async (msg) => {
                 audioId = Date.now().toString();
             }
             
-            // ✅ НЕ ГЕНЕРИРУЕМ ПРИМЕРЫ ПРИ ДОБАВЛЕНИИ СЛОВА - только при выборе перевода
             userStates.set(chatId, {
                 state: 'showing_transcription',
                 tempWord: englishWord,
@@ -297,7 +292,7 @@ bot.on('message', async (msg) => {
                 tempAudioUrl: result.audioUrl || '',
                 tempAudioId: audioId,
                 tempTranslations: result.translations || [],
-                tempExamples: [], // Пустой массив - примеры будут сгенерированы позже
+                tempExamples: [], // Пустой массив - примеры будут сгенерированы после сохранения
                 selectedTranslationIndices: []
             });
             
@@ -317,7 +312,6 @@ bot.on('message', async (msg) => {
                 message += `\n\n🎯 Найдено ${result.translations.length} вариантов перевода`;
             }
             
-            // ✅ НЕ ПОКАЗЫВАЕМ ИНФОРМАЦИЮ О ПРИМЕРАХ - их еще нет
             message += `\n\nВыберите действие:`;
             
             await bot.sendMessage(chatId, message, getListeningKeyboard(audioId));
@@ -338,11 +332,7 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // Генерируем примеры на основе введенного перевода
-        console.log('🔄 Generating examples based on manual translation...');
-        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, translation);
-        userState.tempExamples = contextExamples;
-        
+        // ✅ НЕ генерируем примеры здесь - они будут сгенерированы после сохранения
         await saveWordWithTranslation(chatId, userState, translation);
     }
     else if (userState?.state === 'waiting_custom_translation_with_selected') {
@@ -359,12 +349,7 @@ bot.on('message', async (msg) => {
         const allTranslations = [...selectedTranslations, customTranslation];
         const translationToSave = allTranslations.join(', ');
         
-        // Генерируем примеры на основе основного перевода
-        const mainTranslation = selectedTranslations[0] || customTranslation;
-        console.log('🔄 Generating examples based on selected translation...');
-        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
-        userState.tempExamples = contextExamples;
-        
+        // ✅ НЕ генерируем примеры здесь - они будут сгенерированы после сохранения
         await saveWordWithTranslation(chatId, userState, translationToSave);
     }
     else {
@@ -381,7 +366,49 @@ bot.on('callback_query', async (callbackQuery) => {
     await bot.answerCallbackQuery(callbackQuery.id);
 
     if (data.startsWith('audio_')) {
-        // ... (код обработки аудио без изменений)
+        const audioId = data.replace('audio_', '');
+        const audioUrl = userState?.tempAudioUrl;
+        const englishWord = userState?.tempWord;
+        
+        if (audioUrl && englishWord) {
+            try {
+                await bot.editMessageReplyMarkup(
+                    { inline_keyboard: [] },
+                    { chat_id: chatId, message_id: callbackQuery.message.message_id }
+                );
+
+                addAudioToHistory(chatId, audioUrl, englishWord);
+                const hasPrevious = hasPreviousAudios(chatId, audioUrl);
+                
+                await bot.sendAudio(chatId, audioUrl, {
+                    caption: `🔊 Британское произношение: ${englishWord}`
+                });
+
+                if (hasPrevious) {
+                    await bot.sendMessage(chatId,
+                        '⚠️ Чтобы избежать автовоспроизведения старых аудио:\n\n' +
+                        '📱 На Android:\n' +
+                        '• Нажмите кнопку "Назад" после прослушивания\n' +
+                        '• Или закройте плеер свайпом вниз\n\n' +
+                        '📱 На iOS:\n' +
+                        '• Свайпните плеер вниз\n' +
+                        '• Или нажмите "Закрыть"\n\n' +
+                        '💡 Это нужно сделать только если начали играть старые слова'
+                    );
+                }
+                
+                await bot.sendMessage(chatId, 
+                    '🎵 Вы прослушали произношение. Хотите ввести перевод?',
+                    getAfterAudioKeyboard()
+                );
+                
+                await showMainMenu(chatId);
+                
+            } catch (error) {
+                console.error('Error sending audio:', error);
+                await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио');
+            }
+        }
     }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
@@ -403,14 +430,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     
                     if (userState.tempTranscription) {
                         translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-                    }
-
-                    // ✅ ПОКАЗЫВАЕМ ПРИМЕРЫ ТОЛЬКО ЕСЛИ ОНИ УЖЕ ЕСТЬ (после выбора перевода)
-                    if (userState.tempExamples && userState.tempExamples.length > 0) {
-                        translationMessage += '\n\n📝 Примеры использования:\n';
-                        userState.tempExamples.forEach((example, index) => {
-                            translationMessage += `\n${index + 1}️⃣ ${example}`;
-                        });
                     }
 
                     translationMessage += '\n\n💡 Нажимайте на варианты для выбора, затем нажмите "Сохранить"';
@@ -464,11 +483,6 @@ bot.on('callback_query', async (callbackQuery) => {
                         message_id: callbackQuery.message.message_id
                     }
                 );
-
-                // ✅ ГЕНЕРИРУЕМ И ПОКАЗЫВАЕМ ПРИМЕРЫ ПОСЛЕ ВЫБОРА ПЕРЕВОДА
-                if (selectedIndices.length > 0) {
-                    await generateAndShowExamples(chatId, userState);
-                }
                 
             } catch (error) {
                 console.error('Error toggling translation:', error);
@@ -481,14 +495,6 @@ bot.on('callback_query', async (callbackQuery) => {
                 const selectedTranslations = userState.selectedTranslationIndices
                     .map(index => userState.tempTranslations[index]);
                 
-                // ✅ УБЕЖДАЕМСЯ ЧТО ПРИМЕРЫ СГЕНЕРИРОВАНЫ ПЕРЕД СОХРАНЕНИЕМ
-                if (!userState.tempExamples || userState.tempExamples.length === 0) {
-                    const mainTranslation = selectedTranslations[0];
-                    console.log('🔄 Generating final examples before saving...');
-                    const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
-                    userState.tempExamples = contextExamples;
-                }
-                
                 const translationToSave = selectedTranslations.join(', ');
                 await saveWordWithTranslation(chatId, userState, translationToSave);
                 
@@ -500,10 +506,62 @@ bot.on('callback_query', async (callbackQuery) => {
         }
     }
     else if (data === 'custom_translation') {
-        // ... (код custom_translation без изменений)
+        if (userState?.state === 'choosing_translation') {
+            try {
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'waiting_custom_translation_with_selected'
+                });
+                
+                let translationMessage = '✏️ Введите свой вариант перевода:\n\n' +
+                    `🇬🇧 ${userState.tempWord}`;
+                
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+                
+                if (userState.selectedTranslationIndices.length > 0) {
+                    const selectedTranslations = userState.selectedTranslationIndices
+                        .map(index => userState.tempTranslations[index]);
+                    translationMessage += `\n\n✅ Уже выбрано: ${selectedTranslations.join(', ')}`;
+                }
+                
+                translationMessage += '\n\n💡 Ваш перевод будет добавлен к выбранным вариантам';
+                
+                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                
+                await showMainMenu(chatId, translationMessage);
+            } catch (error) {
+                console.error('Error in custom_translation:', error);
+                await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
+            }
+        }
     }
     else if (data === 'cancel_translation') {
-        // ... (код cancel_translation без изменений)
+        if (userState) {
+            try {
+                await bot.editMessageReplyMarkup(
+                    { inline_keyboard: [] },
+                    { chat_id: chatId, message_id: callbackQuery.message.message_id }
+                );
+
+                userStates.set(chatId, { ...userState, state: 'showing_transcription' });
+                
+                let message = `📝 Слово: ${userState.tempWord}`;
+                
+                if (userState.tempTranscription) {
+                    message += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+                
+                message += '\n\n🎵 Доступно аудио произношение\n\nВыберите действие:';
+                
+                await bot.sendMessage(chatId, message, getListeningKeyboard(userState.tempAudioId));
+                await showMainMenu(chatId);
+            } catch (error) {
+                console.error('Error canceling translation:', error);
+                await bot.sendMessage(chatId, '❌ Ошибка при отмене');
+            }
+        }
     }
 });
 
@@ -516,4 +574,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с отложенной генерацией примеров');
+console.log('🤖 Бот запущен с генерацией примеров после сохранения');
