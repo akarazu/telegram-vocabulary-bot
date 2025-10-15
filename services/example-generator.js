@@ -2,103 +2,107 @@ import axios from 'axios';
 
 export class ExampleGeneratorService {
     constructor() {
-        this.useYandex = !!process.env.YANDEX_DICTIONARY_API_KEY;
-        console.log('🔧 ExampleGeneratorService initialized, useYandex:', this.useYandex);
+        console.log('🔧 ExampleGeneratorService initialized - Using Free Dictionary API');
     }
 
     async generateExamples(word, translation) {
         console.log(`\n🔄 ========== GENERATING EXAMPLES ==========`);
         console.log(`🔄 Input: word="${word}", translation="${translation}"`);
         
-        // ✅ ВРЕМЕННО ИСПОЛЬЗУЕМ ТОЛЬКО КОНТЕКСТНЫЕ ПРИМЕРЫ
-        // чтобы избежать проблем с API пока решаем проблему с Telegram
-        console.log('⚠️  Temporarily using contextual examples due to Telegram conflicts');
-        return this.generateContextualExamples(word, translation);
-        
-        /*
-        // Раскомментируйте когда решите проблему с Telegram
-        if (!this.useYandex) {
-            console.log('❌ Yandex API key not available, using contextual examples');
-            return this.generateContextualExamples(word, translation);
-        }
-
+        // ✅ ПЕРВОЕ: пробуем Free Dictionary API
         try {
-            console.log('🔍 PRIMARY: Trying Yandex JSON API for examples...');
-            const yandexExamples = await this.getYandexExamples(word);
-            
-            if (yandexExamples && yandexExamples.length > 0) {
-                console.log(`✅ PRIMARY SUCCESS: Found ${yandexExamples.length} examples from Yandex`);
-                return yandexExamples;
+            console.log('🔍 PRIMARY: Trying Free Dictionary API for examples...');
+            const freeDictExamples = await this.getFreeDictionaryExamples(word);
+            if (freeDictExamples && freeDictExamples.length > 0) {
+                console.log(`✅ PRIMARY SUCCESS: Found ${freeDictExamples.length} examples from Free Dictionary`);
+                return freeDictExamples;
             } else {
-                console.log('❌ PRIMARY FAILED: No examples found in Yandex response');
+                console.log('❌ PRIMARY FAILED: No examples found in Free Dictionary');
                 return this.generateContextualExamples(word, translation);
             }
         } catch (error) {
-            console.log('❌ PRIMARY ERROR: Yandex examples failed:', error.message);
+            console.log('❌ PRIMARY ERROR: Free Dictionary API failed:', error.message);
             return this.generateContextualExamples(word, translation);
         }
-        */
     }
 
-    async getYandexExamples(word) {
+    async getFreeDictionaryExamples(word) {
         try {
-            console.log(`🔍 Yandex JSON API call for: "${word}"`);
+            console.log(`🔍 Free Dictionary API call for: "${word}"`);
             
-            const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
-                params: {
-                    key: process.env.YANDEX_DICTIONARY_API_KEY,
-                    lang: 'en-ru',
-                    text: word,
-                    ui: 'ru'
-                    // Без флагов - используем настройки по умолчанию
-                },
-                timeout: 5000
-            });
+            const response = await axios.get(
+                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
+                { timeout: 5000 }
+            );
 
-            console.log('✅ Yandex JSON API response received');
-            return this.extractExamplesFromYandexJSON(response.data, word);
+            console.log('✅ Free Dictionary API response received');
+            return this.extractExamplesFromFreeDictionary(response.data, word);
             
         } catch (error) {
-            console.error('❌ Yandex JSON API error:', error.message);
+            console.error('❌ Free Dictionary API error:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                if (error.response.data) {
+                    console.error('Response data:', error.response.data);
+                }
+            }
             return [];
         }
     }
 
-    extractExamplesFromYandexJSON(data, originalWord) {
-        if (!data || !data.def || !Array.isArray(data.def)) {
-            console.log('❌ No valid data in Yandex JSON response');
+    extractExamplesFromFreeDictionary(data, originalWord) {
+        console.log(`\n🔍 ========== EXTRACTING FROM FREE DICTIONARY ==========`);
+        
+        if (!data || !Array.isArray(data) || data.length === 0) {
+            console.log('❌ No entries found in Free Dictionary response');
             return [];
         }
 
-        console.log(`🔍 Processing ${data.def.length} definition(s) from Yandex JSON`);
+        console.log(`📊 Found ${data.length} entry/entries`);
 
         const examples = [];
+        let exampleCount = 0;
 
-        // ✅ ОБРАБАТЫВАЕМ JSON СТРУКТУРУ YANDEX
-        data.def.forEach(definition => {
-            if (definition.tr && Array.isArray(definition.tr)) {
-                definition.tr.forEach(translation => {
-                    // ✅ ПРОВЕРЯЕМ ПОЛЕ "ex" В КАЖДОМ ПЕРЕВОДЕ
-                    if (translation.ex && Array.isArray(translation.ex)) {
-                        translation.ex.forEach(example => {
-                            if (example.text && example.tr && Array.isArray(example.tr)) {
-                                const englishExample = example.text.trim();
-                                const russianExample = example.tr[0]?.text?.trim();
-                                
-                                if (englishExample && russianExample) {
-                                    const formattedExample = `${englishExample} - ${russianExample}`;
-                                    examples.push(formattedExample);
-                                    console.log(`✅ Yandex JSON example: "${formattedExample}"`);
-                                }
+        data.forEach((entry, entryIndex) => {
+            console.log(`\n📖 Entry ${entryIndex + 1}: "${entry.word}"`);
+            
+            if (entry.meanings && Array.isArray(entry.meanings)) {
+                console.log(`   📚 Found ${entry.meanings.length} meaning(s)`);
+                
+                entry.meanings.forEach((meaning, meaningIndex) => {
+                    console.log(`   🔍 Meaning ${meaningIndex + 1}: ${meaning.partOfSpeech || 'unknown'}`);
+                    
+                    if (meaning.definitions && Array.isArray(meaning.definitions)) {
+                        console.log(`      📝 Found ${meaning.definitions.length} definition(s)`);
+                        
+                        meaning.definitions.forEach((definition, defIndex) => {
+                            if (exampleCount >= 3) return;
+                            
+                            console.log(`      🔍 Definition ${defIndex + 1}:`);
+                            console.log(`         Definition: ${definition.definition}`);
+                            console.log(`         Has example: ${!!definition.example}`);
+                            
+                            // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ ПОЛЯ "example"
+                            if (definition.example && definition.example.trim()) {
+                                const englishExample = definition.example.trim();
+                                const formattedExample = `${englishExample} - Пример использования`;
+                                examples.push(formattedExample);
+                                exampleCount++;
+                                console.log(`         ✅ ADDED: "${formattedExample}"`);
                             }
                         });
                     }
                 });
             }
+            
+            // ✅ ТАКЖЕ ПРОВЕРЯЕМ ПОЛЕ "sourceUrls" ДЛЯ ДОПОЛНИТЕЛЬНЫХ ПРИМЕРОВ
+            if (entry.sourceUrls && Array.isArray(entry.sourceUrls) && entry.sourceUrls.length > 0) {
+                console.log(`   🔗 Source URLs: ${entry.sourceUrls.length} available`);
+            }
         });
 
-        console.log(`📊 Extracted ${examples.length} examples from Yandex JSON`);
-        return examples.slice(0, 3);
+        console.log(`\n📊 FINAL: Extracted ${examples.length} examples from Free Dictionary`);
+        return examples;
     }
 
     generateContextualExamples(word, translation) {
