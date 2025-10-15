@@ -14,39 +14,58 @@ export class ExampleGeneratorService {
         try {
             console.log(`🤖 Generating examples for: "${word}" with translation: "${selectedTranslation}"`);
             
-            // Если есть выбранный перевод, генерируем примеры на его основе
+            // Если есть выбранный перевод, пробуем получить контекстные примеры
             if (selectedTranslation) {
-                console.log(`🔧 Generating context-based examples for: "${selectedTranslation}"`);
-                const contextExamples = await this.generateContextExamples(word, selectedTranslation);
-                if (contextExamples.length > 0) {
-                    return contextExamples;
+                console.log(`🔧 Getting context-based examples for: "${selectedTranslation}"`);
+                
+                // Сначала пробуем Яндекс с конкретным переводом
+                if (this.yandexApiKey) {
+                    const yandexExamples = await this.generateWithYandex(word, selectedTranslation);
+                    if (yandexExamples.length > 0) {
+                        console.log(`✅ Yandex found ${yandexExamples.length} context examples`);
+                        return yandexExamples;
+                    }
+                }
+                
+                // Затем пробуем FreeDictionary с контекстом
+                const freeDictExamples = await this.generateWithFreeDictionary(word, selectedTranslation);
+                if (freeDictExamples.length > 0) {
+                    console.log(`✅ FreeDictionary found ${freeDictExamples.length} context examples`);
+                    return freeDictExamples;
+                }
+                
+                // Если API не дали результатов, генерируем контекстные примеры
+                console.log('🔧 Generating contextual examples based on translation');
+                const contextualExamples = this.generateContextualExamples(word, selectedTranslation);
+                if (contextualExamples.length > 0) {
+                    return contextualExamples;
                 }
             }
             
-            // Если нет перевода или не удалось сгенерировать, используем обычные примеры
+            // Если нет перевода или не удалось сгенерировать контекстные, используем общие примеры
+            console.log('🔧 Getting general examples');
             for (const apiName of this.freeApis) {
-                console.log(`🔧 Trying ${apiName}...`);
                 let examples = [];
                 
                 switch (apiName) {
                     case 'YandexDictionary':
                         if (this.yandexApiKey) {
-                            examples = await this.generateWithYandex(word, selectedTranslation);
+                            examples = await this.generateWithYandex(word);
                         }
                         break;
                     case 'FreeDictionary':
-                        examples = await this.generateWithFreeDictionary(word, selectedTranslation);
+                        examples = await this.generateWithFreeDictionary(word);
                         break;
                 }
                 
                 if (examples.length > 0) {
-                    console.log(`✅ ${apiName} found ${examples.length} examples`);
+                    console.log(`✅ ${apiName} found ${examples.length} general examples`);
                     return examples;
                 }
             }
             
-            // Fallback на базовые примеры с учетом перевода
-            console.log('🔧 All APIs failed, using basic examples');
+            // Fallback на базовые примеры
+            console.log('🔧 Using basic examples');
             return this.generateBasicExamples(word, selectedTranslation);
             
         } catch (error) {
@@ -55,68 +74,7 @@ export class ExampleGeneratorService {
         }
     }
 
-    async generateContextExamples(word, translation) {
-        try {
-            // Генерируем примеры, которые отражают конкретное значение слова
-            const contextExamples = [
-                `In the sense of "${translation}", the word "${word}" can be used like this.`,
-                `When "${word}" means "${translation}", you might say:`,
-                `For the meaning "${translation}", here's an example with "${word}":`,
-                `As "${translation}", the word "${word}" appears in contexts like this.`,
-                `If "${word}" refers to "${translation}", it could be used in this way.`
-            ];
-            
-            // Добавляем конкретные примеры в зависимости от перевода
-            const specificExamples = this.getSpecificExamplesByTranslation(word, translation);
-            return [...specificExamples, ...contextExamples].slice(0, 3);
-            
-        } catch (error) {
-            console.error('❌ Context examples error:', error.message);
-            return [];
-        }
-    }
-
-    getSpecificExamplesByTranslation(word, translation) {
-        // Генерируем конкретные примеры в зависимости от типа перевода
-        const examples = [];
-        
-        if (translation.includes('глагол') || translation.includes('verb') || 
-            translation.includes('действие')) {
-            examples.push(
-                `You can ${word} every day to improve your skills.`,
-                `She will ${word} the document before sending it.`,
-                `They ${word}ed together on the project.`
-            );
-        } 
-        else if (translation.includes('существительное') || translation.includes('noun') ||
-                 translation.includes('предмет')) {
-            examples.push(
-                `The ${word} was on the table.`,
-                `I need to buy a new ${word} for my room.`,
-                `This ${word} is very important for the process.`
-            );
-        }
-        else if (translation.includes('прилагательное') || translation.includes('adjective') ||
-                 translation.includes('качество')) {
-            examples.push(
-                `It was a very ${word} experience.`,
-                `She has a ${word} personality.`,
-                `The weather is ${word} today.`
-            );
-        }
-        else {
-            // Общие примеры для других частей речи
-            examples.push(
-                `I really like the word "${word}" when it means "${translation}".`,
-                `The term "${word}" in the context of "${translation}" is commonly used.`,
-                `When learning English, understanding "${word}" as "${translation}" is key.`
-            );
-        }
-        
-        return examples;
-    }
-
-    async generateWithYandex(word, translation = null) {
+    async generateWithYandex(word, targetTranslation = null) {
         try {
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
@@ -128,8 +86,7 @@ export class ExampleGeneratorService {
                 timeout: 5000
             });
 
-            const examples = this.extractExamplesFromYandex(response.data, word, translation);
-            return examples.slice(0, 3);
+            return this.extractExamplesFromYandex(response.data, word, targetTranslation);
             
         } catch (error) {
             console.error('❌ Yandex Dictionary error:', error.message);
@@ -148,16 +105,19 @@ export class ExampleGeneratorService {
             if (definition.tr && definition.tr.length > 0) {
                 definition.tr.forEach(translation => {
                     // Если указан конкретный перевод, ищем примеры только для него
-                    if (targetTranslation && translation.text !== targetTranslation) {
+                    const translationText = translation.text || '';
+                    if (targetTranslation && translationText !== targetTranslation) {
                         return;
                     }
                     
                     // Примеры из основного перевода
                     if (translation.ex && translation.ex.length > 0) {
                         translation.ex.forEach(example => {
-                            if (example.text && example.tr && example.tr[0] && example.tr[0].text) {
-                                const englishExample = example.text;
-                                if (englishExample.toLowerCase().includes(word.toLowerCase())) {
+                            if (example.text) {
+                                const englishExample = example.text.trim();
+                                // Проверяем, что пример содержит слово и имеет разумную длину
+                                if (englishExample.toLowerCase().includes(word.toLowerCase()) &&
+                                    englishExample.length > 15 && englishExample.length < 200) {
                                     examples.push(englishExample);
                                 }
                             }
@@ -165,12 +125,25 @@ export class ExampleGeneratorService {
                     }
                 });
             }
+            
+            // Также проверяем примеры на уровне определения
+            if (definition.ex && definition.ex.length > 0) {
+                definition.ex.forEach(example => {
+                    if (example.text) {
+                        const englishExample = example.text.trim();
+                        if (englishExample.toLowerCase().includes(word.toLowerCase()) &&
+                            englishExample.length > 15 && englishExample.length < 200) {
+                            examples.push(englishExample);
+                        }
+                    }
+                });
+            }
         });
 
-        return examples;
+        return examples.slice(0, 3);
     }
 
-    async generateWithFreeDictionary(word, translation = null) {
+    async generateWithFreeDictionary(word, targetTranslation = null) {
         try {
             const response = await axios.get(
                 `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`,
@@ -183,12 +156,6 @@ export class ExampleGeneratorService {
                 for (const entry of response.data) {
                     if (entry.meanings && Array.isArray(entry.meanings)) {
                         for (const meaning of entry.meanings) {
-                            // Если есть конкретный перевод, пытаемся сопоставить с partOfSpeech
-                            if (translation && meaning.partOfSpeech) {
-                                const matchesTranslation = this.doesMeaningMatchTranslation(meaning, translation);
-                                if (!matchesTranslation) continue;
-                            }
-                            
                             if (meaning.definitions && Array.isArray(meaning.definitions)) {
                                 for (const definition of meaning.definitions) {
                                     if (definition.example && definition.example.trim()) {
@@ -214,48 +181,77 @@ export class ExampleGeneratorService {
         }
     }
 
-    doesMeaningMatchTranslation(meaning, translation) {
-        // Простая эвристика для сопоставления значения с переводом
-        const translationLower = translation.toLowerCase();
-        const partOfSpeech = meaning.partOfSpeech?.toLowerCase() || '';
+    generateContextualExamples(word, translation) {
+        // Генерируем контекстные примеры на основе перевода
+        const examples = [];
         
-        if (translationLower.includes('verb') || translationLower.includes('глагол')) {
-            return partOfSpeech.includes('verb');
+        // Определяем тип слова по переводу
+        const isVerb = translation.includes('глагол') || translation.match(/\b(verb|to\s+\w+)\b/i);
+        const isNoun = translation.includes('существительное') || translation.match(/\b(noun|the\s+\w+)\b/i);
+        const isAdjective = translation.includes('прилагательное') || translation.match(/\b(adjective)\b/i);
+        
+        if (isVerb) {
+            examples.push(
+                `You should ${word} regularly to maintain good habits.`,
+                `She will ${word} the proposal before the meeting.`,
+                `They have ${word}ed together on many projects.`,
+                `I need to ${word} more carefully next time.`,
+                `Can you show me how to ${word} correctly?`
+            );
+        } 
+        else if (isNoun) {
+            examples.push(
+                `The ${word} was placed on the shelf.`,
+                `We need to discuss this ${word} in detail.`,
+                `Her favorite ${word} is the one she bought yesterday.`,
+                `The ${word} plays a crucial role in the process.`,
+                `I'm looking for a specific ${word} for my collection.`
+            );
         }
-        if (translationLower.includes('noun') || translationLower.includes('существительное')) {
-            return partOfSpeech.includes('noun');
+        else if (isAdjective) {
+            examples.push(
+                `It was a ${word} experience that I'll never forget.`,
+                `She has such a ${word} personality that everyone likes her.`,
+                `The solution seems ${word} at first glance.`,
+                `This is the most ${word} thing I've ever seen.`,
+                `He felt ${word} after hearing the news.`
+            );
         }
-        if (translationLower.includes('adjective') || translationLower.includes('прилагательное')) {
-            return partOfSpeech.includes('adjective');
+        else {
+            // Общие контекстные примеры
+            examples.push(
+                `In the context of "${translation}", the word "${word}" is often used like this.`,
+                `When "${word}" means "${translation}", you might encounter it in this sentence.`,
+                `For the meaning "${translation}", here's a typical usage of "${word}".`,
+                `As "${translation}", "${word}" commonly appears in such contexts.`,
+                `If you understand "${word}" as "${translation}", this example will be helpful.`
+            );
         }
         
-        return true; // Если не можем определить, берем все примеры
+        // Выбираем 3 случайных примера
+        const shuffled = [...examples].sort(() => 0.5 - Math.random());
+        return shuffled.slice(0, 3);
     }
 
     generateBasicExamples(word, translation = null) {
         let basicExamples = [];
         
         if (translation) {
-            // Примеры с учетом конкретного перевода
             basicExamples = [
-                `When "${word}" means "${translation}", it can be used in this context.`,
-                `In the sense of "${translation}", here's an example: "${word}" plays an important role.`,
-                `For the meaning "${translation}", consider this usage of "${word}".`,
-                `As "${translation}", the word "${word}" appears in sentences like this.`,
-                `If you understand "${word}" as "${translation}", you might encounter it in this way.`
+                `When "${word}" means "${translation}", it can be used in various contexts.`,
+                `In the sense of "${translation}", here's how "${word}" might be used.`,
+                `For the meaning "${translation}", consider this example with "${word}".`
             ];
         } else {
-            // Общие примеры
             basicExamples = [
-                `I need to use the word "${word}" in my essay.`,
-                `Can you explain the meaning of "${word}"?`,
-                `The word "${word}" is commonly used in everyday conversation.`,
-                `She used the word "${word}" correctly in her sentence.`,
-                `Learning how to use "${word}" properly is important for English learners.`
+                `I need to use the word "${word}" in my writing.`,
+                `Can you explain how to use "${word}" correctly?`,
+                `The word "${word}" appears frequently in English texts.`,
+                `She used "${word}" appropriately in her speech.`,
+                `Learning to use "${word}" effectively is important.`
             ];
         }
         
-        // Выбираем случайные 3 примера
         const shuffled = [...basicExamples].sort(() => 0.5 - Math.random());
         return shuffled.slice(0, 3);
     }
