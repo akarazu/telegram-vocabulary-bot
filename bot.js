@@ -143,18 +143,20 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         if (isDuplicate) {
             showMainMenu(chatId, 
                 `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
-                'Пожалуйста, начните заново.'
+                'Пожалуйста, начните зановo.'
             );
             userStates.delete(chatId);
             return;
         }
         
+        // Сохраняем слово с примерами использования
         success = await sheetsService.addWord(
             chatId, 
             userState.tempWord, 
             userState.tempTranscription,
             translation,
-            userState.tempAudioUrl
+            userState.tempAudioUrl,
+            userState.tempExamples?.join(' | ') // Сохраняем примеры через разделитель
         );
     }
     
@@ -163,11 +165,21 @@ async function saveWordWithTranslation(chatId, userState, translation) {
     if (success) {
         const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
         
-        showMainMenu(chatId, 
-            '✅ Слово добавлено в словарь!\n\n' +
-            `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n` +
-            'Теперь оно будет доступно для повторения.'
-        );
+        let successMessage = '✅ Слово добавлено в словарь!\n\n' +
+            `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n`;
+        
+        // Показываем примеры в сообщении об успехе
+        if (userState.tempExamples && userState.tempExamples.length > 0) {
+            successMessage += '📝 Примеры использования:\n';
+            userState.tempExamples.forEach((example, index) => {
+                successMessage += `\n${index + 1}️⃣ ${example}`;
+            });
+            successMessage += '\n\n';
+        }
+        
+        successMessage += 'Теперь оно будет доступно для повторения.';
+        
+        showMainMenu(chatId, successMessage);
     } else {
         showMainMenu(chatId, 
             '❌ Ошибка сохранения\n\nНе удалось сохранить слово в словарь. Попробуйте еще раз.'
@@ -232,7 +244,7 @@ bot.on('message', async (msg) => {
             }
         }
         
-        showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение и варианты перевода...');
+        showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение, переводы и примеры использования...');
         
         const result = await transcriptionService.getUKTranscription(englishWord);
         
@@ -241,6 +253,7 @@ bot.on('message', async (msg) => {
             audioId = Date.now().toString();
         }
         
+        // Сохраняем ВСЕ данные включая примеры
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: englishWord,
@@ -248,7 +261,8 @@ bot.on('message', async (msg) => {
             tempAudioUrl: result.audioUrl,
             tempAudioId: audioId,
             tempTranslations: result.translations || [],
-            selectedTranslationIndices: [] // Новое поле для хранения выбранных вариантов
+            tempExamples: result.examples || [], // Сохраняем примеры
+            selectedTranslationIndices: []
         });
         
         let message = `📝 Слово: ${englishWord}`;
@@ -266,6 +280,11 @@ bot.on('message', async (msg) => {
         // Показываем доступные варианты перевода
         if (result.translations && result.translations.length > 0) {
             message += `\n\n🎯 Найдено ${result.translations.length} вариантов перевода`;
+        }
+
+        // Показываем примеры использования
+        if (result.examples && result.examples.length > 0) {
+            message += `\n\n📝 Найдено ${result.examples.length} примеров использования`;
         }
         
         message += `\n\nВыберите действие:`;
@@ -382,6 +401,14 @@ bot.on('callback_query', async (callbackQuery) => {
                     translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
 
+                // ДОБАВЛЯЕМ ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
+                if (userState.tempExamples && userState.tempExamples.length > 0) {
+                    translationMessage += '\n\n📝 Примеры использования:\n';
+                    userState.tempExamples.forEach((example, index) => {
+                        translationMessage += `\n${index + 1}️⃣ ${example}`;
+                    });
+                }
+
                 translationMessage += '\n\n💡 Нажимайте на варианты для выбора, затем нажмите "Сохранить"';
 
                 await bot.sendMessage(chatId, translationMessage, 
@@ -401,6 +428,14 @@ bot.on('callback_query', async (callbackQuery) => {
                     translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
                 
+                // ДОБАВЛЯЕМ ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
+                if (userState.tempExamples && userState.tempExamples.length > 0) {
+                    translationMessage += '\n\n📝 Примеры использования:\n';
+                    userState.tempExamples.forEach((example, index) => {
+                        translationMessage += `\n${index + 1}️⃣ ${example}`;
+                    });
+                }
+                
                 translationMessage += '\n\n💡 Можно ввести несколько вариантов через запятую\nНапример: солнце, светило, солнечный свет';
                 
                 showMainMenu(chatId, translationMessage);
@@ -418,7 +453,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 // Убираем из выбранных
                 selectedIndices = selectedIndices.filter(idx => idx !== translationIndex);
             } else {
-                // Добавляем в выбранные
+                // Добавляем в выбранных
                 selectedIndices.push(translationIndex);
             }
             
@@ -475,6 +510,14 @@ bot.on('callback_query', async (callbackQuery) => {
                     .map(index => userState.tempTranslations[index]);
                 translationMessage += `\n\n✅ Уже выбрано: ${selectedTranslations.join(', ')}`;
             }
+
+            // ДОБАВЛЯЕМ ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
+            if (userState.tempExamples && userState.tempExamples.length > 0) {
+                translationMessage += '\n\n📝 Примеры использования:\n';
+                userState.tempExamples.forEach((example, index) => {
+                    translationMessage += `\n${index + 1}️⃣ ${example}`;
+                });
+            }
             
             translationMessage += '\n\n💡 Ваш перевод будет добавлен к выбранным вариантам';
             
@@ -507,11 +550,7 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 });
 
-// Обработка ошибок транскрипции
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
+// Обработка ошибок
 bot.on('error', (error) => {
     console.error('Bot error:', error);
 });
@@ -520,4 +559,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с исправленной системой переводов');
+console.log('🤖 Бот запущен с примерами использования слов');
