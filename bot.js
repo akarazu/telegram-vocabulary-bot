@@ -202,11 +202,12 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         console.log('🔄 Generating examples...');
         
         // ✅ ИСПОЛЬЗУЕМ ЧАСТЬ РЕЧИ ИЗ YANDEX (без detectPartOfSpeech)
-        const examples = await exampleGenerator.generateExamples(
-            userState.tempWord, 
-            translation, 
-            userState.tempPartOfSpeech // ✅ ПЕРЕДАЕМ ЧАСТЬ РЕЧИ ИЗ YANDEX
-        );
+const examples = await exampleGenerator.generateExamples(
+    userState.tempWord, 
+    translation,
+    userState.selectedTranslationIndices, // ✅ ПЕРЕДАЕМ ВЫБРАННЫЕ ИНДЕКСЫ
+    userState.tempTranslationsWithPOS     // ✅ ПЕРЕДАЕМ ПЕРЕВОДЫ С ЧАСТЯМИ РЕЧИ
+);
         
         console.log(`✅ Generated examples:`, examples);
         
@@ -646,6 +647,7 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
 
 
