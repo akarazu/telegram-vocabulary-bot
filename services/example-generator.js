@@ -2,12 +2,12 @@ import axios from 'axios';
 
 export class ExampleGeneratorService {
     constructor() {
-        console.log('🔧 ExampleGeneratorService initialized - Using Free Dictionary API + Smart Fallback');
+        console.log('🔧 ExampleGeneratorService initialized - Using Free Dictionary API + Part-of-Speech Examples');
     }
 
-    async generateExamples(word, translation) {
+    async generateExamples(word, translation, partOfSpeech = '') {
         console.log(`\n🔄 ========== GENERATING EXAMPLES ==========`);
-        console.log(`🔄 Input: word="${word}", translation="${translation}"`);
+        console.log(`🔄 Input: word="${word}", translation="${translation}", partOfSpeech="${partOfSpeech}"`);
         
         // ✅ ПЕРВОЕ: пробуем Free Dictionary API
         try {
@@ -18,11 +18,11 @@ export class ExampleGeneratorService {
                 return freeDictExamples;
             } else {
                 console.log('❌ PRIMARY FAILED: No examples found in Free Dictionary');
-                return this.generateSmartContextualExamples(word, translation);
+                return this.generatePartOfSpeechExamples(word, translation, partOfSpeech);
             }
         } catch (error) {
             console.log('❌ PRIMARY ERROR: Free Dictionary API failed:', error.message);
-            return this.generateSmartContextualExamples(word, translation);
+            return this.generatePartOfSpeechExamples(word, translation, partOfSpeech);
         }
     }
 
@@ -42,7 +42,6 @@ export class ExampleGeneratorService {
         } catch (error) {
             if (error.response && error.response.status === 404) {
                 console.log(`❌ Free Dictionary: Word "${word}" not found (404)`);
-                console.log('💡 This word might be a proper noun, abbreviation, or specialized term');
             } else {
                 console.error('❌ Free Dictionary API error:', error.message);
             }
@@ -68,7 +67,6 @@ export class ExampleGeneratorService {
                         meaning.definitions.forEach((definition) => {
                             if (exampleCount >= 3) return;
                             
-                            // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ ПОЛЯ "example"
                             if (definition.example && definition.example.trim()) {
                                 const englishExample = definition.example.trim();
                                 const formattedExample = `${englishExample} - Пример использования`;
@@ -86,12 +84,85 @@ export class ExampleGeneratorService {
         return examples;
     }
 
-    generateSmartContextualExamples(word, translation) {
-        console.log('✏️ Generating smart contextual examples');
+    generatePartOfSpeechExamples(word, translation, partOfSpeech = '') {
+        console.log(`✏️ Generating part-of-speech examples for: "${partOfSpeech}"`);
         
         const lowerWord = word.toLowerCase();
+        const lowerPOS = partOfSpeech.toLowerCase();
         
-        // ✅ УМНАЯ ГЕНЕРАЦИЯ В ЗАВИСИМОСТИ ОТ ТИПА СЛОВА
+        // ✅ ПРИМЕРЫ В ЗАВИСИМОСТИ ОТ ЧАСТИ РЕЧИ
+        if (this.isNoun(lowerPOS)) {
+            return this.generateNounExamples(word, translation);
+        } else if (this.isVerb(lowerPOS)) {
+            return this.generateVerbExamples(word, translation);
+        } else if (this.isAdjective(lowerPOS)) {
+            return this.generateAdjectiveExamples(word, translation);
+        } else if (this.isAdverb(lowerPOS)) {
+            return this.generateAdverbExamples(word, translation);
+        } else {
+            // Если часть речи не определена, используем общие примеры
+            return this.generateGeneralExamples(word, translation);
+        }
+    }
+
+    // ✅ СУЩЕСТВИТЕЛЬНЫЕ (nouns)
+    generateNounExamples(word, translation) {
+        console.log('📘 Generating noun examples');
+        
+        return [
+            `I bought a new ${word} yesterday. - Я купил новый ${translation} вчера.`,
+            `The ${word} is on the table. - ${this.capitalizeFirst(translation)} на столе.`,
+            `This ${word} is very expensive. - Этот ${translation} очень дорогой.`,
+            `She has three ${word}s. - У нее три ${translation}.`,
+            `I need to find my ${word}. - Мне нужно найти мой ${translation}.`
+        ].slice(0, 3);
+    }
+
+    // ✅ ГЛАГОЛЫ (verbs)
+    generateVerbExamples(word, translation) {
+        console.log('📗 Generating verb examples');
+        
+        return [
+            `I need to ${word} every day. - Мне нужно ${translation} каждый день.`,
+            `Can you ${word} this for me? - Ты можешь ${translation} это для меня?`,
+            `She will ${word} tomorrow. - Она будет ${translation} завтра.`,
+            `They like to ${word} together. - Они любят ${translation} вместе.`,
+            `I can ${word} very well. - Я умею ${translation} очень хорошо.`
+        ].slice(0, 3);
+    }
+
+    // ✅ ПРИЛАГАТЕЛЬНЫЕ (adjectives)
+    generateAdjectiveExamples(word, translation) {
+        console.log('📙 Generating adjective examples');
+        
+        return [
+            `This is a very ${word} book. - Это очень ${translation} книга.`,
+            `She looks ${word} today. - Она выглядит ${translation} сегодня.`,
+            `The weather is ${word}. - Погода ${translation}.`,
+            `He seems ${word}. - Он кажется ${translation}.`,
+            `It's ${word} outside. - На улице ${translation}.`
+        ].slice(0, 3);
+    }
+
+    // ✅ НАРЕЧИЯ (adverbs)
+    generateAdverbExamples(word, translation) {
+        console.log('📒 Generating adverb examples');
+        
+        return [
+            `He speaks ${word}. - Он говорит ${translation}.`,
+            `She works ${word}. - Она работает ${translation}.`,
+            `They arrived ${word}. - Они прибыли ${translation}.`,
+            `Please drive ${word}. - Пожалуйста, веди машину ${translation}.`,
+            `He answered ${word}. - Он ответил ${translation}.`
+        ].slice(0, 3);
+    }
+
+    // ✅ ОБЩИЕ ПРИМЕРЫ (когда часть речи не определена)
+    generateGeneralExamples(word, translation) {
+        console.log('📓 Generating general examples');
+        
+        // Проверяем специальные категории слов
+        const lowerWord = word.toLowerCase();
         
         // Месяцы
         const months = ['january', 'february', 'march', 'april', 'may', 'june', 
@@ -110,42 +181,37 @@ export class ExampleGeneratorService {
             return [
                 `I have a meeting on ${word}. - У меня встреча в ${translation}.`,
                 `See you next ${word}. - Увидимся в следующий ${translation}.`,
-                `${word} is usually a busy day. - ${this.capitalizeFirst(translation)} обычно busy день.`
+                `${word} is usually a busy day. - ${this.capitalizeFirst(translation)} обычно занятой день.`
             ];
         }
         
-        // Имена
-        const commonNames = ['john', 'mary', 'michael', 'sarah', 'david', 'lisa', 'robert', 'jennifer'];
-        if (commonNames.includes(lowerWord)) {
-            return [
-                `${this.capitalizeFirst(word)} is my friend. - ${this.capitalizeFirst(translation)} мой друг.`,
-                `I work with ${word}. - Я работаю с ${translation}.`,
-                `Have you met ${word}? - Ты знаком с ${translation}?`
-            ];
-        }
-        
-        // Страны, города
-        const places = ['london', 'paris', 'moscow', 'new york', 'tokyo', 'berlin'];
-        if (places.includes(lowerWord)) {
-            return [
-                `I want to visit ${word}. - Я хочу посетить ${translation}.`,
-                `${this.capitalizeFirst(word)} is a beautiful city. - ${this.capitalizeFirst(translation)} красивый город.`,
-                `She lives in ${word}. - Она живет в ${translation}.`
-            ];
-        }
-        
-        // Общие контекстные примеры
-        return this.generateGeneralContextualExamples(word, translation);
-    }
-
-    generateGeneralContextualExamples(word, translation) {
-        console.log('✏️ Using general contextual examples');
-        
+        // Общие примеры
         return [
             `I often use the word "${word}" in English. - Я часто использую слово "${translation}" в английском.`,
             `Can you explain "${word}"? - Можете объяснить "${translation}"?`,
             `This is an example of "${word}" usage. - Это пример использования "${translation}".`
         ];
+    }
+
+    // ✅ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ОПРЕДЕЛЕНИЯ ЧАСТИ РЕЧИ
+    isNoun(pos) {
+        const nounIndicators = ['noun', 'существительное', 'n', 'сущ'];
+        return nounIndicators.some(indicator => pos.includes(indicator));
+    }
+
+    isVerb(pos) {
+        const verbIndicators = ['verb', 'глагол', 'v', 'гл'];
+        return verbIndicators.some(indicator => pos.includes(indicator));
+    }
+
+    isAdjective(pos) {
+        const adjectiveIndicators = ['adjective', 'прилагательное', 'adj', 'прил'];
+        return adjectiveIndicators.some(indicator => pos.includes(indicator));
+    }
+
+    isAdverb(pos) {
+        const adverbIndicators = ['adverb', 'наречие', 'adv', 'нар'];
+        return adverbIndicators.some(indicator => pos.includes(indicator));
     }
 
     capitalizeFirst(string) {
