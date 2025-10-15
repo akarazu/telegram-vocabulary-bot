@@ -132,6 +132,36 @@ function addAudioToHistory(chatId, audioUrl, word) {
     }
 }
 
+// Функция для показа примеров при выборе перевода
+async function showExamplesForSelectedTranslation(chatId, userState) {
+    if (userState.selectedTranslationIndices.length === 0) {
+        return;
+    }
+
+    const selectedTranslations = userState.selectedTranslationIndices
+        .map(index => userState.tempTranslations[index]);
+    const mainTranslation = selectedTranslations[0];
+
+    try {
+        console.log(`🔄 Generating examples for selected translation: "${mainTranslation}"`);
+        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
+        
+        if (contextExamples && contextExamples.length > 0) {
+            let examplesMessage = `📝 Примеры использования для перевода "${mainTranslation}":\n\n`;
+            contextExamples.forEach((example, index) => {
+                examplesMessage += `${index + 1}️⃣ ${example}\n\n`;
+            });
+            
+            examplesMessage += '💾 Нажмите "Сохранить" чтобы добавить слово в словарь';
+            
+            await bot.sendMessage(chatId, examplesMessage);
+            userState.tempExamples = contextExamples; // Обновляем примеры в состоянии
+        }
+    } catch (error) {
+        console.error('Error showing examples for translation:', error);
+    }
+}
+
 // Функция для сохранения слова с переводом
 async function saveWordWithTranslation(chatId, userState, translation) {
     let success = true;
@@ -321,10 +351,10 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // Генерируем контекстные примеры на основе введенного перевода
-        console.log('🔄 Regenerating examples based on manual translation...');
-        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, translation);
-        userState.tempExamples = contextExamples;
+    // Генерируем примеры на основе введенного перевода
+    console.log('🔄 Generating examples based on manual translation...');
+    const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, translation);
+    userState.tempExamples = contextExamples;
         
         // Сохраняем ручной перевод
         await saveWordWithTranslation(chatId, userState, translation);
@@ -346,11 +376,11 @@ bot.on('message', async (msg) => {
         const translationToSave = allTranslations.join(', ');
         
         // Генерируем контекстные примеры на основе основного перевода
-        const mainTranslation = selectedTranslations[0] || customTranslation;
-        console.log('🔄 Regenerating examples based on selected translation...');
-        const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
-        userState.tempExamples = contextExamples;
-        
+    const mainTranslation = selectedTranslations[0] || customTranslation;
+    console.log('🔄 Generating examples based on selected translation...');
+    const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
+    userState.tempExamples = contextExamples;
+            
         // Сохраняем слово
         await saveWordWithTranslation(chatId, userState, translationToSave);
     }
@@ -510,6 +540,11 @@ bot.on('callback_query', async (callbackQuery) => {
                         message_id: callbackQuery.message.message_id
                     }
                 );
+
+                        if (selectedIndices.length > 0) {
+                await showExamplesForSelectedTranslation(chatId, userState);
+            }
+                
             } catch (error) {
                 console.error('Error toggling translation:', error);
             }
@@ -518,24 +553,24 @@ bot.on('callback_query', async (callbackQuery) => {
     else if (data === 'save_selected_translations') {
         if (userState?.state === 'choosing_translation' && userState.selectedTranslationIndices.length > 0) {
             try {
-                // Получаем выбранные переводы
-                const selectedTranslations = userState.selectedTranslationIndices
-                    .map(index => userState.tempTranslations[index]);
-                
-                // Генерируем контекстные примеры на основе основного перевода
-                const mainTranslation = selectedTranslations[0];
-                console.log('🔄 Regenerating examples based on selected translation...');
-                const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
-                userState.tempExamples = contextExamples;
-                
-                // Объединяем через запятую для сохранения в таблице
-                const translationToSave = selectedTranslations.join(', ');
-                
-                // Сохраняем слово
-                await saveWordWithTranslation(chatId, userState, translationToSave);
-                
-                // Удаляем сообщение с выбором переводов
-                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                           // Получаем выбранные переводы
+            const selectedTranslations = userState.selectedTranslationIndices
+                .map(index => userState.tempTranslations[index]);
+            
+            // ✅ ДОБАВИТЬ ЭТИ СТРОКИ - генерируем примеры на основе выбранного перевода
+            const mainTranslation = selectedTranslations[0];
+            console.log('🔄 Generating final examples based on selected translation...');
+            const contextExamples = await exampleGenerator.generateExamples(userState.tempWord, mainTranslation);
+            userState.tempExamples = contextExamples;
+            
+            // Объединяем через запятую для сохранения в таблице
+            const translationToSave = selectedTranslations.join(', ');
+            
+            // Сохраняем слово
+            await saveWordWithTranslation(chatId, userState, translationToSave);
+            
+            // Удаляем сообщение с выбором переводов
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
             } catch (error) {
                 console.error('Error saving translations:', error);
                 await bot.sendMessage(chatId, '❌ Ошибка при сохранении слова');
@@ -627,3 +662,4 @@ exampleGenerator.checkApisAvailability().then(availableApis => {
     console.log('🤖 Бот запущен с контекстной генерацией примеров');
     console.log(`🔧 Доступные API: ${availableApis.join(', ')}`);
 });
+
