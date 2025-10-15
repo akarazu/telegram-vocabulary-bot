@@ -36,13 +36,12 @@ function getListeningKeyboard(audioId) {
     };
 }
 
-// Клавиатура действий после прослушивания
+// Клавиатура действий после прослушивания (без кнопки "Вернуться к слову")
 function getAfterAudioKeyboard() {
     return {
         reply_markup: {
             inline_keyboard: [
-                [{ text: '✏️ Ввести перевод', callback_data: 'enter_translation' }],
-                [{ text: '🔙 Вернуться к слову', callback_data: 'back_to_word' }]
+                [{ text: '✏️ Ввести перевод', callback_data: 'enter_translation' }]
             ]
         }
     };
@@ -205,7 +204,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 
                 // Отправляем сообщение с кнопками действий после аудио
                 await bot.sendMessage(chatId, 
-                    '🎵 Вы прослушали произношение. Что дальше?',
+                    '🎵 Вы прослушали произношение. Хотите ввести перевод?',
                     getAfterAudioKeyboard()
                 );
                 
@@ -248,34 +247,6 @@ bot.on('callback_query', async (callbackQuery) => {
                         [{ text: '🔙 Отменить', callback_data: 'cancel_translation' }]
                     ]
                 }
-            });
-        }
-    }
-    else if (data === 'back_to_word') {
-        if (userState?.state === 'showing_transcription') {
-            // Убираем кнопки из сообщения с действиями
-            try {
-                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-            } catch (error) {
-                // Если не удалось удалить, просто убираем кнопки
-                await bot.editMessageReplyMarkup(
-                    { inline_keyboard: [] },
-                    {
-                        chat_id: chatId,
-                        message_id: callbackQuery.message.message_id
-                    }
-                );
-            }
-
-            // Возвращаемся к исходному сообщению со словом
-            const message = `📝 Слово: <b>${userState.tempWord}</b>\n` +
-                (userState.tempTranscription ? `🔤 Транскрипция: <code>${userState.tempTranscription}</code>\n\n` : '\n') +
-                '🎵 Аудио произношение доступно\n\n' +
-                'Выберите действие:';
-            
-            await bot.sendMessage(chatId, message, {
-                parse_mode: 'HTML',
-                ...getListeningKeyboard(userState.tempAudioId)
             });
         }
     }
