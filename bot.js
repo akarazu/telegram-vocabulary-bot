@@ -120,7 +120,7 @@ bot.on('message', async (msg) => {
 
     if (text === '➕ Добавить слово') {
         userStates.set(chatId, { state: 'waiting_english' });
-        bot.sendMessage(chatId, '🇬🇧 Введите английское слово:');
+        bot.sendMessage(chatId, '🇬🇧 Введите английское слово:', getMainMenu());
     }
     else if (userState?.state === 'waiting_english') {
         const englishWord = text.trim();
@@ -129,12 +129,13 @@ bot.on('message', async (msg) => {
         if (!/^[a-zA-Z\s\-']+$/.test(englishWord)) {
             bot.sendMessage(chatId, 
                 '❌ Это не похоже на английское слово.\n' +
-                'Пожалуйста, введите слово на английском:'
+                'Пожалуйста, введите слово на английском:',
+                getMainMenu()
             );
             return;
         }
         
-        bot.sendMessage(chatId, '🔍 Ищу транскрипцию и произношение...');
+        bot.sendMessage(chatId, '🔍 Ищу транскрипцию и произношение...', getMainMenu());
         
         const result = await transcriptionService.getUKTranscription(englishWord);
         
@@ -177,7 +178,7 @@ bot.on('message', async (msg) => {
         const translation = text.trim();
         
         if (!translation) {
-            bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+            bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:', getMainMenu());
             return;
         }
         
@@ -204,7 +205,7 @@ bot.on('message', async (msg) => {
                 `Теперь оно будет доступно для повторения.`,
                 { 
                     parse_mode: 'HTML',
-                    ...getMainMenu() 
+                    ...getMainMenu()
                 }
             );
         } else {
@@ -212,7 +213,7 @@ bot.on('message', async (msg) => {
                 '❌ <b>Ошибка сохранения</b>\n\nНе удалось сохранить слово в словарь. Попробуйте еще раз.',
                 { 
                     parse_mode: 'HTML',
-                    ...getMainMenu() 
+                    ...getMainMenu()
                 }
             );
         }
@@ -239,7 +240,7 @@ bot.on('callback_query', async (callbackQuery) => {
         
         if (audioUrl && englishWord) {
             try {
-                // Убираем кнопки из исходного сообщения
+                // ✅ Убираем кнопку "Ввести перевод" из исходного сообщения
                 await bot.editMessageReplyMarkup(
                     { inline_keyboard: [] },
                     {
@@ -287,7 +288,14 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
-            // ✅ НЕ убираем кнопки из исходного сообщения - оставляем панель видимой
+            // ✅ Убираем кнопку "Ввести перевод" из исходного сообщения
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: callbackQuery.message.message_id
+                }
+            );
 
             // Переходим к вводу перевода - СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
@@ -306,8 +314,8 @@ bot.on('callback_query', async (callbackQuery) => {
             translationMessage += `\n\n📝 <i>Напишите перевод и отправьте сообщением</i>`;
             
             await bot.sendMessage(chatId, translationMessage, {
-                parse_mode: 'HTML'
-                // ✅ УБИРАЕМ кнопку "Отменить" - пользователь просто вводит текст
+                parse_mode: 'HTML',
+                ...getMainMenu()
             });
         }
     }
