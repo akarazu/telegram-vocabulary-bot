@@ -133,38 +133,66 @@ function addAudioToHistory(chatId, audioUrl, word) {
 
 // Функция для сохранения слова с переводом и примерами
 async function saveWordWithTranslation(chatId, userState, translation) {
+    console.log(`💾 START Saving word:`, {
+        chatId,
+        word: userState.tempWord,
+        translation: translation
+    });
+    
     let success = true;
     
     if (sheetsService.initialized) {
-        const existingWords = await sheetsService.getUserWords(chatId);
-        const isDuplicate = existingWords.some(word => 
-            word.english.toLowerCase() === userState.tempWord.toLowerCase()
-        );
+        console.log('✅ Google Sheets service is initialized');
         
-        if (isDuplicate) {
-            await showMainMenu(chatId, 
-                `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
-                'Пожалуйста, начните заново.'
+        // Проверяем дубликаты
+        try {
+            console.log('🔍 Checking for duplicates...');
+            const existingWords = await sheetsService.getUserWords(chatId);
+            const isDuplicate = existingWords.some(word => 
+                word.english.toLowerCase() === userState.tempWord.toLowerCase()
             );
-            userStates.delete(chatId);
-            return;
+            
+            if (isDuplicate) {
+                console.log('❌ Duplicate word found, not saving');
+                await showMainMenu(chatId, 
+                    `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
+                    'Пожалуйста, начните заново.'
+                );
+                userStates.delete(chatId);
+                return;
+            }
+            console.log('✅ No duplicates found');
+        } catch (error) {
+            console.error('❌ Error checking duplicates:', error);
         }
         
-        // ✅ ГЕНЕРИРУЕМ ПРИМЕРЫ ПЕРЕД СОХРАНЕНИЕМ
-        console.log(`🔄 Generating examples for: "${userState.tempWord}" with translation: "${translation}"`);
+        // Генерируем примеры
+        console.log('🔄 Generating examples...');
         const examples = await exampleGenerator.generateExamples(userState.tempWord, translation);
+        console.log(`✅ Generated ${examples.length} examples:`, examples);
         
-        // ✅ СОХРАНЯЕМ СЛОВО С ПРИМЕРАМИ СРАЗУ
+        // ✅ ПРАВИЛЬНО ФОРМАТИРУЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
+        const examplesText = Array.isArray(examples) ? examples.join(' | ') : '';
+        console.log(`📝 Formatted examples for storage: "${examplesText}"`);
+        
+        // Сохраняем слово с примерами
+        console.log('💾 Saving to Google Sheets...');
         success = await sheetsService.addWordWithExamples(
             chatId, 
             userState.tempWord, 
             userState.tempTranscription,
             translation,
             userState.tempAudioUrl,
-            examples
+            examplesText // Передаем уже отформатированную строку
         );
+        
+        console.log(`📊 Save result: ${success ? 'SUCCESS' : 'FAILED'}`);
+    } else {
+        console.log('❌ Google Sheets service NOT initialized');
+        success = false;
     }
     
+    // Очищаем состояние пользователя
     userStates.delete(chatId);
     
     if (success) {
@@ -172,6 +200,12 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         
         let successMessage = '✅ Слово добавлено в словарь!\n\n' +
             `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n`;
+        
+        // ✅ ПРАВИЛЬНО ФОРМАТИРУЕМ ПРИМЕРЫ ДЛЯ ОТОБРАЖЕНИЯ
+        const examples = await exampleGenerator.generateExamples(userState.tempWord, translation);
+        if (examples.length > 0) {
+            successMessage += '📝 Примеры:\n' + exampleGenerator.formatExamplesForDisplay(examples) + '\n\n';
+        }
         
         await showMainMenu(chatId, successMessage);
     } else {
@@ -543,3 +577,4 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
