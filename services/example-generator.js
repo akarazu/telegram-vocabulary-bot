@@ -95,18 +95,4 @@ export class ExampleGeneratorService {
             `This shows how to use "${word}" correctly. - Это показывает как правильно использовать "${mainTranslation}".`
         ];
     }
-
-    formatExamplesForDisplay(examples) {
-        if (!examples || !Array.isArray(examples) || examples.length === 0) {
-            return 'Примеры не найдены';
-        }
-        return examples.map((example, index) => `${index + 1}. ${example}`).join('\n');
-    }
-
-    formatExamplesForStorage(examples) {
-        if (!examples || !Array.isArray(examples) || examples.length === 0) {
-            return '';
-        }
-        return examples.join(' | ');
-    }
 }
