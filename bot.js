@@ -35,7 +35,7 @@ function getListeningKeyboard(audioId) {
         keyboard.push([{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }]);
     }
     
-    keyboard.push([{ text: '➡️ Продолжить', callback_data: 'continue' }]);
+    keyboard.push([{ text: '➡️ Ввести перевод', callback_data: 'enter_translation' }]);
     
     return {
         reply_markup: {
@@ -60,6 +60,9 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
+    // Игнорируем команды
+    if (text.startsWith('/')) return;
+
     if (text === '➕ Добавить слово') {
         userStates.set(chatId, { state: 'waiting_english' });
         bot.sendMessage(chatId, '🇬🇧 Введите английское слово:');
@@ -70,6 +73,15 @@ bot.on('message', async (msg) => {
         if (userState?.state === 'waiting_english') {
             const englishWord = text.trim();
             
+            // Проверяем что это английское слово
+            if (!/^[a-zA-Z\s\-']+$/.test(englishWord)) {
+                bot.sendMessage(chatId, 
+                    '❌ Это не похоже на английское слово.\n' +
+                    'Пожалуйста, введите слово на английском:'
+                );
+                return;
+            }
+            
             bot.sendMessage(chatId, '🔍 Ищу транскрипцию и произношение...');
             
             const result = await transcriptionService.getUKTranscription(englishWord);
@@ -77,7 +89,7 @@ bot.on('message', async (msg) => {
             // Сохраняем audioUrl во временное хранилище
             let audioId = null;
             if (result.audioUrl) {
-                audioId = Date.now().toString(); // Простой ID на основе времени
+                audioId = Date.now().toString();
                 audioUrlStorage.set(audioId, result.audioUrl);
                 
                 // Очищаем старые записи через 5 минут
@@ -106,14 +118,15 @@ bot.on('message', async (msg) => {
                 message += `\n\n🎵 Доступно аудио произношение`;
             }
             
-            message += `\n\nВведите перевод:`;
+            message += `\n\nВыберите действие:`;
             
-            bot.sendMessage(chatId, message, {
+            await bot.sendMessage(chatId, message, {
                 parse_mode: 'HTML',
                 ...getListeningKeyboard(audioId)
             });
         }
         else if (userState?.state === 'waiting_translation') {
+            // Пользователь вводит перевод
             const success = await sheetsService.addWord(
                 chatId, 
                 userState.tempWord, 
@@ -130,14 +143,18 @@ bot.on('message', async (msg) => {
             
             if (success) {
                 const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
-                bot.sendMessage(chatId, 
+                await bot.sendMessage(chatId, 
                     `✅ Слово добавлено!\n\n` +
                     `💬 ${userState.tempWord}${transcriptionText} - ${text}`,
                     getMainMenu()
                 );
             } else {
-                bot.sendMessage(chatId, '❌ Ошибка сохранения', getMainMenu());
+                await bot.sendMessage(chatId, '❌ Ошибка сохранения', getMainMenu());
             }
+        }
+        else if (!userState) {
+            // Если нет активного состояния, показываем главное меню
+            await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
         }
     }
 });
@@ -164,6 +181,9 @@ bot.on('callback_query', async (callbackQuery) => {
                     text: 'Аудио отправлено'
                 });
                 
+                // НЕ меняем состояние - пользователь может прослушать еще раз
+                // или нажать "Ввести перевод"
+                
             } catch (error) {
                 console.error('Error sending audio:', error);
                 await bot.answerCallbackQuery(callbackQuery.id, {
@@ -176,7 +196,7 @@ bot.on('callback_query', async (callbackQuery) => {
             });
         }
     }
-    else if (data === 'continue') {
+    else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
             // Переходим к вводу перевода
             userStates.set(chatId, {
@@ -184,20 +204,55 @@ bot.on('callback_query', async (callbackQuery) => {
                 state: 'waiting_translation'
             });
             
+            // Редактируем сообщение с кнопками
             await bot.editMessageText(
-                `Слово: <b>${userState.tempWord}</b>\n` +
+                `✏️ Введите перевод для слова: <b>${userState.tempWord}</b>\n` +
                 (userState.tempTranscription ? `Транскрипция: <code>${userState.tempTranscription}</code>\n\n` : '\n') +
-                'Введите перевод:',
+                'Напишите перевод сообщением:',
                 {
                     chat_id: chatId,
                     message_id: callbackQuery.message.message_id,
-                    parse_mode: 'HTML'
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 Отменить', callback_data: 'cancel' }]
+                        ]
+                    }
                 }
             );
             
-            await bot.answerCallbackQuery(callbackQuery.id);
+            await bot.answerCallbackQuery(callbackQuery.id, {
+                text: 'Теперь введите перевод'
+            });
         }
     }
+    else if (data === 'cancel') {
+        // Отмена добавления слова
+        if (userState?.tempAudioId) {
+            audioUrlStorage.delete(userState.tempAudioId);
+        }
+        userStates.delete(chatId);
+        
+        await bot.editMessageText(
+            '❌ Добавление слова отменено',
+            {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id
+            }
+        );
+        
+        await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
+        await bot.answerCallbackQuery(callbackQuery.id);
+    }
+});
+
+// Обработка ошибок
+bot.on('error', (error) => {
+    console.error('Bot error:', error);
+});
+
+bot.on('polling_error', (error) => {
+    console.error('Polling error:', error);
 });
 
 console.log('🤖 Бот запущен с прослушиванием произношения');
