@@ -8,7 +8,12 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 
 const sheetsService = new GoogleSheetsService();
 const transcriptionService = new TranscriptionService();
+
+// Хранилище состояний пользователей
 const userStates = new Map();
+
+// Хранилище для audio URLs (временное)
+const audioUrlStorage = new Map();
 
 // Главное меню
 function getMainMenu() {
@@ -23,14 +28,14 @@ function getMainMenu() {
 }
 
 // Клавиатура с кнопкой прослушивания
-function getListeningKeyboard(audioUrl) {
+function getListeningKeyboard(audioId) {
     const keyboard = [];
     
-    if (audioUrl) {
-        keyboard.push([{ text: '🔊 Прослушать произношение', callback_data: `listen_${audioUrl}` }]);
+    if (audioId) {
+        keyboard.push([{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }]);
     }
     
-    keyboard.push([{ text: '➡️ Продолжить без прослушивания', callback_data: 'continue' }]);
+    keyboard.push([{ text: '➡️ Продолжить', callback_data: 'continue' }]);
     
     return {
         reply_markup: {
@@ -69,11 +74,24 @@ bot.on('message', async (msg) => {
             
             const result = await transcriptionService.getUKTranscription(englishWord);
             
+            // Сохраняем audioUrl во временное хранилище
+            let audioId = null;
+            if (result.audioUrl) {
+                audioId = Date.now().toString(); // Простой ID на основе времени
+                audioUrlStorage.set(audioId, result.audioUrl);
+                
+                // Очищаем старые записи через 5 минут
+                setTimeout(() => {
+                    audioUrlStorage.delete(audioId);
+                }, 5 * 60 * 1000);
+            }
+            
             userStates.set(chatId, {
                 state: 'showing_transcription',
                 tempWord: englishWord,
                 tempTranscription: result.transcription,
-                tempAudioUrl: result.audioUrl
+                tempAudioUrl: result.audioUrl,
+                tempAudioId: audioId
             });
             
             let message = `Слово: <b>${englishWord}</b>`;
@@ -92,7 +110,7 @@ bot.on('message', async (msg) => {
             
             bot.sendMessage(chatId, message, {
                 parse_mode: 'HTML',
-                ...getListeningKeyboard(result.audioUrl)
+                ...getListeningKeyboard(audioId)
             });
         }
         else if (userState?.state === 'waiting_translation') {
@@ -104,6 +122,10 @@ bot.on('message', async (msg) => {
                 userState.tempAudioUrl
             );
             
+            // Очищаем временное хранилище
+            if (userState.tempAudioId) {
+                audioUrlStorage.delete(userState.tempAudioId);
+            }
             userStates.delete(chatId);
             
             if (success) {
@@ -126,24 +148,31 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const userState = userStates.get(chatId);
 
-    if (data.startsWith('listen_')) {
-        const audioUrl = data.replace('listen_', '');
+    if (data.startsWith('audio_')) {
+        const audioId = data.replace('audio_', '');
+        const audioUrl = audioUrlStorage.get(audioId);
         
-        try {
-            // Отправляем аудио сообщение
-            await bot.sendAudio(chatId, audioUrl, {
-                caption: '🔊 Британское произношение'
-            });
-            
-            // Подтверждаем нажатие кнопки
+        if (audioUrl) {
+            try {
+                // Отправляем аудио сообщение
+                await bot.sendAudio(chatId, audioUrl, {
+                    caption: '🔊 Британское произношение'
+                });
+                
+                // Подтверждаем нажатие кнопки
+                await bot.answerCallbackQuery(callbackQuery.id, {
+                    text: 'Аудио отправлено'
+                });
+                
+            } catch (error) {
+                console.error('Error sending audio:', error);
+                await bot.answerCallbackQuery(callbackQuery.id, {
+                    text: 'Ошибка отправки аудио'
+                });
+            }
+        } else {
             await bot.answerCallbackQuery(callbackQuery.id, {
-                text: 'Аудио отправлено'
-            });
-            
-        } catch (error) {
-            console.error('Error sending audio:', error);
-            await bot.answerCallbackQuery(callbackQuery.id, {
-                text: 'Ошибка отправки аудио'
+                text: 'Аудио больше не доступно'
             });
         }
     }
