@@ -15,7 +15,7 @@ export class ExampleGeneratorService {
             console.log(`🤖 Generating examples for: "${word}" with translation: "${selectedTranslation}"`);
             
             // Если есть выбранный перевод, пробуем получить контекстные примеры
-            if (selectedTranslation) {
+            if (selectedTranslation && selectedTranslation !== 'null') {
                 console.log(`🔧 Getting context-based examples for: "${selectedTranslation}"`);
                 
                 // Сначала пробуем Яндекс с конкретным переводом
@@ -101,23 +101,46 @@ export class ExampleGeneratorService {
             return examples;
         }
 
+        console.log('🔍 Yandex API response structure:', JSON.stringify(data.def[0], null, 2));
+
         data.def.forEach(definition => {
+            // Ищем примеры на уровне определения
+            if (definition.ex && definition.ex.length > 0) {
+                definition.ex.forEach(example => {
+                    if (example.text && example.tr && example.tr[0] && example.tr[0].text) {
+                        const englishExample = example.text.trim();
+                        const russianTranslation = example.tr[0].text;
+                        
+                        // Проверяем, что пример содержит слово и имеет разумную длину
+                        if (englishExample.toLowerCase().includes(word.toLowerCase()) &&
+                            englishExample.length > 10 && englishExample.length < 200) {
+                            
+                            // Если указан целевой перевод, проверяем соответствие
+                            if (!targetTranslation || russianTranslation.includes(targetTranslation)) {
+                                examples.push(englishExample);
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Ищем примеры в переводах
             if (definition.tr && definition.tr.length > 0) {
                 definition.tr.forEach(translation => {
-                    // Если указан конкретный перевод, ищем примеры только для него
                     const translationText = translation.text || '';
+                    
+                    // Если указан конкретный перевод, проверяем соответствие
                     if (targetTranslation && translationText !== targetTranslation) {
                         return;
                     }
                     
-                    // Примеры из основного перевода
+                    // Примеры из перевода
                     if (translation.ex && translation.ex.length > 0) {
                         translation.ex.forEach(example => {
-                            if (example.text) {
+                            if (example.text && example.tr && example.tr[0] && example.tr[0].text) {
                                 const englishExample = example.text.trim();
-                                // Проверяем, что пример содержит слово и имеет разумную длину
                                 if (englishExample.toLowerCase().includes(word.toLowerCase()) &&
-                                    englishExample.length > 15 && englishExample.length < 200) {
+                                    englishExample.length > 10 && englishExample.length < 200) {
                                     examples.push(englishExample);
                                 }
                             }
@@ -125,21 +148,9 @@ export class ExampleGeneratorService {
                     }
                 });
             }
-            
-            // Также проверяем примеры на уровне определения
-            if (definition.ex && definition.ex.length > 0) {
-                definition.ex.forEach(example => {
-                    if (example.text) {
-                        const englishExample = example.text.trim();
-                        if (englishExample.toLowerCase().includes(word.toLowerCase()) &&
-                            englishExample.length > 15 && englishExample.length < 200) {
-                            examples.push(englishExample);
-                        }
-                    }
-                });
-            }
         });
 
+        console.log(`📝 Yandex extracted ${examples.length} examples`);
         return examples.slice(0, 3);
     }
 
@@ -170,6 +181,7 @@ export class ExampleGeneratorService {
                     }
                 }
                 
+                console.log(`📝 FreeDictionary extracted ${examples.length} examples`);
                 return examples.slice(0, 3);
             }
             
@@ -194,27 +206,21 @@ export class ExampleGeneratorService {
             examples.push(
                 `You should ${word} regularly to maintain good habits.`,
                 `She will ${word} the proposal before the meeting.`,
-                `They have ${word}ed together on many projects.`,
-                `I need to ${word} more carefully next time.`,
-                `Can you show me how to ${word} correctly?`
+                `They have ${word}ed together on many projects.`
             );
         } 
         else if (isNoun) {
             examples.push(
                 `The ${word} was placed on the shelf.`,
                 `We need to discuss this ${word} in detail.`,
-                `Her favorite ${word} is the one she bought yesterday.`,
-                `The ${word} plays a crucial role in the process.`,
-                `I'm looking for a specific ${word} for my collection.`
+                `Her favorite ${word} is the one she bought yesterday.`
             );
         }
         else if (isAdjective) {
             examples.push(
                 `It was a ${word} experience that I'll never forget.`,
                 `She has such a ${word} personality that everyone likes her.`,
-                `The solution seems ${word} at first glance.`,
-                `This is the most ${word} thing I've ever seen.`,
-                `He felt ${word} after hearing the news.`
+                `The solution seems ${word} at first glance.`
             );
         }
         else {
@@ -222,21 +228,18 @@ export class ExampleGeneratorService {
             examples.push(
                 `In the context of "${translation}", the word "${word}" is often used like this.`,
                 `When "${word}" means "${translation}", you might encounter it in this sentence.`,
-                `For the meaning "${translation}", here's a typical usage of "${word}".`,
-                `As "${translation}", "${word}" commonly appears in such contexts.`,
-                `If you understand "${word}" as "${translation}", this example will be helpful.`
+                `For the meaning "${translation}", here's a typical usage of "${word}".`
             );
         }
         
-        // Выбираем 3 случайных примера
-        const shuffled = [...examples].sort(() => 0.5 - Math.random());
-        return shuffled.slice(0, 3);
+        console.log(`📝 Generated ${examples.length} contextual examples`);
+        return examples.slice(0, 3);
     }
 
     generateBasicExamples(word, translation = null) {
         let basicExamples = [];
         
-        if (translation) {
+        if (translation && translation !== 'null') {
             basicExamples = [
                 `When "${word}" means "${translation}", it can be used in various contexts.`,
                 `In the sense of "${translation}", here's how "${word}" might be used.`,
@@ -246,9 +249,7 @@ export class ExampleGeneratorService {
             basicExamples = [
                 `I need to use the word "${word}" in my writing.`,
                 `Can you explain how to use "${word}" correctly?`,
-                `The word "${word}" appears frequently in English texts.`,
-                `She used "${word}" appropriately in her speech.`,
-                `Learning to use "${word}" effectively is important.`
+                `The word "${word}" appears frequently in English texts.`
             ];
         }
         
