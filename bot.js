@@ -52,9 +52,10 @@ function getAfterAudioKeyboard() {
 
 // Функция для принудительного показа меню
 function showMainMenu(chatId, text = '') {
-    if (text) {
+    if (text && text.trim() !== '') {
         return bot.sendMessage(chatId, text, getMainMenu());
     } else {
+        // Отправляем пробел вместо пустой строки
         return bot.sendMessage(chatId, ' ', getMainMenu());
     }
 }
@@ -334,3 +335,4 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с проверкой дубликатов в Google Таблицах');
+
