@@ -1,86 +1,64 @@
-// services/google-sheets.js
 import { google } from 'googleapis';
 
 export class GoogleSheetsService {
     constructor() {
-        this.sheetId = process.env.GOOGLE_SHEET_ID;
-        this.initialized = false;
-        this.init();
+        this.auth = new google.auth.GoogleAuth({
+            credentials: {
+                type: 'service_account',
+                project_id: process.env.GOOGLE_PROJECT_ID,
+                private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
+                private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+                client_email: process.env.GOOGLE_CLIENT_EMAIL,
+                client_id: process.env.GOOGLE_CLIENT_ID,
+            },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets']
+        });
+
+        this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+        this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        this.initialized = true;
     }
 
-    async init() {
-        try {
-            if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-                console.error('❌ Google Sheets credentials not found');
-                return;
-            }
-
-            this.auth = new google.auth.GoogleAuth({
-                credentials: {
-                    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-                    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-                },
-                scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-            });
-            
-            this.sheets = google.sheets({ version: 'v4', auth: this.auth });
-            this.initialized = true;
-            console.log('✅ Google Sheets initialized successfully');
-        } catch (error) {
-            console.error('❌ Google Sheets initialization failed:', error.message);
-        }
-    }
-
-    async addWord(chatId, englishWord, transcription, translation, audioUrl) {
-        if (!this.initialized) {
-            console.error('Google Sheets not initialized');
-            return false;
-        }
-
+    async addWord(userId, word, transcription, translation, audioUrl = '') {
         try {
             await this.sheets.spreadsheets.values.append({
-                spreadsheetId: this.sheetId,
-                range: 'Words!A:F',
+                spreadsheetId: this.spreadsheetId,
+                range: 'A:F',
                 valueInputOption: 'RAW',
                 requestBody: {
                     values: [[
-                        chatId.toString(),
-                        englishWord,
-                        transcription || '',
+                        userId.toString(),
+                        word,
+                        transcription,
                         translation,
-                        audioUrl || '',
+                        audioUrl,
                         new Date().toISOString()
                     ]]
                 }
             });
-            console.log('✅ Word added to sheet:', englishWord);
             return true;
         } catch (error) {
-            console.error('❌ Error adding word to sheet:', error.message);
+            console.error('Sheets error:', error.message);
             return false;
         }
     }
 
-    async getUserWords(chatId) {
-        if (!this.initialized) {
-            console.error('Google Sheets not initialized');
-            return [];
-        }
-
+    // ✅ ДОБАВЛЯЕМ МЕТОД ДЛЯ ПОЛУЧЕНИЯ СЛОВ ПОЛЬЗОВАТЕЛЯ
+    async getUserWords(userId) {
         try {
             const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.sheetId,
-                range: 'Words!A:F',
+                spreadsheetId: this.spreadsheetId,
+                range: 'A:F',
             });
 
             const rows = response.data.values || [];
             
             if (rows.length === 0) return [];
             
-            // Пропускаем заголовок (если есть) и фильтруем по chat_id
-            const startIndex = rows[0][0] === 'chat_id' ? 1 : 0;
+            // Пропускаем заголовок (если есть) и фильтруем по userId
+            const startIndex = rows[0][0] === 'chat_id' || rows[0][0] === 'user_id' ? 1 : 0;
             const userWords = rows.slice(startIndex)
-                .filter(row => row[0] === chatId.toString())
+                .filter(row => row[0] === userId.toString())
                 .map(row => ({
                     english: row[1] || '',
                     transcription: row[2] || '',
@@ -88,10 +66,10 @@ export class GoogleSheetsService {
                     audio: row[4] || ''
                 }));
                 
-            console.log(`✅ Found ${userWords.length} words for user ${chatId}`);
+            console.log(`✅ Found ${userWords.length} words for user ${userId}`);
             return userWords;
         } catch (error) {
-            console.error('❌ Error getting user words from sheet:', error.message);
+            console.error('Error getting user words from sheet:', error.message);
             return [];
         }
     }
