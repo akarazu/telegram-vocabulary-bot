@@ -39,37 +39,61 @@ export class GoogleSheetsService {
         }
     }
 
-    async init() {
-        if (!this.spreadsheetId) {
-            console.error('❌ GOOGLE_SHEETS_ID is required');
-            this.initialized = false;
-            return;
-        }
-
-        if (!this.credentials) {
-            console.error('❌ Google credentials not found in environment variables');
-            this.initialized = false;
-            return;
-        }
-
-        try {
-            const auth = new google.auth.GoogleAuth({
-                credentials: this.credentials,
-                scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-            });
-
-            this.sheets = google.sheets({ version: 'v4', auth });
-            
-            // Проверяем подключение
-            await this.testConnection();
-            
-            this.initialized = true;
-            console.log('✅ Google Sheets service initialized');
-        } catch (error) {
-            console.error('❌ Google Sheets initialization failed:', error.message);
-            this.initialized = false;
-        }
+async init() {
+    console.log('🔄 Initializing Google Sheets service...');
+    console.log('📋 Spreadsheet ID:', this.spreadsheetId ? 'SET' : 'NOT SET');
+    
+    if (!this.spreadsheetId) {
+        console.error('❌ GOOGLE_SHEETS_ID is required but not set');
+        this.initialized = false;
+        return;
     }
+
+    if (!this.credentials) {
+        console.error('❌ Google credentials not found in environment variables');
+        this.initialized = false;
+        return;
+    }
+
+    try {
+        const auth = new google.auth.GoogleAuth({
+            credentials: this.credentials,
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+
+        this.sheets = google.sheets({ version: 'v4', auth });
+        
+        // Проверяем подключение
+        console.log('🔗 Testing Google Sheets connection...');
+        await this.testConnection();
+        
+        this.initialized = true;
+        console.log('✅ Google Sheets service initialized successfully');
+    } catch (error) {
+        console.error('❌ Google Sheets initialization failed:', error.message);
+        this.initialized = false;
+    }
+}
+
+async testConnection() {
+    try {
+        console.log('🔍 Testing access to spreadsheet...');
+        const response = await this.sheets.spreadsheets.get({
+            spreadsheetId: this.spreadsheetId,
+        });
+        
+        console.log('✅ Successfully connected to Google Sheets:', {
+            title: response.data.properties?.title,
+            sheets: response.data.sheets?.map(s => s.properties?.title)
+        });
+    } catch (error) {
+        console.error('❌ Cannot access spreadsheet:', {
+            message: error.message,
+            code: error.code
+        });
+        throw error;
+    }
+}
 
     async testConnection() {
         try {
@@ -213,4 +237,5 @@ export class GoogleSheetsService {
         }
     }
 }
+
 
