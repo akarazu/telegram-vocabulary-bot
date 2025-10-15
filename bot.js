@@ -200,12 +200,10 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         // Генерируем примеры
         console.log('🔄 Generating examples...');
         
-// ✅ ИСПОЛЬЗУЕМ УЛУЧШЕННУЮ ЛОГИКУ ОПРЕДЕЛЕНИЯ ЧАСТИ РЕЧИ
-const partOfSpeech = await detectPartOfSpeechFromYandex(userState.tempWord, translation);
 const examples = await exampleGenerator.generateExamples(
     userState.tempWord, 
     translation, 
-    partOfSpeech
+    userState.tempPartOfSpeech // ✅ ПЕРЕДАЕМ ЧАСТЬ РЕЧИ
 );
         console.log(`✅ Generated examples:`, examples);
         
@@ -345,14 +343,15 @@ bot.on('message', async (msg) => {
             }
             
             userStates.set(chatId, {
-                state: 'showing_transcription',
-                tempWord: englishWord,
-                tempTranscription: result.transcription || '',
-                tempAudioUrl: result.audioUrl || '',
-                tempAudioId: audioId,
-                tempTranslations: result.translations || [],
-                tempExamples: [],
-                selectedTranslationIndices: []
+    state: 'showing_transcription',
+    tempWord: englishWord,
+    tempTranscription: result.transcription || '',
+    tempAudioUrl: result.audioUrl || '',
+    tempAudioId: audioId,
+    tempTranslations: result.translations || [],
+    tempPartOfSpeech: result.partOfSpeech || '', // ✅ СОХРАНЯЕМ ЧАСТЬ РЕЧИ
+    tempExamples: [],
+    selectedTranslationIndices: []
             });
             
             let message = `📝 Слово: ${englishWord}`;
@@ -640,6 +639,7 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
 
 
