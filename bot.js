@@ -167,7 +167,8 @@ async function saveWordWithTranslation(chatId, userState, translation) {
     console.log(`💾 START Saving word:`, {
         chatId,
         word: userState.tempWord,
-        translation: translation
+        translation: translation,
+        partOfSpeech: userState.tempPartOfSpeech // ✅ ЧАСТЬ РЕЧИ ИЗ YANDEX
     });
     
     let success = true;
@@ -200,11 +201,13 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         // Генерируем примеры
         console.log('🔄 Generating examples...');
         
-const examples = await exampleGenerator.generateExamples(
-    userState.tempWord, 
-    translation, 
-    userState.tempPartOfSpeech // ✅ ПЕРЕДАЕМ ЧАСТЬ РЕЧИ
-);
+        // ✅ ИСПОЛЬЗУЕМ ЧАСТЬ РЕЧИ ИЗ YANDEX (без detectPartOfSpeech)
+        const examples = await exampleGenerator.generateExamples(
+            userState.tempWord, 
+            translation, 
+            userState.tempPartOfSpeech // ✅ ПЕРЕДАЕМ ЧАСТЬ РЕЧИ ИЗ YANDEX
+        );
+        
         console.log(`✅ Generated examples:`, examples);
         
         // ✅ ПРАВИЛЬНО ОБРАБАТЫВАЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
@@ -250,8 +253,12 @@ const examples = await exampleGenerator.generateExamples(
             `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n`;
         
         // ✅ ПРАВИЛЬНО ФОРМАТИРУЕМ ПРИМЕРЫ ДЛЯ ОТОБРАЖЕНИЯ
-        const partOfSpeech = detectPartOfSpeech(translation);
-        const examples = await exampleGenerator.generateExamples(userState.tempWord, translation, partOfSpeech);
+        // Используем ту же часть речи что и для сохранения
+        const examples = await exampleGenerator.generateExamples(
+            userState.tempWord, 
+            translation, 
+            userState.tempPartOfSpeech
+        );
         
         if (examples && examples.length > 0) {
             successMessage += '📝 Примеры:\n';
@@ -639,6 +646,7 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
 
 
