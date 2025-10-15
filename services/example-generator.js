@@ -2,14 +2,25 @@ import axios from 'axios';
 
 export class ExampleGeneratorService {
     constructor() {
-        console.log('🔧 ExampleGeneratorService initialized - Using Free Dictionary API only');
+        console.log('🔧 ExampleGeneratorService initialized - Using Free Dictionary API with POS support');
     }
 
-    async generateExamples(word, translation, partOfSpeech = '') {
+    async generateExamples(word, translation, selectedTranslationIndices = [], translationsWithPOS = []) {
         console.log(`\n🔄 ========== GENERATING EXAMPLES ==========`);
-        console.log(`🔄 Input: word="${word}", translation="${translation}", partOfSpeech="${partOfSpeech}"`);
+        console.log(`🔄 Input: word="${word}", translation="${translation}"`);
+        console.log(`🔍 Selected indices:`, selectedTranslationIndices);
+        console.log(`🔍 Translations with POS:`, translationsWithPOS);
         
-        // ✅ ПОЛУЧАЕМ ПРИМЕРЫ ИЗ FREE DICTIONARY API
+        // ✅ ЕСЛИ ЕСТЬ ВЫБРАННЫЕ ПЕРЕВОДЫ С ИНФОРМАЦИЕЙ О ЧАСТЯХ РЕЧИ
+        if (selectedTranslationIndices.length > 0 && translationsWithPOS.length > 0) {
+            console.log('🔍 Using selected translations with POS analysis');
+            const posExamples = this.generateExamplesForSelectedTranslations(word, selectedTranslationIndices, translationsWithPOS);
+            if (posExamples.length > 0) {
+                return posExamples;
+            }
+        }
+        
+        // ✅ ИНАЧЕ ИСПОЛЬЗУЕМ FREE DICTIONARY API
         try {
             console.log('🔍 Getting examples from Free Dictionary API...');
             const examples = await this.getFreeDictionaryExamples(word);
@@ -25,6 +36,94 @@ export class ExampleGeneratorService {
             console.log('❌ ERROR: Free Dictionary API failed:', error.message);
             return this.generateFallbackExamples(word, translation);
         }
+    }
+
+    // ✅ ГЕНЕРАЦИЯ ПРИМЕРОВ ДЛЯ ВЫБРАННЫХ ПЕРЕВОДОВ С УЧЕТОМ ЧАСТЕЙ РЕЧИ
+    generateExamplesForSelectedTranslations(word, selectedIndices, translationsWithPOS) {
+        const examples = [];
+        
+        selectedIndices.forEach(index => {
+            if (translationsWithPOS[index]) {
+                const translationData = translationsWithPOS[index];
+                const translation = translationData.text;
+                const pos = translationData.pos;
+                
+                console.log(`🔍 Processing: "${translation}" (${pos})`);
+                
+                // Генерируем примеры в зависимости от части речи
+                if (this.isNoun(pos)) {
+                    examples.push(...this.generateNounExamples(word, translation));
+                } else if (this.isVerb(pos)) {
+                    examples.push(...this.generateVerbExamples(word, translation));
+                } else if (this.isAdjective(pos)) {
+                    examples.push(...this.generateAdjectiveExamples(word, translation));
+                } else {
+                    examples.push(...this.generateGeneralExamples(word, translation));
+                }
+            }
+        });
+        
+        console.log(`✅ Generated ${examples.length} examples for selected translations`);
+        return examples.slice(0, 3);
+    }
+
+    // ✅ МЕТОДЫ ГЕНЕРАЦИИ ПРИМЕРОВ ПО ЧАСТЯМ РЕЧИ
+    generateNounExamples(word, translation) {
+        return [
+            `The ${word} was completely unexpected. - ${this.capitalizeFirst(translation)} было совершенно неожиданным.`,
+            `They discovered the ${word}. - Они обнаружили ${translation}.`,
+            `This ${word} caused serious problems. - Это ${translation} вызвало серьезные проблемы.`
+        ];
+    }
+
+    generateVerbExamples(word, translation) {
+        return [
+            `They will ${word} it tomorrow. - Они будут ${translation} это завтра.`,
+            `You should not ${word} that. - Тебе не следует ${translation} это.`,
+            `He tried to ${word} the plan. - Он попытался ${translation} план.`
+        ];
+    }
+
+    generateAdjectiveExamples(word, translation) {
+        return [
+            `It was ${word}. - Это было ${translation}.`,
+            `The situation became ${word}. - Ситуация стала ${translation}.`,
+            `She looked ${word}. - Она выглядела ${translation}.`
+        ];
+    }
+
+    generateGeneralExamples(word, translation) {
+        return [
+            `This is an example with "${word}". - Это пример с "${translation}".`,
+            `How to use "${word}" correctly? - Как правильно использовать "${translation}"?`,
+            `I often use "${word}" in conversations. - Я часто использую "${translation}" в разговорах.`
+        ];
+    }
+
+    // ✅ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ОПРЕДЕЛЕНИЯ ЧАСТЕЙ РЕЧИ
+    isNoun(pos) {
+        if (!pos) return false;
+        const lowerPOS = pos.toLowerCase();
+        const nounIndicators = ['noun', 'существительное', 'n', 'сущ'];
+        return nounIndicators.some(indicator => lowerPOS.includes(indicator));
+    }
+
+    isVerb(pos) {
+        if (!pos) return false;
+        const lowerPOS = pos.toLowerCase();
+        const verbIndicators = ['verb', 'глагол', 'v', 'гл'];
+        return verbIndicators.some(indicator => lowerPOS.includes(indicator));
+    }
+
+    isAdjective(pos) {
+        if (!pos) return false;
+        const lowerPOS = pos.toLowerCase();
+        const adjectiveIndicators = ['adjective', 'прилагательное', 'adj', 'прил'];
+        return adjectiveIndicators.some(indicator => lowerPOS.includes(indicator));
+    }
+
+    capitalizeFirst(string) {
+        return string.charAt(0).toUpperCase() + string.slice(1);
     }
 
     async getFreeDictionaryExamples(word) {
@@ -86,7 +185,6 @@ export class ExampleGeneratorService {
     generateFallbackExamples(word, translation) {
         console.log('✏️ Using fallback examples');
         
-        // Простые fallback-примеры если API не вернуло результатов
         const mainTranslation = translation.split(',')[0].trim();
         
         return [
