@@ -18,7 +18,12 @@ export class TranscriptionService {
     async getUKTranscription(word) {
         console.log(`🔍 Searching transcription for: "${word}"`);
         
-        let result = { transcription: '', audioUrl: '', translations: [] };
+        let result = { 
+            transcription: '', 
+            audioUrl: '', 
+            translations: [],
+            examples: [] // Добавляем примеры использования
+        };
 
         // ✅ СНАЧАЛА пробуем Яндекс (если доступен)
         if (this.useYandex) {
@@ -69,45 +74,151 @@ export class TranscriptionService {
             }
         }
 
-        // ✅ Получаем переводы
-        result.translations = await this.getTranslations(word);
+        // ✅ Получаем переводы и примеры использования
+        const translationData = await this.getTranslationsAndExamples(word);
+        result.translations = translationData.translations;
+        result.examples = translationData.examples;
 
         console.log(`📊 Final results for "${word}":`, {
             transcription: result.transcription || '❌ Not found',
             audioUrl: result.audioUrl ? '✅ Found' : '❌ Not found',
-            translations: result.translations.length
+            translations: result.translations.length,
+            examples: result.examples.length
         });
 
         return result;
     }
 
-    async getTranslations(word) {
+    async getTranslationsAndExamples(word) {
         let translations = [];
+        let examples = [];
         
-        // Сначала пробуем Яндекс для переводов
-        if (this.useYandex) {
+        // Сначала пробуем Free Dictionary API (там есть примеры использования)
+        try {
+            console.log('📖 Getting translations and examples from Free Dictionary...');
+            const freeDictData = await this.getFreeDictionaryData(word);
+            translations = freeDictData.translations;
+            examples = freeDictData.examples;
+            
+            if (translations.length > 0) {
+                console.log(`✅ Free Dictionary translations: ${translations.length}`);
+            }
+            if (examples.length > 0) {
+                console.log(`✅ Free Dictionary examples: ${examples.length}`);
+            }
+        } catch (error) {
+            console.log('❌ Free Dictionary failed');
+        }
+
+        // Если нет переводов, пробуем Яндекс
+        if (translations.length === 0 && this.useYandex) {
             try {
                 translations = await this.getYandexTranslations(word);
                 if (translations.length > 0) {
                     console.log(`✅ Yandex translations: ${translations.join(', ')}`);
-                    return translations;
                 }
             } catch (error) {
                 console.log('❌ Yandex translations failed');
             }
         }
 
-        // Потом пробуем Free Dictionary API для переводов
-        try {
-            translations = await this.getFreeDictionaryTranslations(word);
-            if (translations.length > 0) {
-                console.log(`✅ Free Dictionary translations: ${translations.join(', ')}`);
-            }
-        } catch (error) {
-            console.log('❌ Free Dictionary translations failed');
+        // Если нет примеров, генерируем базовые
+        if (examples.length === 0) {
+            examples = this.generateBasicExamples(word);
+            console.log(`🔧 Generated basic examples: ${examples.length}`);
         }
 
-        return translations;
+        return { translations, examples };
+    }
+
+    async getFreeDictionaryData(word) {
+        try {
+            const response = await axios.get(
+                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
+                { timeout: 5000 }
+            );
+
+            return this.extractDataFromFreeDictionary(response.data, word);
+        } catch (error) {
+            console.error('Free Dictionary API error:', error.message);
+            return { translations: [], examples: [] };
+        }
+    }
+
+    extractDataFromFreeDictionary(data, word) {
+        const translations = new Set();
+        const examples = new Set();
+        
+        if (!Array.isArray(data) || data.length === 0) {
+            return { translations: [], examples: [] };
+        }
+
+        data.forEach(entry => {
+            if (entry.meanings && Array.isArray(entry.meanings)) {
+                entry.meanings.forEach(meaning => {
+                    // Добавляем partOfSpeech как перевод
+                    if (meaning.partOfSpeech) {
+                        translations.add(meaning.partOfSpeech);
+                    }
+                    
+                    // Ищем в definitions
+                    if (meaning.definitions && Array.isArray(meaning.definitions)) {
+                        meaning.definitions.forEach(definition => {
+                            // Добавляем короткое определение как перевод
+                            if (definition.definition && definition.definition.trim()) {
+                                const shortDef = definition.definition
+                                    .split(' ')
+                                    .slice(0, 4)
+                                    .join(' ');
+                                if (shortDef.length < 50) {
+                                    translations.add(shortDef);
+                                }
+                            }
+                            
+                            // Добавляем примеры использования
+                            if (definition.example && definition.example.trim()) {
+                                const cleanExample = definition.example.trim();
+                                if (cleanExample.length < 100) {
+                                    examples.add(cleanExample);
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Добавляем синонимы
+                    if (meaning.synonyms && Array.isArray(meaning.synonyms)) {
+                        meaning.synonyms.forEach(synonym => {
+                            if (synonym && synonym.trim()) {
+                                translations.add(synonym.trim());
+                            }
+                        });
+                    }
+                });
+            }
+            
+            // Также проверяем license для примеров
+            if (entry.license && entry.license.url) {
+                console.log('📝 License info available for examples');
+            }
+        });
+
+        return {
+            translations: Array.from(translations).slice(0, 4),
+            examples: Array.from(examples).slice(0, 3) // Ограничиваем 3 примерами
+        };
+    }
+
+    generateBasicExamples(word) {
+        // Базовые примеры использования для распространенных частей речи
+        const basicExamples = [
+            `I need to learn the word "${word}".`,
+            `Can you use "${word}" in a sentence?`,
+            `The "${word}" is very important in English.`,
+            `She said "${word}" during the conversation.`,
+            `What does "${word}" mean?`
+        ];
+        
+        return basicExamples.slice(0, 2); // Возвращаем 2 базовых примера
     }
 
     async getYandexTranslations(word) {
@@ -150,62 +261,6 @@ export class TranscriptionService {
                                 }
                             });
                         }
-                    }
-                });
-            }
-        });
-
-        return Array.from(translations).slice(0, 4);
-    }
-
-    async getFreeDictionaryTranslations(word) {
-        try {
-            const response = await axios.get(
-                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
-                { timeout: 5000 }
-            );
-
-            return this.extractTranslationsFromFreeDictionary(response.data);
-        } catch (error) {
-            console.error('Free Dictionary API error:', error.message);
-            return [];
-        }
-    }
-
-    extractTranslationsFromFreeDictionary(data) {
-        const translations = new Set();
-        
-        if (!Array.isArray(data) || data.length === 0) {
-            return [];
-        }
-
-        data.forEach(entry => {
-            if (entry.meanings && Array.isArray(entry.meanings)) {
-                entry.meanings.forEach(meaning => {
-                    if (meaning.partOfSpeech) {
-                        translations.add(meaning.partOfSpeech);
-                    }
-                    
-                    if (meaning.definitions && Array.isArray(meaning.definitions)) {
-                        meaning.definitions.forEach(definition => {
-                            if (definition.definition && definition.definition.trim()) {
-                                const shortDef = definition.definition
-                                    .split(' ')
-                                    .slice(0, 4)
-                                    .join(' ');
-                                if (shortDef.length < 50) {
-                                    translations.add(shortDef);
-                                }
-                            }
-                        });
-                    }
-                    
-                    if (meaning.synonyms && Array.isArray(meaning.synonyms)) {
-                        meaning.synonyms.forEach(synonym => {
-                            if (synonym && synonym.trim()) {
-                                translations.add(synonym.trim());
-                            }
-                        });
                     }
                 });
             }
