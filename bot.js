@@ -50,12 +50,40 @@ function getAfterAudioKeyboard() {
     };
 }
 
+// Клавиатура с вариантами перевода
+function getTranslationKeyboard(translations) {
+    if (!translations || translations.length === 0) {
+        return {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '✏️ Ввести свой перевод', callback_data: 'custom_translation' }],
+                    [{ text: '🔙 Отменить', callback_data: 'cancel_translation' }]
+                ]
+            }
+        };
+    }
+
+    // Создаем кнопки для каждого варианта перевода
+    const translationButtons = translations.map((translation, index) => [
+        { text: `${index + 1}️⃣ ${translation}`, callback_data: `translation_${index}` }
+    ]);
+
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                ...translationButtons,
+                [{ text: '✏️ Ввести свой перевод', callback_data: 'custom_translation' }],
+                [{ text: '🔙 Отменить', callback_data: 'cancel_translation' }]
+            ]
+        }
+    };
+}
+
 // Функция для принудительного показа меню
 function showMainMenu(chatId, text = '') {
     if (text && text.trim() !== '') {
         return bot.sendMessage(chatId, text, getMainMenu());
     } else {
-        // Просто показываем меню без текста или с минимальным текстом
         return bot.sendMessage(chatId, ' ', getMainMenu());
     }
 }
@@ -88,6 +116,51 @@ function addAudioToHistory(chatId, audioUrl, word) {
     
     if (chatAudios.length > 10) {
         chatAudios.shift();
+    }
+}
+
+// Функция для сохранения слова с переводом
+async function saveWordWithTranslation(chatId, userState, translation) {
+    let success = true;
+    
+    if (sheetsService.initialized) {
+        const existingWords = await sheetsService.getUserWords(chatId);
+        const isDuplicate = existingWords.some(word => 
+            word.english.toLowerCase() === userState.tempWord.toLowerCase()
+        );
+        
+        if (isDuplicate) {
+            showMainMenu(chatId, 
+                `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
+                'Пожалуйста, начните заново.'
+            );
+            userStates.delete(chatId);
+            return;
+        }
+        
+        success = await sheetsService.addWord(
+            chatId, 
+            userState.tempWord, 
+            userState.tempTranscription,
+            translation,
+            userState.tempAudioUrl
+        );
+    }
+    
+    userStates.delete(chatId);
+    
+    if (success) {
+        const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
+        
+        showMainMenu(chatId, 
+            '✅ Слово добавлено в словарь!\n\n' +
+            `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n` +
+            'Теперь оно будет доступно для повторения.'
+        );
+    } else {
+        showMainMenu(chatId, 
+            '❌ Ошибка сохранения\n\nНе удалось сохранить слово в словарь. Попробуйте еще раз.'
+        );
     }
 }
 
@@ -126,7 +199,7 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // ✅ ПРОВЕРКА GOOGLE SHEETS И ДУБЛИКАТОВ
+        // ПРОВЕРКА GOOGLE SHEETS И ДУБЛИКАТОВ
         if (!sheetsService.initialized) {
             showMainMenu(chatId, 
                 '❌ Сервис словаря временно недоступен\n\n' +
@@ -148,7 +221,7 @@ bot.on('message', async (msg) => {
             }
         }
         
-        showMainMenu(chatId, '🔍 Ищу транскрипцию и произношение...');
+        showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение и варианты перевода...');
         
         const result = await transcriptionService.getUKTranscription(englishWord);
         
@@ -162,7 +235,8 @@ bot.on('message', async (msg) => {
             tempWord: englishWord,
             tempTranscription: result.transcription,
             tempAudioUrl: result.audioUrl,
-            tempAudioId: audioId
+            tempAudioId: audioId,
+            tempTranslations: result.translations || []
         });
         
         let message = `📝 Слово: ${englishWord}`;
@@ -175,6 +249,11 @@ bot.on('message', async (msg) => {
         
         if (result.audioUrl) {
             message += `\n\n🎵 Доступно аудио произношение`;
+        }
+
+        // Показываем доступные варианты перевода
+        if (result.translations && result.translations.length > 0) {
+            message += `\n\n🎯 Найдено ${result.translations.length} вариантов перевода`;
         }
         
         message += `\n\nВыберите действие:`;
@@ -190,48 +269,17 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        // ✅ ПРОВЕРКА ПЕРЕД СОХРАНЕНИЕМ
-        let success = true;
-        if (sheetsService.initialized) {
-            // Еще раз проверяем дубликат перед сохранением
-            const existingWords = await sheetsService.getUserWords(chatId);
-            const isDuplicate = existingWords.some(word => 
-                word.english.toLowerCase() === userState.tempWord.toLowerCase()
-            );
-            
-            if (isDuplicate) {
-                showMainMenu(chatId, 
-                    `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
-                    'Пожалуйста, начните заново.'
-                );
-                userStates.delete(chatId);
-                return;
-            }
-            
-            success = await sheetsService.addWord(
-                chatId, 
-                userState.tempWord, 
-                userState.tempTranscription,
-                translation,
-                userState.tempAudioUrl
-            );
+        // РАЗДЕЛИТЕЛЬ ДЛЯ НЕСКОЛЬКИХ ПЕРЕВОДОВ
+        const translations = translation.split('/').map(t => t.trim()).filter(t => t);
+        
+        if (translations.length === 0) {
+            showMainMenu(chatId, '❌ Введите хотя бы один вариант перевода:');
+            return;
         }
         
-        userStates.delete(chatId);
-        
-        if (success) {
-            const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
-            
-            showMainMenu(chatId, 
-                '✅ Слово добавлено в словарь!\n\n' +
-                `💬 ${userState.tempWord}${transcriptionText} - ${translation}\n\n` +
-                'Теперь оно будет доступно для повторения.'
-            );
-        } else {
-            showMainMenu(chatId, 
-                '❌ Ошибка сохранения\n\nНе удалось сохранить слово в словарь. Попробуйте еще раз.'
-            );
-        }
+        // Сохраняем первый вариант (или объединяем все через "/")
+        const translationToSave = translations.join(' / ');
+        await saveWordWithTranslation(chatId, userState, translationToSave);
     }
     else {
         showMainMenu(chatId);
@@ -297,19 +345,77 @@ bot.on('callback_query', async (callbackQuery) => {
                 { chat_id: chatId, message_id: callbackQuery.message.message_id }
             );
 
+            // ЕСЛИ ЕСТЬ ВАРИАНТЫ ПЕРЕВОДА - ПОКАЗЫВАЕМ ИХ
+            if (userState.tempTranslations && userState.tempTranslations.length > 0) {
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'choosing_translation'
+                });
+
+                let translationMessage = '🎯 Выберите вариант перевода:\n\n' +
+                    `🇬🇧 ${userState.tempWord}`;
+                
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+
+                translationMessage += '\n\n';
+
+                // Показываем варианты перевода
+                userState.tempTranslations.forEach((translation, index) => {
+                    translationMessage += `${index + 1}️⃣ ${translation}\n`;
+                });
+
+                translationMessage += '\n💡 Или введите свой вариант';
+
+                await bot.sendMessage(chatId, translationMessage, 
+                    getTranslationKeyboard(userState.tempTranslations)
+                );
+            } else {
+                // ЕСЛИ ВАРИАНТОВ НЕТ - ПРОСИМ ВВЕСТИ ВРУЧНУЮ
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'waiting_translation'
+                });
+                
+                let translationMessage = '✏️ Введите перевод для слова:\n\n' +
+                    `🇬🇧 ${userState.tempWord}`;
+                
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+                
+                translationMessage += '\n\n💡 Можно ввести несколько вариантов через "/"\nНапример: солнце / светило\n\nНапишите перевод и отправьте сообщением';
+                
+                showMainMenu(chatId, translationMessage);
+            }
+        }
+    }
+    else if (data.startsWith('translation_')) {
+        const translationIndex = parseInt(data.replace('translation_', ''));
+        
+        if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
+            const selectedTranslation = userState.tempTranslations[translationIndex];
+            
+            // Сохраняем выбранный перевод
+            await saveWordWithTranslation(chatId, userState, selectedTranslation);
+        }
+    }
+    else if (data === 'custom_translation') {
+        if (userState?.state === 'choosing_translation') {
             userStates.set(chatId, {
                 ...userState,
                 state: 'waiting_translation'
             });
             
-            let translationMessage = '✏️ Введите перевод для слова:\n\n' +
+            let translationMessage = '✏️ Введите свой вариант перевода:\n\n' +
                 `🇬🇧 ${userState.tempWord}`;
             
             if (userState.tempTranscription) {
                 translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
             }
             
-            translationMessage += '\n\nНапишите перевод и отправьте сообщением';
+            translationMessage += '\n\n💡 Можно ввести несколько вариантов через "/"\nНапример: солнце / светило';
             
             showMainMenu(chatId, translationMessage);
         }
@@ -346,6 +452,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с проверкой дубликатов');
-
-
+console.log('🤖 Бот запущен с выбором вариантов перевода');
