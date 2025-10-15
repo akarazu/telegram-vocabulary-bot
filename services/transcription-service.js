@@ -117,49 +117,46 @@ export class TranscriptionService {
     }
 
     // ✅ ОБНОВЛЕННЫЙ МЕТОД: извлекаем все данные из ответа Яндекс
-    extractDataFromYandex(data, originalWord) {
-        const result = {
-            transcription: '',
-            audioUrl: '',
-            translations: [],
-            partOfSpeech: ''
-        };
+extractDataFromYandex(data, originalWord) {
+    const result = {
+        transcription: '',
+        audioUrl: '',
+        translations: [],
+        translationsWithPOS: [] // ✅ СОХРАНЯЕМ ПЕРЕВОДЫ С ЧАСТЯМИ РЕЧИ
+    };
 
-        if (!data.def || data.def.length === 0) {
-            console.log('❌ Yandex: No definitions found');
-            return result;
-        }
+    if (!data.def || data.def.length === 0) {
+        return result;
+    }
 
-        console.log(`🔍 Yandex found ${data.def.length} definition(s)`);
-
-        const firstDefinition = data.def[0];
-        
-        // ✅ ИЗВЛЕКАЕМ ТРАНСКРИПЦИЮ
-        if (firstDefinition.ts) {
-            result.transcription = `/${firstDefinition.ts}/`;
-            console.log(`✅ Yandex transcription: ${result.transcription}`);
-        }
-        
-        // ✅ ИЗВЛЕКАЕМ ЧАСТЬ РЕЧИ
-        if (firstDefinition.pos) {
-            result.partOfSpeech = firstDefinition.pos;
-            console.log(`✅ Yandex part of speech: ${result.partOfSpeech}`);
-        }
-        
-        // ✅ ИЗВЛЕКАЕМ ПЕРЕВОДЫ
-        const translations = new Set();
-        if (firstDefinition.tr && Array.isArray(firstDefinition.tr)) {
-            firstDefinition.tr.forEach(translation => {
-                if (translation.text && translation.text.trim()) {
-                    const russianTranslation = translation.text.trim();
-                    if (this.isRussianText(russianTranslation) && 
-                        russianTranslation.toLowerCase() !== originalWord.toLowerCase()) {
-                        translations.add(russianTranslation);
-                        console.log(`✅ Yandex translation: "${russianTranslation}"`);
-                    }
+    const firstDefinition = data.def[0];
+    
+    // Извлекаем транскрипцию
+    if (firstDefinition.ts) {
+        result.transcription = `/${firstDefinition.ts}/`;
+    }
+    
+    // Извлекаем переводы с частями речи
+    if (firstDefinition.tr && Array.isArray(firstDefinition.tr)) {
+        firstDefinition.tr.forEach(translation => {
+            if (translation.text && translation.text.trim()) {
+                const russianTranslation = translation.text.trim();
+                if (this.isRussianText(russianTranslation)) {
+                    result.translations.push(russianTranslation);
+                    // ✅ СОХРАНЯЕМ ПЕРЕВОД С ЧАСТЬЮ РЕЧИ
+                    result.translationsWithPOS.push({
+                        text: russianTranslation,
+                        pos: translation.pos || firstDefinition.pos || 'unknown'
+                    });
                 }
-            });
-        }
+            }
+        });
+    }
+    
+    result.audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(originalWord)}&tl=en-gb&client=tw-ob`;
+
+    return result;
+}
         
         result.translations = Array.from(translations).slice(0, 4);
         
@@ -234,3 +231,4 @@ export class TranscriptionService {
         return [`перевод для "${word}"`];
     }
 }
+
