@@ -22,7 +22,7 @@ export class GoogleSheetsService {
         try {
             await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
-                range: 'A:F', // Добавили колонку для audio URL
+                range: 'A:F',
                 valueInputOption: 'RAW',
                 requestBody: {
                     values: [[
