@@ -53,29 +53,22 @@ function getAfterAudioKeyboard() {
 // Функция для проверки, есть ли предыдущие аудио в чате
 function hasPreviousAudios(chatId, currentAudioUrl) {
     if (!sentAudios.has(chatId)) {
-        console.log(`❌ No audio history for chat ${chatId}`);
         return false;
     }
     
     const chatAudios = sentAudios.get(chatId);
-    console.log(`📊 Audio history for chat ${chatId}:`, chatAudios);
     
     // Ищем аудио, которые НЕ являются текущим
     const previousAudios = chatAudios.filter(audio => audio.url !== currentAudioUrl);
-    console.log(`🔍 Previous audios (excluding current):`, previousAudios);
     
     // Если есть хотя бы одно другое аудио - возвращаем true
-    const hasPrevious = previousAudios.length > 0;
-    console.log(`🎯 Has previous audios: ${hasPrevious}`);
-    
-    return hasPrevious;
+    return previousAudios.length > 0;
 }
 
 // Функция для добавления аудио в историю чата
 function addAudioToHistory(chatId, audioUrl, word) {
     if (!sentAudios.has(chatId)) {
         sentAudios.set(chatId, []);
-        console.log(`🆕 Created audio history for chat ${chatId}`);
     }
     
     const chatAudios = sentAudios.get(chatId);
@@ -89,7 +82,6 @@ function addAudioToHistory(chatId, audioUrl, word) {
             word: word,
             timestamp: Date.now()
         };
-        console.log(`🔄 Updated existing audio in history: ${word}`);
     } else {
         // Добавляем новое аудио
         chatAudios.push({
@@ -97,16 +89,12 @@ function addAudioToHistory(chatId, audioUrl, word) {
             word: word,
             timestamp: Date.now()
         });
-        console.log(`✅ Added new audio to history: ${word}`);
     }
     
     // Ограничиваем историю последними 10 аудио (чтобы не накапливать)
     if (chatAudios.length > 10) {
         chatAudios.shift();
-        console.log(`🧹 Trimmed audio history to 10 items`);
     }
-    
-    console.log(`📋 Current history size for chat ${chatId}: ${chatAudios.length}`);
 }
 
 // Команда /start
@@ -251,9 +239,6 @@ bot.on('callback_query', async (callbackQuery) => {
         
         if (audioUrl && englishWord) {
             try {
-                console.log(`🎵 Processing audio for: ${englishWord}`);
-                console.log(`🔗 Audio URL: ${audioUrl}`);
-                
                 // Убираем кнопки из исходного сообщения
                 await bot.editMessageReplyMarkup(
                     { inline_keyboard: [] },
@@ -263,12 +248,10 @@ bot.on('callback_query', async (callbackQuery) => {
                     }
                 );
 
-                // ✅ СНАЧАЛА добавляем аудио в историю (перед проверкой!)
-                console.log(`📥 Adding audio to history...`);
+                // СНАЧАЛА добавляем аудио в историю (перед проверкой!)
                 addAudioToHistory(chatId, audioUrl, englishWord);
                 
-                // ✅ ТЕПЕРЬ проверяем, есть ли предыдущие аудио
-                console.log(`🔍 Checking for previous audios...`);
+                // ТЕПЕРЬ проверяем, есть ли предыдущие аудио
                 const hasPrevious = hasPreviousAudios(chatId, audioUrl);
                 
                 // Отправляем аудио сообщение
@@ -276,9 +259,8 @@ bot.on('callback_query', async (callbackQuery) => {
                     caption: `🔊 Британское произношение: ${englishWord}`
                 });
 
-                // ✅ ЕСЛИ ЕСТЬ ПРЕДЫДУЩИЕ АУДИО - показываем инструкцию
+                // ЕСЛИ ЕСТЬ ПРЕДЫДУЩИЕ АУДИО - показываем инструкцию
                 if (hasPrevious) {
-                    console.log(`⚠️ Showing warning for previous audios`);
                     await bot.sendMessage(chatId,
                         '⚠️ **Чтобы избежать автовоспроизведения старых аудио:**\n\n' +
                         '📱 **На Android:**\n' +
@@ -290,8 +272,6 @@ bot.on('callback_query', async (callbackQuery) => {
                         '💡 *Это нужно сделать только если начали играть старые слова*',
                         { parse_mode: 'Markdown' }
                     );
-                } else {
-                    console.log(`✅ No previous audios, skipping warning`);
                 }
                 
                 // Отправляем сообщение с кнопками действий после аудио
@@ -307,14 +287,7 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
-            // Убираем кнопки из исходного сообщения
-            await bot.editMessageReplyMarkup(
-                { inline_keyboard: [] },
-                {
-                    chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                }
-            );
+            // ✅ НЕ убираем кнопки из исходного сообщения - оставляем панель видимой
 
             // Переходим к вводу перевода - СОХРАНЯЕМ ВСЕ ДАННЫЕ
             userStates.set(chatId, {
@@ -333,12 +306,8 @@ bot.on('callback_query', async (callbackQuery) => {
             translationMessage += `\n\n📝 <i>Напишите перевод и отправьте сообщением</i>`;
             
             await bot.sendMessage(chatId, translationMessage, {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '🔙 Отменить', callback_data: 'cancel_translation' }]
-                    ]
-                }
+                parse_mode: 'HTML'
+                // ✅ УБИРАЕМ кнопку "Отменить" - пользователь просто вводит текст
             });
         }
     }
@@ -382,4 +351,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с отладочной информацией по аудио истории');
+console.log('🤖 Бот запущен с исправленным интерфейсом');
