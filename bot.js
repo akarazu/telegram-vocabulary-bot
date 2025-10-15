@@ -169,10 +169,25 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         // Генерируем примеры
         console.log('🔄 Generating examples...');
         const examples = await exampleGenerator.generateExamples(userState.tempWord, translation);
-        console.log(`✅ Generated ${examples.length} examples:`, examples);
+        console.log(`✅ Generated examples:`, examples);
         
-        // ✅ ПРАВИЛЬНО ФОРМАТИРУЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
-        const examplesText = Array.isArray(examples) ? examples.join(' | ') : '';
+        // ✅ ПРАВИЛЬНО ОБРАБАТЫВАЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
+        let examplesText = '';
+        if (Array.isArray(examples)) {
+            // Если examples - массив строк, объединяем их
+            examplesText = examples.join(' | ');
+        } else if (typeof examples === 'string') {
+            // Если examples уже строка, используем как есть
+            examplesText = examples;
+        } else {
+            // Если examples - массив объектов, преобразуем в строки
+            examplesText = examples.map(ex => {
+                if (typeof ex === 'string') return ex;
+                if (ex.english && ex.russian) return `${ex.english} - ${ex.russian}`;
+                return JSON.stringify(ex);
+            }).join(' | ');
+        }
+        
         console.log(`📝 Formatted examples for storage: "${examplesText}"`);
         
         // Сохраняем слово с примерами
@@ -203,8 +218,19 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         
         // ✅ ПРАВИЛЬНО ФОРМАТИРУЕМ ПРИМЕРЫ ДЛЯ ОТОБРАЖЕНИЯ
         const examples = await exampleGenerator.generateExamples(userState.tempWord, translation);
-        if (examples.length > 0) {
-            successMessage += '📝 Примеры:\n' + exampleGenerator.formatExamplesForDisplay(examples) + '\n\n';
+        if (examples && examples.length > 0) {
+            successMessage += '📝 Примеры:\n';
+            
+            if (Array.isArray(examples)) {
+                examples.forEach((ex, index) => {
+                    if (typeof ex === 'string') {
+                        successMessage += `${index + 1}. ${ex}\n`;
+                    } else if (ex.english && ex.russian) {
+                        successMessage += `${index + 1}. ${ex.english} - ${ex.russian}\n`;
+                    }
+                });
+            }
+            successMessage += '\n';
         }
         
         await showMainMenu(chatId, successMessage);
@@ -214,7 +240,6 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         );
     }
 }
-
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -577,4 +602,5 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения');
+
 
