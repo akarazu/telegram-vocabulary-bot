@@ -51,6 +51,15 @@ function getAfterAudioKeyboard() {
     };
 }
 
+// Убираем кнопки из сообщения
+function removeKeyboard() {
+    return {
+        reply_markup: {
+            remove_keyboard: true
+        }
+    };
+}
+
 // Команда /start
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
@@ -186,6 +195,15 @@ bot.on('callback_query', async (callbackQuery) => {
         
         if (audioUrl) {
             try {
+                // Убираем кнопки из исходного сообщения
+                await bot.editMessageReplyMarkup(
+                    { inline_keyboard: [] },
+                    {
+                        chat_id: chatId,
+                        message_id: callbackQuery.message.message_id
+                    }
+                );
+
                 // Отправляем аудио сообщение
                 await bot.sendAudio(chatId, audioUrl, {
                     caption: '🔊 Британское произношение'
@@ -216,6 +234,15 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
+            // Убираем кнопки из исходного сообщения
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: callbackQuery.message.message_id
+                }
+            );
+
             // Переходим к вводу перевода
             userStates.set(chatId, {
                 ...userState,
@@ -248,10 +275,24 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'back_to_word') {
         if (userState?.state === 'showing_transcription') {
-            // Возвращаемся к исходному сообщению со словом
+            // Убираем кнопки из сообщения с действиями
+            try {
+                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+            } catch (error) {
+                // Если не удалось удалить, просто убираем кнопки
+                await bot.editMessageReplyMarkup(
+                    { inline_keyboard: [] },
+                    {
+                        chat_id: chatId,
+                        message_id: callbackQuery.message.message_id
+                    }
+                );
+            }
+
+            // Возвращаемся к исходному сообщению со словом (но уже без кнопок)
             const message = `📝 Слово: <b>${userState.tempWord}</b>\n` +
                 (userState.tempTranscription ? `🔤 Транскрипция: <code>${userState.tempTranscription}</code>\n\n` : '\n') +
-                '🎵 Доступно аудио произношение\n\n' +
+                '🎵 Аудио произношение доступно\n\n' +
                 'Выберите действие:';
             
             await bot.sendMessage(chatId, message, {
@@ -265,8 +306,17 @@ bot.on('callback_query', async (callbackQuery) => {
         }
     }
     else if (data === 'cancel_translation') {
-        // Отмена ввода перевода, возврат к выбору действий
+        // Отмена ввода перевода
         if (userState) {
+            // Убираем кнопки из сообщения с запросом перевода
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                {
+                    chat_id: chatId,
+                    message_id: callbackQuery.message.message_id
+                }
+            );
+
             userStates.set(chatId, {
                 ...userState,
                 state: 'showing_transcription'
@@ -294,6 +344,15 @@ bot.on('callback_query', async (callbackQuery) => {
         }
         userStates.delete(chatId);
         
+        // Убираем кнопки из сообщения
+        await bot.editMessageReplyMarkup(
+            { inline_keyboard: [] },
+            {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id
+            }
+        );
+
         await bot.sendMessage(chatId, '❌ Добавление слова отменено', getMainMenu());
         await bot.answerCallbackQuery(callbackQuery.id);
     }
@@ -308,4 +367,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с исправленным вводом перевода');
+console.log('🤖 Бот запущен с очисткой кнопок');
