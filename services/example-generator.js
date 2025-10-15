@@ -10,13 +10,20 @@ export class ExampleGeneratorService {
         console.log(`\n🔄 ========== GENERATING EXAMPLES ==========`);
         console.log(`🔄 Input: word="${word}", translation="${translation}"`);
         
+        // ✅ ВРЕМЕННО ИСПОЛЬЗУЕМ ТОЛЬКО КОНТЕКСТНЫЕ ПРИМЕРЫ
+        // чтобы избежать проблем с API пока решаем проблему с Telegram
+        console.log('⚠️  Temporarily using contextual examples due to Telegram conflicts');
+        return this.generateContextualExamples(word, translation);
+        
+        /*
+        // Раскомментируйте когда решите проблему с Telegram
         if (!this.useYandex) {
             console.log('❌ Yandex API key not available, using contextual examples');
             return this.generateContextualExamples(word, translation);
         }
 
         try {
-            console.log('🔍 PRIMARY: Trying Yandex API for examples...');
+            console.log('🔍 PRIMARY: Trying Yandex JSON API for examples...');
             const yandexExamples = await this.getYandexExamples(word);
             
             if (yandexExamples && yandexExamples.length > 0) {
@@ -24,97 +31,65 @@ export class ExampleGeneratorService {
                 return yandexExamples;
             } else {
                 console.log('❌ PRIMARY FAILED: No examples found in Yandex response');
-                console.log('🔄 FALLBACK: Using contextual examples');
                 return this.generateContextualExamples(word, translation);
             }
         } catch (error) {
             console.log('❌ PRIMARY ERROR: Yandex examples failed:', error.message);
-            console.log('🔄 FALLBACK: Using contextual examples');
             return this.generateContextualExamples(word, translation);
         }
+        */
     }
 
     async getYandexExamples(word) {
-        console.log(`\n🔍 ========== YANDEX API CALL ==========`);
-        console.log(`🔍 Making request for word: "${word}"`);
-        
         try {
-            // ✅ ЗАПРОС БЕЗ ФЛАГОВ - примеры должны приходить по умолчанию
-            const params = {
-                key: process.env.YANDEX_DICTIONARY_API_KEY,
-                lang: 'en-ru', 
-                text: word,
-                ui: 'ru'
-                // NO FLAGS - examples should come by default
-            };
-
-            console.log('🔍 Request params (no flags):', {
-                key: '***' + (process.env.YANDEX_DICTIONARY_API_KEY ? process.env.YANDEX_DICTIONARY_API_KEY.slice(-4) : 'none'),
-                lang: params.lang,
-                text: params.text,
-                ui: params.ui
-            });
-
-            const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
-                params: params,
-                timeout: 10000
-            });
-
-            console.log('✅ Yandex API response received');
-            console.log('📊 Response status:', response.status);
+            console.log(`🔍 Yandex JSON API call for: "${word}"`);
             
-            // ✅ ДЕТАЛЬНЫЙ АНАЛИЗ ОТВЕТА
-            if (response.data && response.data.def) {
-                console.log(`📊 Found ${response.data.def.length} definition(s)`);
-                
-                // Проверяем каждый definition на наличие примеров
-                response.data.def.forEach((def, index) => {
-                    console.log(`\n📖 Definition ${index + 1}: "${def.text}"`);
-                    if (def.tr && def.tr.length > 0) {
-                        def.tr.forEach((tr, trIndex) => {
-                            console.log(`   Translation ${trIndex + 1}: "${tr.text}"`);
-                            console.log(`   Has 'ex' field: ${!!tr.ex}`);
-                            if (tr.ex) {
-                                console.log(`   'ex' field type: ${typeof tr.ex}`);
-                                console.log(`   'ex' field value:`, tr.ex);
-                            }
-                        });
-                    }
-                });
-            }
+            const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
+                params: {
+                    key: process.env.YANDEX_DICTIONARY_API_KEY,
+                    lang: 'en-ru',
+                    text: word,
+                    ui: 'ru'
+                    // Без флагов - используем настройки по умолчанию
+                },
+                timeout: 5000
+            });
 
-            return this.extractExamplesFromYandex(response.data, word);
+            console.log('✅ Yandex JSON API response received');
+            return this.extractExamplesFromYandexJSON(response.data, word);
             
         } catch (error) {
-            console.error('❌ Yandex API request failed:', error.message);
+            console.error('❌ Yandex JSON API error:', error.message);
             return [];
         }
     }
 
-    extractExamplesFromYandex(data, originalWord) {
-        console.log(`\n🔍 ========== EXTRACTING EXAMPLES ==========`);
-        
+    extractExamplesFromYandexJSON(data, originalWord) {
         if (!data || !data.def || !Array.isArray(data.def)) {
-            console.log('❌ No definitions in response');
+            console.log('❌ No valid data in Yandex JSON response');
             return [];
         }
 
+        console.log(`🔍 Processing ${data.def.length} definition(s) from Yandex JSON`);
+
         const examples = [];
 
-        data.def.forEach((definition) => {
+        // ✅ ОБРАБАТЫВАЕМ JSON СТРУКТУРУ YANDEX
+        data.def.forEach(definition => {
             if (definition.tr && Array.isArray(definition.tr)) {
-                definition.tr.forEach((translation) => {
-                    // ✅ ИЩЕМ ПОЛЕ ex В КАЖДОМ ПЕРЕВОДЕ
+                definition.tr.forEach(translation => {
+                    // ✅ ПРОВЕРЯЕМ ПОЛЕ "ex" В КАЖДОМ ПЕРЕВОДЕ
                     if (translation.ex && Array.isArray(translation.ex)) {
-                        console.log(`✅ FOUND EXAMPLES in translation "${translation.text}":`, translation.ex.length);
-                        
-                        translation.ex.forEach((example) => {
-                            if (example.text && example.tr && Array.isArray(example.tr) && example.tr[0]?.text) {
+                        translation.ex.forEach(example => {
+                            if (example.text && example.tr && Array.isArray(example.tr)) {
                                 const englishExample = example.text.trim();
-                                const russianExample = example.tr[0].text.trim();
-                                const formattedExample = `${englishExample} - ${russianExample}`;
-                                examples.push(formattedExample);
-                                console.log(`   ✅ ADDED: "${formattedExample}"`);
+                                const russianExample = example.tr[0]?.text?.trim();
+                                
+                                if (englishExample && russianExample) {
+                                    const formattedExample = `${englishExample} - ${russianExample}`;
+                                    examples.push(formattedExample);
+                                    console.log(`✅ Yandex JSON example: "${formattedExample}"`);
+                                }
                             }
                         });
                     }
@@ -122,17 +97,23 @@ export class ExampleGeneratorService {
             }
         });
 
-        console.log(`📊 FINAL: Extracted ${examples.length} examples`);
+        console.log(`📊 Extracted ${examples.length} examples from Yandex JSON`);
         return examples.slice(0, 3);
     }
 
     generateContextualExamples(word, translation) {
-        console.log('✏️ Using contextual examples');
-        return [
+        console.log('✏️ Generating high-quality contextual examples');
+        
+        // ✅ КАЧЕСТВЕННЫЕ КОНТЕКСТНЫЕ ПРИМЕРЫ
+        const examples = [
             `I often use the word "${word}" in my conversations. - Я часто использую слово "${translation}" в разговорах.`,
             `Can you give me an example with "${word}"? - Можете привести пример с "${translation}"?`,
-            `The word "${word}" is very useful in English. - Слово "${translation}" очень полезно в английском языке.`
+            `The word "${word}" is very useful in English. - Слово "${translation}" очень полезно в английском языке.`,
+            `Let's practice using "${word}" in a sentence. - Давайте попрактикуемся использовать "${translation}" в предложении.`,
+            `This is a good example of "${word}" usage. - Это хороший пример использования "${translation}".`
         ];
+
+        return examples.slice(0, 3);
     }
 
     formatExamplesForDisplay(examples) {
