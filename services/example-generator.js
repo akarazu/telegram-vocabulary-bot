@@ -15,7 +15,7 @@ export class ExampleGeneratorService {
             try {
                 console.log('🔍 PRIMARY: Trying Yandex API for examples...');
                 const yandexExamples = await this.getYandexExamples(word);
-                if (yandexExamples.length > 0) {
+                if (yandexExamples && yandexExamples.length > 0) {
                     examples = yandexExamples;
                     console.log(`✅ PRIMARY: Found ${yandexExamples.length} examples from Yandex`);
                     return examples;
@@ -29,7 +29,7 @@ export class ExampleGeneratorService {
         try {
             console.log('🔄 FALLBACK: Trying Backup Dictionary for examples...');
             const backupExamples = await this.getBackupExamples(word);
-            if (backupExamples.length > 0) {
+            if (backupExamples && backupExamples.length > 0) {
                 examples = backupExamples;
                 console.log(`✅ FALLBACK: Found ${backupExamples.length} examples from Backup`);
                 return examples;
@@ -69,20 +69,26 @@ export class ExampleGeneratorService {
     }
 
     extractExamplesFromYandex(data, originalWord) {
-        const examples = [];
-        
-        if (!data.def || data.def.length === 0) {
+        // ✅ ВСЕГДА ВОЗВРАЩАЕМ МАССИВ
+        if (!data.def || !Array.isArray(data.def) || data.def.length === 0) {
             console.log('❌ Yandex: No definitions found for examples');
             return [];
         }
 
         console.log(`🔍 Yandex found ${data.def.length} definition(s) for examples`);
 
-        data.def.forEach((definition) => {
+        const examples = [];
+        let exampleCount = 0;
+
+        for (const definition of data.def) {
+            if (exampleCount >= 3) break; // Ограничиваем 3 примерами
+            
             if (definition.ex && Array.isArray(definition.ex)) {
                 console.log(`🔍 Processing ${definition.ex.length} example(s) from Yandex`);
                 
-                definition.ex.forEach((example) => {
+                for (const example of definition.ex) {
+                    if (exampleCount >= 3) break;
+                    
                     if (example.text && example.tr && Array.isArray(example.tr)) {
                         const englishExample = example.text.trim();
                         const russianExample = example.tr[0]?.text?.trim();
@@ -91,14 +97,15 @@ export class ExampleGeneratorService {
                             // ✅ ФОРМАТИРУЕМ ПРИМЕР КАК СТРОКУ
                             const formattedExample = `${englishExample} - ${russianExample}`;
                             examples.push(formattedExample);
+                            exampleCount++;
                             console.log(`✅ Yandex example: "${formattedExample}"`);
                         }
                     }
-                });
+                }
             }
-        });
+        }
 
-        return examples.slice(0, 3);
+        return examples;
     }
 
     async getBackupExamples(word) {
@@ -113,13 +120,12 @@ export class ExampleGeneratorService {
             return this.extractExamplesFromFreeDictionary(response.data, word);
         } catch (error) {
             console.error('Free Dictionary API error for examples:', error.message);
-            return [];
+            return []; // ✅ ВСЕГДА ВОЗВРАЩАЕМ МАССИВ
         }
     }
 
     extractExamplesFromFreeDictionary(data, originalWord) {
-        const examples = [];
-        
+        // ✅ ВСЕГДА ВОЗВРАЩАЕМ МАССИВ
         if (!Array.isArray(data) || data.length === 0) {
             console.log('❌ FreeDictionary: No entries found for examples');
             return [];
@@ -127,51 +133,92 @@ export class ExampleGeneratorService {
 
         console.log(`🔍 FreeDictionary found ${data.length} entry/entries for examples`);
 
-        data.forEach(entry => {
+        const examples = [];
+        let exampleCount = 0;
+
+        for (const entry of data) {
+            if (exampleCount >= 3) break;
+            
             if (entry.meanings && Array.isArray(entry.meanings)) {
-                entry.meanings.forEach(meaning => {
+                for (const meaning of entry.meanings) {
+                    if (exampleCount >= 3) break;
+                    
                     if (meaning.definitions && Array.isArray(meaning.definitions)) {
-                        meaning.definitions.forEach(definition => {
+                        for (const definition of meaning.definitions) {
+                            if (exampleCount >= 3) break;
+                            
                             if (definition.example && definition.example.trim()) {
                                 const englishExample = definition.example.trim();
                                 // ✅ ФОРМАТИРУЕМ ПРИМЕР КАК СТРОКУ
                                 const formattedExample = `${englishExample} - Пример использования`;
                                 examples.push(formattedExample);
+                                exampleCount++;
                                 console.log(`✅ Backup example: "${formattedExample}"`);
                             }
-                        });
+                        }
                     }
-                });
+                }
             }
-        });
+        }
 
-        return examples.slice(0, 3);
+        return examples;
     }
 
     getGenericExamples(word, translation) {
-        const genericExamples = [
+        // ✅ ВСЕГДА ВОЗВРАЩАЕМ МАССИВ ИЗ 2 СТРОК
+        return [
             `I often use the word "${word}" in my conversations. - Я часто использую слово "${translation}" в разговорах.`,
-            `Can you give me an example with "${word}"? - Можете привести пример с "${translation}"?`,
-            `The word "${word}" is very useful in English. - Слово "${translation}" очень полезно в английском языке.`
+            `Can you give me an example with "${word}"? - Можете привести пример с "${translation}"?`
         ];
-
-        return genericExamples.slice(0, 2);
     }
 
     // ✅ Дополнительный метод для форматирования примеров в читаемый вид
     formatExamplesForDisplay(examples) {
-        if (!Array.isArray(examples)) {
-            return '';
+        // ✅ ЗАЩИТА ОТ НЕКОРРЕКТНЫХ ДАННЫХ
+        if (!examples || !Array.isArray(examples)) {
+            return 'Примеры не найдены';
+        }
+        
+        if (examples.length === 0) {
+            return 'Примеры не найдены';
         }
         
         return examples.map((example, index) => {
+            // ✅ ОБРАБАТЫВАЕМ РАЗНЫЕ ФОРМАТЫ ДАННЫХ
             if (typeof example === 'string') {
                 return `${index + 1}. ${example}`;
-            } else if (example.english && example.russian) {
+            } else if (example && typeof example === 'object' && example.english && example.russian) {
                 return `${index + 1}. ${example.english} - ${example.russian}`;
             } else {
-                return `${index + 1}. ${JSON.stringify(example)}`;
+                // ✅ ЕСЛИ НЕИЗВЕСТНЫЙ ФОРМАТ, ПРЕОБРАЗУЕМ В СТРОКУ
+                return `${index + 1}. ${String(example)}`;
             }
         }).join('\n');
+    }
+
+    // ✅ НОВЫЙ МЕТОД: безопасное преобразование примеров для сохранения
+    formatExamplesForStorage(examples) {
+        // ✅ ЗАЩИТА ОТ НЕКОРРЕКТНЫХ ДАННЫХ
+        if (!examples || !Array.isArray(examples)) {
+            return '';
+        }
+        
+        if (examples.length === 0) {
+            return '';
+        }
+        
+        // ✅ ПРЕОБРАЗУЕМ ВСЕ ЭЛЕМЕНТЫ В СТРОКИ
+        const stringExamples = examples.map(example => {
+            if (typeof example === 'string') {
+                return example;
+            } else if (example && typeof example === 'object' && example.english && example.russian) {
+                return `${example.english} - ${example.russian}`;
+            } else {
+                return String(example);
+            }
+        });
+        
+        // ✅ ОБЪЕДИНЯЕМ ЧЕРЕЗ РАЗДЕЛИТЕЛЬ
+        return stringExamples.join(' | ');
     }
 }
