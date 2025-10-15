@@ -1,6 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { GoogleSheetsService } from './services/google-sheets.js';
 import { TranscriptionService } from './services/transcription-service.js';
+import { ExampleGeneratorService } from './services/example-generator.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
     polling: true 
@@ -8,6 +9,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 
 const sheetsService = new GoogleSheetsService();
 const transcriptionService = new TranscriptionService();
+const exampleGenerator = new ExampleGeneratorService();
 
 // Хранилище состояний пользователей
 const userStates = new Map();
@@ -91,12 +93,11 @@ function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
 }
 
 // Функция для принудительного показа меню
-function showMainMenu(chatId, text = '') {
+async function showMainMenu(chatId, text = '') {
     if (text && text.trim() !== '') {
-        return bot.sendMessage(chatId, text, getMainMenu());
+        return await bot.sendMessage(chatId, text, getMainMenu());
     } else {
-        // Если текст пустой, отправляем просто меню без текста
-        return bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
+        return await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
     }
 }
 
@@ -191,10 +192,15 @@ async function saveWordWithTranslation(chatId, userState, translation) {
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
+    
+    // Проверяем доступные API при старте
+    await exampleGenerator.checkApisAvailability();
+    
     await showMainMenu(chatId, 
         '📚 Англо-русский словарь\n' +
         '🔤 С транскрипцией и произношением\n' +
-        '🇬🇧 Британский вариант'
+        '🇬🇧 Британский вариант\n' +
+        '🤖 С AI-примерами использования'
     );
 });
 
@@ -247,9 +253,10 @@ bot.on('message', async (msg) => {
             }
         }
         
-        await showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение, переводы и примеры использования...');
+        await showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение, переводы...\n🤖 Генерирую примеры использования...');
         
         try {
+            // Получаем данные о слове
             const result = await transcriptionService.getUKTranscription(englishWord);
             
             let audioId = null;
@@ -257,7 +264,10 @@ bot.on('message', async (msg) => {
                 audioId = Date.now().toString();
             }
             
-            // Сохраняем ВСЕ данные включая примеры
+            // Генерируем примеры через AI API
+            const aiExamples = await exampleGenerator.generateExamples(englishWord, result.translations?.[0]);
+            
+            // Сохраняем ВСЕ данные включая AI-примеры
             userStates.set(chatId, {
                 state: 'showing_transcription',
                 tempWord: englishWord,
@@ -265,7 +275,7 @@ bot.on('message', async (msg) => {
                 tempAudioUrl: result.audioUrl || '',
                 tempAudioId: audioId,
                 tempTranslations: result.translations || [],
-                tempExamples: result.examples || [], // Сохраняем примеры
+                tempExamples: aiExamples, // Используем AI-примеры
                 selectedTranslationIndices: []
             });
             
@@ -286,9 +296,9 @@ bot.on('message', async (msg) => {
                 message += `\n\n🎯 Найдено ${result.translations.length} вариантов перевода`;
             }
 
-            // Показываем примеры использования
-            if (result.examples && result.examples.length > 0) {
-                message += `\n\n📝 Найдено ${result.examples.length} примеров использования`;
+            // Показываем AI-примеры использования
+            if (aiExamples && aiExamples.length > 0) {
+                message += `\n\n🤖 Сгенерировано ${aiExamples.length} примеров использования`;
             }
             
             message += `\n\nВыберите действие:`;
@@ -595,4 +605,8 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с исправленными ошибками отправки сообщений');
+// Проверяем доступные API при запуске
+exampleGenerator.checkApisAvailability().then(availableApis => {
+    console.log('🤖 Бот запущен с AI-генерацией примеров');
+    console.log(`🔧 Доступные API: ${availableApis.length > 0 ? availableApis.join(', ') : 'Базовые примеры'}`);
+});
