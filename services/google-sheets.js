@@ -33,7 +33,7 @@ export class GoogleSheetsService {
         try {
             const timestamp = new Date().toISOString();
             
-            await this.sheets.spreadsheets.values.append({
+            const response = await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
                 range: 'Words!A:F',
                 valueInputOption: 'RAW',
@@ -44,12 +44,12 @@ export class GoogleSheetsService {
                         transcription || '',
                         translation,
                         audioUrl || '',
-                        examples || ''  // ✅ Сохраняем примеры в отдельной колонке
+                        examples || ''
                     ]]
                 }
             });
 
-            console.log(`✅ Word "${english}" saved to Google Sheets with examples`);
+            console.log(`✅ Word "${english}" saved to Google Sheets`);
             return true;
         } catch (error) {
             console.error('❌ Error saving word to Google Sheets:', error.message);
@@ -77,7 +77,7 @@ export class GoogleSheetsService {
                 transcription: row[2],
                 translation: row[3],
                 audioUrl: row[4],
-                examples: row[5] || ''  // ✅ Получаем примеры из таблицы
+                examples: row[5] || ''
             }));
         } catch (error) {
             console.error('❌ Error reading words from Google Sheets:', error.message);
@@ -85,50 +85,36 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ НОВЫЙ МЕТОД: Обновление примеров для существующего слова
-    async updateWordExamples(chatId, englishWord, examples) {
+    // ✅ УПРОЩЕННЫЙ МЕТОД: Просто сохраняем слово с примерами сразу
+    async addWordWithExamples(chatId, english, transcription, translation, audioUrl = '', examples = []) {
         if (!this.initialized) {
             console.log('❌ Google Sheets not initialized');
             return false;
         }
 
         try {
-            // Сначала находим строку с словом
-            const response = await this.sheets.spreadsheets.values.get({
+            const examplesText = examples.join(' | ');
+            
+            const response = await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
                 range: 'Words!A:F',
-            });
-
-            const rows = response.data.values || [];
-            let rowIndex = -1;
-
-            for (let i = 0; i < rows.length; i++) {
-                if (rows[i][0] === chatId.toString() && 
-                    rows[i][1].toLowerCase() === englishWord.toLowerCase()) {
-                    rowIndex = i + 1; // +1 потому что в Sheets нумерация с 1
-                    break;
-                }
-            }
-
-            if (rowIndex === -1) {
-                console.log(`❌ Word "${englishWord}" not found for user ${chatId}`);
-                return false;
-            }
-
-            // Обновляем только колонку с примерами (колонка F)
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: `Words!F${rowIndex}`,
                 valueInputOption: 'RAW',
                 requestBody: {
-                    values: [[examples]]
+                    values: [[
+                        chatId.toString(),
+                        english.toLowerCase(),
+                        transcription || '',
+                        translation,
+                        audioUrl || '',
+                        examplesText
+                    ]]
                 }
             });
 
-            console.log(`✅ Examples updated for word "${englishWord}"`);
+            console.log(`✅ Word "${english}" saved with examples to Google Sheets`);
             return true;
         } catch (error) {
-            console.error('❌ Error updating examples in Google Sheets:', error.message);
+            console.error('❌ Error saving word with examples to Google Sheets:', error.message);
             return false;
         }
     }
