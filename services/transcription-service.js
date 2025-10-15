@@ -21,8 +21,7 @@ export class TranscriptionService {
         let result = { 
             transcription: '', 
             audioUrl: '', 
-            translations: [],
-            examples: []
+            translations: []
         };
 
         // ✅ ПЕРВОЕ: получаем транскрипцию и аудио из Яндекс
@@ -49,9 +48,9 @@ export class TranscriptionService {
             try {
                 console.log('🔍 PRIMARY: Getting translations from Yandex...');
                 const yandexTranslations = await this.getYandexTranslations(word);
-                if (yandexTranslations.translations && yandexTranslations.translations.length > 0) {
+                if (yandexTranslations.length > 0) {
                     console.log('✅ PRIMARY: Yandex translations found');
-                    result.translations = yandexTranslations.translations;
+                    result.translations = yandexTranslations;
                 }
             } catch (error) {
                 console.log('❌ PRIMARY: Yandex translations failed:', error.message);
@@ -127,7 +126,7 @@ export class TranscriptionService {
                 console.error('Yandex response status:', error.response.status);
                 console.error('Yandex response data:', error.response.data);
             }
-            return { translations: [] };
+            return [];
         }
     }
 
@@ -136,7 +135,7 @@ export class TranscriptionService {
         
         if (!data.def || data.def.length === 0) {
             console.log('❌ Yandex: No definitions found in response');
-            return { translations: [] };
+            return [];
         }
 
         console.log(`🔍 Yandex found ${data.def.length} definition(s) for translations`);
@@ -166,7 +165,7 @@ export class TranscriptionService {
         const translationArray = Array.from(translations).slice(0, 4);
         console.log(`✅ Yandex translations found: ${translationArray.length}`);
         
-        return { translations: translationArray };
+        return translationArray;
     }
 
     // ✅ Функция для проверки русского текста
@@ -196,14 +195,21 @@ export class TranscriptionService {
             return [];
         }
 
+        console.log(`🔍 FreeDictionary found ${data.length} entry/entries`);
+
         data.forEach(entry => {
             if (entry.meanings && Array.isArray(entry.meanings)) {
                 entry.meanings.forEach(meaning => {
+                    // Используем partOfSpeech как перевод
+                    if (meaning.partOfSpeech) {
+                        translations.add(meaning.partOfSpeech);
+                    }
+                    
                     if (meaning.definitions && Array.isArray(meaning.definitions)) {
                         meaning.definitions.forEach(definition => {
                             if (definition.definition && definition.definition.trim()) {
                                 const shortDef = definition.definition
-                                    .split(/[.,;!?]/)[0]
+                                    .split(/[.,;!?]/)[0] // Берем только первое предложение
                                     .trim();
                                 if (shortDef.length > 0 && shortDef.length < 80) {
                                     translations.add(shortDef);
@@ -215,7 +221,10 @@ export class TranscriptionService {
             }
         });
 
-        return Array.from(translations).slice(0, 4);
+        const translationArray = Array.from(translations).slice(0, 4);
+        console.log(`✅ FreeDictionary translations found: ${translationArray.length}`);
+        
+        return translationArray;
     }
 
     // ✅ Простая генерация транскрипции (fallback)
