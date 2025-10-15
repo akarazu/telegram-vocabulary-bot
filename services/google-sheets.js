@@ -6,7 +6,7 @@ export class GoogleSheetsService {
         this.sheets = null;
         
         // Используем правильное название переменной из Railway
-        this.spreadsheetId = process.env.GOOGLE_SHEET_ID; // БЕЗ 'S' в SHEET
+        this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
         
         console.log('🔧 GoogleSheetsService - Spreadsheet ID:', this.spreadsheetId ? 'SET' : 'NOT SET');
         
@@ -27,8 +27,9 @@ export class GoogleSheetsService {
         try {
             console.log('🔄 Initializing Google Sheets service...');
             
+            // Используем переменные окружения вместо файла
             const auth = new google.auth.GoogleAuth({
-                keyFile: 'credentials.json',
+                credentials: this.getCredentialsFromEnv(),
                 scopes: ['https://www.googleapis.com/auth/spreadsheets'],
             });
 
@@ -41,6 +42,38 @@ export class GoogleSheetsService {
         }
     }
 
+    getCredentialsFromEnv() {
+        try {
+            // Вариант 1: Полный JSON из одной переменной
+            if (process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS) {
+                console.log('🔑 Using GOOGLE_SERVICE_ACCOUNT_CREDENTIALS');
+                return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS);
+            }
+            
+            // Вариант 2: Отдельные переменные
+            if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+                console.log('🔑 Using separate credential variables');
+                return {
+                    type: 'service_account',
+                    project_id: process.env.GOOGLE_PROJECT_ID || 'default-project',
+                    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID || 'default-key-id',
+                    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+                    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+                    client_id: process.env.GOOGLE_CLIENT_ID || 'default-client-id',
+                    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+                    token_uri: 'https://oauth2.googleapis.com/token',
+                    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs'
+                };
+            }
+            
+            console.error('❌ No Google credentials found in environment variables');
+            return null;
+        } catch (error) {
+            console.error('❌ Error parsing Google credentials:', error);
+            return null;
+        }
+    }
+
     async addWord(chatId, english, transcription, translation, audioUrl = '', examples = '') {
         if (!this.initialized) {
             console.log('❌ Google Sheets not initialized');
@@ -48,8 +81,6 @@ export class GoogleSheetsService {
         }
 
         try {
-            const timestamp = new Date().toISOString();
-            
             const response = await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
                 range: 'Words!A:F',
