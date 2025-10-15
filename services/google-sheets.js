@@ -1,32 +1,35 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
+import { google } from 'googleapis';
 
 export class GoogleSheetsService {
     constructor() {
         this.sheetId = process.env.GOOGLE_SHEET_ID;
-        this.clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        this.privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+        this.auth = new google.auth.GoogleAuth({
+            credentials: {
+                client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+                private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+            },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+        this.sheets = google.sheets({ version: 'v4', auth: this.auth });
     }
 
-    // Существующий метод addWord
     async addWord(chatId, englishWord, transcription, translation, audioUrl) {
         try {
-            const doc = new GoogleSpreadsheet(this.sheetId);
-            await doc.useServiceAccountAuth({
-                client_email: this.clientEmail,
-                private_key: this.privateKey,
+            await this.sheets.spreadsheets.values.append({
+                spreadsheetId: this.sheetId,
+                range: 'Words',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[
+                        chatId.toString(),
+                        englishWord,
+                        transcription || '',
+                        translation,
+                        audioUrl || '',
+                        new Date().toISOString()
+                    ]]
+                }
             });
-            await doc.loadInfo();
-            
-            const sheet = doc.sheetsByTitle['Words'];
-            await sheet.addRow({
-                chat_id: chatId,
-                english_word: englishWord,
-                transcription: transcription,
-                translation: translation,
-                audio_url: audioUrl,
-                created_at: new Date().toISOString()
-            });
-            
             return true;
         } catch (error) {
             console.error('Error adding word to sheet:', error);
@@ -34,27 +37,23 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ НОВЫЙ МЕТОД: Получение слов пользователя для проверки дубликатов
     async getUserWords(chatId) {
         try {
-            const doc = new GoogleSpreadsheet(this.sheetId);
-            await doc.useServiceAccountAuth({
-                client_email: this.clientEmail,
-                private_key: this.privateKey,
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.sheetId,
+                range: 'Words',
             });
-            await doc.loadInfo();
+
+            const rows = response.data.values || [];
             
-            const sheet = doc.sheetsByTitle['Words'];
-            const rows = await sheet.getRows();
-            
-            // Фильтруем слова по chat_id и возвращаем массив английских слов
-            const userWords = rows
-                .filter(row => row.get('chat_id') === chatId.toString())
+            // Пропускаем заголовок (если есть) и фильтруем по chat_id
+            const userWords = rows.slice(1)
+                .filter(row => row[0] === chatId.toString())
                 .map(row => ({
-                    english: row.get('english_word'),
-                    transcription: row.get('transcription'),
-                    translation: row.get('translation'),
-                    audio: row.get('audio_url')
+                    english: row[1] || '',
+                    transcription: row[2] || '',
+                    translation: row[3] || '',
+                    audio: row[4] || ''
                 }));
                 
             return userWords;
