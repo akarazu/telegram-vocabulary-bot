@@ -22,203 +22,53 @@ export class TranscriptionService {
             transcription: '', 
             audioUrl: '', 
             translations: [],
-            examples: [] // Добавляем примеры использования
+            examples: []
         };
 
         // ✅ СНАЧАЛА пробуем Яндекс (если доступен)
         if (this.useYandex) {
             try {
                 console.log('🔍 PRIMARY: Trying Yandex Dictionary...');
-                const yandexResult = await this.yandexService.getTranscription(word);
-                if (yandexResult.transcription || yandexResult.audioUrl) {
-                    console.log('✅ PRIMARY: Using Yandex result');
-                    result.transcription = yandexResult.transcription;
-                    result.audioUrl = yandexResult.audioUrl;
-                } else {
-                    console.log('❌ PRIMARY: Yandex found nothing');
+                const yandexResult = await this.getYandexTranslations(word);
+                if (yandexResult.translations && yandexResult.translations.length > 0) {
+                    console.log('✅ PRIMARY: Using Yandex translations');
+                    result.translations = yandexResult.translations;
                 }
             } catch (error) {
                 console.log('❌ PRIMARY: Yandex failed:', error.message);
             }
         }
 
-        // ✅ ПОТОМ пробуем бэкап (если Яндекс не нашел или недоступен)
-        if (!result.transcription || !result.audioUrl) {
-            try {
-                console.log('🔄 BACKUP: Trying Backup Dictionary...');
-                const backupResult = await this.backupService.getTranscription(word);
-                if (backupResult.transcription || backupResult.audioUrl) {
-                    console.log('✅ BACKUP: Using Backup result');
-                    if (!result.transcription) result.transcription = backupResult.transcription;
-                    if (!result.audioUrl) result.audioUrl = backupResult.audioUrl;
-                } else {
-                    console.log('❌ BACKUP: Backup found nothing');
-                }
-            } catch (error) {
-                console.log('❌ BACKUP: Backup failed:', error.message);
-            }
+        // ✅ ПОТОМ пробуем бэкап для транскрипции и аудио
+        try {
+            console.log('🔄 BACKUP: Trying Backup Dictionary for transcription...');
+            const backupResult = await this.backupService.getTranscription(word);
+            result.transcription = backupResult.transcription || '';
+            result.audioUrl = backupResult.audioUrl || '';
+        } catch (error) {
+            console.log('❌ BACKUP: Backup failed:', error.message);
         }
 
-        // ✅ Если Яндекс недоступен, сразу используем бэкап
-        if (!this.useYandex) {
+        // ✅ Если Яндекс недоступен, сразу используем бэкап для переводов
+        if (!this.useYandex || result.translations.length === 0) {
             try {
-                console.log('🔍 PRIMARY (no Yandex): Trying Backup Dictionary...');
-                const backupResult = await this.backupService.getTranscription(word);
-                if (backupResult.transcription || backupResult.audioUrl) {
-                    console.log('✅ PRIMARY: Using Backup result');
-                    result.transcription = backupResult.transcription;
-                    result.audioUrl = backupResult.audioUrl;
+                console.log('🔍 PRIMARY (no Yandex): Trying Backup Dictionary for translations...');
+                const backupTranslations = await this.getBackupTranslations(word);
+                if (backupTranslations.length > 0) {
+                    result.translations = backupTranslations;
                 }
             } catch (error) {
                 console.log('❌ PRIMARY: Backup failed:', error.message);
             }
         }
 
-        // ✅ Получаем переводы и примеры использования
-        const translationData = await this.getTranslationsAndExamples(word);
-        result.translations = translationData.translations;
-        result.examples = translationData.examples;
-
         console.log(`📊 Final results for "${word}":`, {
             transcription: result.transcription || '❌ Not found',
             audioUrl: result.audioUrl ? '✅ Found' : '❌ Not found',
-            translations: result.translations.length,
-            examples: result.examples.length
+            translations: result.translations.length
         });
 
         return result;
-    }
-
-    async getTranslationsAndExamples(word) {
-        let translations = [];
-        let examples = [];
-        
-        // Сначала пробуем Free Dictionary API (там есть примеры использования)
-        try {
-            console.log('📖 Getting translations and examples from Free Dictionary...');
-            const freeDictData = await this.getFreeDictionaryData(word);
-            translations = freeDictData.translations;
-            examples = freeDictData.examples;
-            
-            if (translations.length > 0) {
-                console.log(`✅ Free Dictionary translations: ${translations.length}`);
-            }
-            if (examples.length > 0) {
-                console.log(`✅ Free Dictionary examples: ${examples.length}`);
-            }
-        } catch (error) {
-            console.log('❌ Free Dictionary failed');
-        }
-
-        // Если нет переводов, пробуем Яндекс
-        if (translations.length === 0 && this.useYandex) {
-            try {
-                translations = await this.getYandexTranslations(word);
-                if (translations.length > 0) {
-                    console.log(`✅ Yandex translations: ${translations.join(', ')}`);
-                }
-            } catch (error) {
-                console.log('❌ Yandex translations failed');
-            }
-        }
-
-        // Если нет примеров, генерируем базовые
-        if (examples.length === 0) {
-            examples = this.generateBasicExamples(word);
-            console.log(`🔧 Generated basic examples: ${examples.length}`);
-        }
-
-        return { translations, examples };
-    }
-
-    async getFreeDictionaryData(word) {
-        try {
-            const response = await axios.get(
-                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
-                { timeout: 5000 }
-            );
-
-            return this.extractDataFromFreeDictionary(response.data, word);
-        } catch (error) {
-            console.error('Free Dictionary API error:', error.message);
-            return { translations: [], examples: [] };
-        }
-    }
-
-    extractDataFromFreeDictionary(data, word) {
-        const translations = new Set();
-        const examples = new Set();
-        
-        if (!Array.isArray(data) || data.length === 0) {
-            return { translations: [], examples: [] };
-        }
-
-        data.forEach(entry => {
-            if (entry.meanings && Array.isArray(entry.meanings)) {
-                entry.meanings.forEach(meaning => {
-                    // Добавляем partOfSpeech как перевод
-                    if (meaning.partOfSpeech) {
-                        translations.add(meaning.partOfSpeech);
-                    }
-                    
-                    // Ищем в definitions
-                    if (meaning.definitions && Array.isArray(meaning.definitions)) {
-                        meaning.definitions.forEach(definition => {
-                            // Добавляем короткое определение как перевод
-                            if (definition.definition && definition.definition.trim()) {
-                                const shortDef = definition.definition
-                                    .split(' ')
-                                    .slice(0, 4)
-                                    .join(' ');
-                                if (shortDef.length < 50) {
-                                    translations.add(shortDef);
-                                }
-                            }
-                            
-                            // Добавляем примеры использования
-                            if (definition.example && definition.example.trim()) {
-                                const cleanExample = definition.example.trim();
-                                if (cleanExample.length < 100) {
-                                    examples.add(cleanExample);
-                                }
-                            }
-                        });
-                    }
-                    
-                    // Добавляем синонимы
-                    if (meaning.synonyms && Array.isArray(meaning.synonyms)) {
-                        meaning.synonyms.forEach(synonym => {
-                            if (synonym && synonym.trim()) {
-                                translations.add(synonym.trim());
-                            }
-                        });
-                    }
-                });
-            }
-            
-            // Также проверяем license для примеров
-            if (entry.license && entry.license.url) {
-                console.log('📝 License info available for examples');
-            }
-        });
-
-        return {
-            translations: Array.from(translations).slice(0, 4),
-            examples: Array.from(examples).slice(0, 3) // Ограничиваем 3 примерами
-        };
-    }
-
-    generateBasicExamples(word) {
-        // Базовые примеры использования для распространенных частей речи
-        const basicExamples = [
-            `I need to learn the word "${word}".`,
-            `Can you use "${word}" in a sentence?`,
-            `The "${word}" is very important in English.`,
-            `She said "${word}" during the conversation.`,
-            `What does "${word}" mean?`
-        ];
-        
-        return basicExamples.slice(0, 2); // Возвращаем 2 базовых примера
     }
 
     async getYandexTranslations(word) {
@@ -233,39 +83,109 @@ export class TranscriptionService {
                 timeout: 5000
             });
 
-            return this.extractTranslationsFromYandex(response.data);
+            return this.extractTranslationsFromYandex(response.data, word);
+            
         } catch (error) {
             console.error('Yandex translation error:', error.message);
-            return [];
+            return { translations: [] };
         }
     }
 
-    extractTranslationsFromYandex(data) {
+    extractTranslationsFromYandex(data, originalWord) {
         const translations = new Set();
         
         if (!data.def || data.def.length === 0) {
-            return [];
+            return { translations: [] };
         }
+
+        console.log('🔍 Yandex API response structure:', JSON.stringify(data.def[0], null, 2));
 
         data.def.forEach(definition => {
             if (definition.tr && definition.tr.length > 0) {
                 definition.tr.forEach(translation => {
+                    // ✅ ИЗВЛЕКАЕМ РУССКИЕ ПЕРЕВОДЫ, А НЕ АНГЛИЙСКИЕ СЛОВА
                     if (translation.text && translation.text.trim()) {
-                        const cleanTranslation = translation.text.trim();
-                        translations.add(cleanTranslation);
+                        const russianTranslation = translation.text.trim();
                         
-                        if (translation.syn && translation.syn.length > 0) {
-                            translation.syn.forEach(synonym => {
-                                if (synonym.text && synonym.text.trim()) {
-                                    translations.add(synonym.text.trim());
-                                }
-                            });
+                        // Проверяем что это действительно русский перевод, а не английское слово
+                        if (this.isRussianText(russianTranslation) && 
+                            russianTranslation.toLowerCase() !== originalWord.toLowerCase()) {
+                            translations.add(russianTranslation);
                         }
                     }
                 });
             }
         });
 
-        return Array.from(translations).slice(0, 4);
+        const translationArray = Array.from(translations).slice(0, 4);
+        console.log(`✅ Yandex translations found: ${translationArray.join(', ')}`);
+        
+        return { translations: translationArray };
+    }
+
+    // ✅ Функция для проверки русского текста
+    isRussianText(text) {
+        // Проверяем содержит ли текст кириллические символы
+        return /[а-яА-Я]/.test(text);
+    }
+
+    async getBackupTranslations(word) {
+        try {
+            const response = await axios.get(
+                `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`,
+                { timeout: 5000 }
+            );
+
+            return this.extractTranslationsFromFreeDictionary(response.data, word);
+        } catch (error) {
+            console.error('Free Dictionary API error:', error.message);
+            return [];
+        }
+    }
+
+    extractTranslationsFromFreeDictionary(data, originalWord) {
+        const translations = new Set();
+        
+        if (!Array.isArray(data) || data.length === 0) {
+            return [];
+        }
+
+        data.forEach(entry => {
+            if (entry.meanings && Array.isArray(entry.meanings)) {
+                entry.meanings.forEach(meaning => {
+                    // Используем partOfSpeech как перевод
+                    if (meaning.partOfSpeech) {
+                        translations.add(meaning.partOfSpeech);
+                    }
+                    
+                    if (meaning.definitions && Array.isArray(meaning.definitions)) {
+                        meaning.definitions.forEach(definition => {
+                            if (definition.definition && definition.definition.trim()) {
+                                const shortDef = definition.definition
+                                    .split(' ')
+                                    .slice(0, 4)
+                                    .join(' ');
+                                if (shortDef.length < 50) {
+                                    translations.add(shortDef);
+                                }
+                            }
+                        });
+                    }
+                    
+                    if (meaning.synonyms && Array.isArray(meaning.synonyms)) {
+                        meaning.synonyms.forEach(synonym => {
+                            if (synonym && synonym.trim()) {
+                                translations.add(synonym.trim());
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        const translationArray = Array.from(translations).slice(0, 4);
+        console.log(`✅ FreeDictionary translations found: ${translationArray.join(', ')}`);
+        
+        return translationArray;
     }
 }
