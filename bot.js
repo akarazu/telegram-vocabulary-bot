@@ -51,11 +51,11 @@ function getAfterAudioKeyboard() {
 }
 
 // Функция для принудительного показа меню
-function showMainMenu(chatId, text = '') {  // ✅ Убрано "Выберите действие:"
+function showMainMenu(chatId, text = '') {
     if (text) {
         return bot.sendMessage(chatId, text, getMainMenu());
     } else {
-        return bot.sendMessage(chatId, ' ', getMainMenu());  // Пустое сообщение с меню
+        return bot.sendMessage(chatId, ' ', getMainMenu());
     }
 }
 
@@ -114,12 +114,27 @@ bot.on('message', async (msg) => {
         showMainMenu(chatId, '🇬🇧 Введите английское слово:');
     }
     else if (userState?.state === 'waiting_english') {
-        const englishWord = text.trim();
+        const englishWord = text.trim().toLowerCase();
         
+        // Проверяем что это английское слово
         if (!/^[a-zA-Z\s\-']+$/.test(englishWord)) {
             showMainMenu(chatId, 
                 '❌ Это не похоже на английское слово.\n' +
                 'Пожалуйста, введите слово на английском:'
+            );
+            return;
+        }
+        
+        // ✅ Проверяем есть ли уже такое слово в словаре
+        const existingWords = await sheetsService.getUserWords(chatId);
+        const isDuplicate = existingWords.some(word => 
+            word.english.toLowerCase() === englishWord.toLowerCase()
+        );
+        
+        if (isDuplicate) {
+            showMainMenu(chatId, 
+                `❌ Слово "${englishWord}" уже есть в вашем словаре!\n\n` +
+                'Пожалуйста, введите другое слово:'
             );
             return;
         }
@@ -155,10 +170,7 @@ bot.on('message', async (msg) => {
         
         message += `\n\nВыберите действие:`;
         
-        // Отправляем сообщение с inline кнопками
         await bot.sendMessage(chatId, message, getListeningKeyboard(audioId));
-        
-        // ✅ Просто показываем меню без текста
         showMainMenu(chatId);
     }
     else if (userState?.state === 'waiting_translation') {
@@ -166,6 +178,21 @@ bot.on('message', async (msg) => {
         
         if (!translation) {
             showMainMenu(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+            return;
+        }
+        
+        // ✅ Еще раз проверяем дубликат перед сохранением
+        const existingWords = await sheetsService.getUserWords(chatId);
+        const isDuplicate = existingWords.some(word => 
+            word.english.toLowerCase() === userState.tempWord.toLowerCase()
+        );
+        
+        if (isDuplicate) {
+            showMainMenu(chatId, 
+                `❌ Слово "${userState.tempWord}" уже было добавлено в словарь!\n\n` +
+                'Пожалуйста, начните заново.'
+            );
+            userStates.delete(chatId);
             return;
         }
         
@@ -194,12 +221,11 @@ bot.on('message', async (msg) => {
         }
     }
     else {
-        // ✅ Убрано "Выберите действие:"
         showMainMenu(chatId);
     }
 });
 
-// Обработка inline кнопок
+// Обработка inline кнопок (без изменений)
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -244,7 +270,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     getAfterAudioKeyboard()
                 );
                 
-                // ✅ Просто показываем меню без текста
                 showMainMenu(chatId);
                 
             } catch (error) {
@@ -294,8 +319,6 @@ bot.on('callback_query', async (callbackQuery) => {
             message += '\n\n🎵 Доступно аудио произношение\n\nВыберите действие:';
             
             await bot.sendMessage(chatId, message, getListeningKeyboard(userState.tempAudioId));
-            
-            // ✅ Просто показываем меню без текста
             showMainMenu(chatId);
         }
     }
@@ -310,4 +333,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с чистым интерфейсом');
+console.log('🤖 Бот запущен с проверкой дубликатов в Google Таблицах');
