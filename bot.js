@@ -172,6 +172,9 @@ bot.on('message', async (msg) => {
             parse_mode: 'HTML',
             ...getListeningKeyboard(audioId)
         });
+        
+        // ✅ Показываем меню после сообщения с кнопками
+        bot.sendMessage(chatId, 'Используйте кнопки выше или:', getMainMenu());
     }
     else if (userState?.state === 'waiting_translation') {
         // Пользователь вводит перевод
@@ -240,7 +243,7 @@ bot.on('callback_query', async (callbackQuery) => {
         
         if (audioUrl && englishWord) {
             try {
-                // ✅ Убираем кнопку "Ввести перевод" из исходного сообщения
+                // Убираем кнопку "Ввести перевод" из исходного сообщения
                 await bot.editMessageReplyMarkup(
                     { inline_keyboard: [] },
                     {
@@ -281,6 +284,9 @@ bot.on('callback_query', async (callbackQuery) => {
                     getAfterAudioKeyboard()
                 );
                 
+                // ✅ Показываем меню после всех действий
+                bot.sendMessage(chatId, 'Или используйте:', getMainMenu());
+                
             } catch (error) {
                 console.error('Error sending audio:', error);
             }
@@ -288,7 +294,7 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
-            // ✅ Убираем кнопку "Ввести перевод" из исходного сообщения
+            // Убираем кнопку "Ввести перевод" из исходного сообщения
             await bot.editMessageReplyMarkup(
                 { inline_keyboard: [] },
                 {
@@ -346,6 +352,9 @@ bot.on('callback_query', async (callbackQuery) => {
                 parse_mode: 'HTML',
                 ...getListeningKeyboard(userState.tempAudioId)
             });
+            
+            // ✅ Показываем меню после возврата
+            bot.sendMessage(chatId, 'Или используйте:', getMainMenu());
         }
     }
 });
@@ -359,4 +368,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с исправленным интерфейсом');
+console.log('🤖 Бот запущен с всегда видимым меню');
