@@ -7,9 +7,11 @@ export class TranscriptionService {
 
     async getUKTranscription(word) {
         try {
-            // ... существующий код для транскрипции и аудио ...
+            // ✅ ДОБАВЛЯЕМ КОД ДЛЯ ТРАНСКРИПЦИИ И АУДИО
+            const transcription = await this.getTranscription(word);
+            const audioUrl = await this.getAudioUrl(word);
             
-            // ✅ ИСПОЛЬЗУЕМ YANDEX DICTIONARY API
+            // ✅ ИСПОЛЬЗУЕМ YANDEX DICTIONARY API ДЛЯ ПЕРЕВОДОВ
             const translations = await this.getYandexTranslations(word);
             
             return {
@@ -24,6 +26,66 @@ export class TranscriptionService {
                 audioUrl: null,
                 translations: []
             };
+        }
+    }
+
+    async getTranscription(word) {
+        try {
+            // Используем Free Dictionary API для транскрипции
+            const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`, {
+                timeout: 5000
+            });
+
+            if (response.data && response.data[0] && response.data[0].phonetic) {
+                return response.data[0].phonetic;
+            }
+
+            // Ищем в phonetics
+            if (response.data && response.data[0] && response.data[0].phonetics) {
+                const ukPhonetic = response.data[0].phonetics.find(p => p.audio && p.audio.includes('-uk.mp3'));
+                if (ukPhonetic && ukPhonetic.text) {
+                    return ukPhonetic.text;
+                }
+                
+                // Берем первую доступную транскрипцию
+                const firstPhonetic = response.data[0].phonetics.find(p => p.text);
+                if (firstPhonetic) {
+                    return firstPhonetic.text;
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error getting transcription:', error.message);
+            return null;
+        }
+    }
+
+    async getAudioUrl(word) {
+        try {
+            // Используем Free Dictionary API для аудио
+            const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`, {
+                timeout: 5000
+            });
+
+            if (response.data && response.data[0] && response.data[0].phonetics) {
+                // Ищем британское произношение
+                const ukAudio = response.data[0].phonetics.find(p => p.audio && p.audio.includes('-uk.mp3'));
+                if (ukAudio && ukAudio.audio) {
+                    return ukAudio.audio;
+                }
+                
+                // Берем первое доступное аудио
+                const firstAudio = response.data[0].phonetics.find(p => p.audio);
+                if (firstAudio) {
+                    return firstAudio.audio;
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error getting audio:', error.message);
+            return null;
         }
     }
 
@@ -89,7 +151,6 @@ export class TranscriptionService {
         return Array.from(translations).slice(0, 4);
     }
 
-    // ✅ FREE DICTIONARY API FALLBACK
     async getFreeDictionaryTranslations(word) {
         try {
             const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`, {
