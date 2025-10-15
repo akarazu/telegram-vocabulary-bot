@@ -2,114 +2,173 @@ import axios from 'axios';
 
 export class ExampleGeneratorService {
     constructor() {
-        this.yandexApiKey = process.env.YANDEX_DICTIONARY_API_KEY;
+        this.useYandex = !!process.env.YANDEX_DICTIONARY_API_KEY;
     }
 
     async generateExamples(word, translation) {
-        try {
-            console.log(`🤖 Generating examples for: "${word}" with translation: "${translation}"`);
-            
-            if (!translation) {
-                console.log('❌ No translation provided, skipping examples');
-                return [];
+        console.log(`🔄 Generating examples for: "${word}" -> "${translation}"`);
+        
+        let examples = [];
+
+        // ✅ ПЕРВОЕ: пробуем получить примеры из Яндекс API
+        if (this.useYandex) {
+            try {
+                console.log('🔍 PRIMARY: Trying Yandex API for examples...');
+                const yandexExamples = await this.getYandexExamples(word);
+                if (yandexExamples.length > 0) {
+                    examples = yandexExamples;
+                    console.log(`✅ PRIMARY: Found ${yandexExamples.length} examples from Yandex`);
+                    return examples;
+                }
+            } catch (error) {
+                console.log('❌ PRIMARY: Yandex examples failed:', error.message);
             }
+        }
+
+        // ✅ ВТОРОЕ: пробуем получить примеры из бэкап словаря
+        try {
+            console.log('🔄 FALLBACK: Trying Backup Dictionary for examples...');
+            const backupExamples = await this.getBackupExamples(word);
+            if (backupExamples.length > 0) {
+                examples = backupExamples;
+                console.log(`✅ FALLBACK: Found ${backupExamples.length} examples from Backup`);
+                return examples;
+            }
+        } catch (error) {
+            console.log('❌ FALLBACK: Backup examples failed:', error.message);
+        }
+
+        // ✅ ТРЕТЬЕ: генерируем простые примеры вручную
+        console.log('✏️  GENERIC: Creating generic examples...');
+        examples = this.getGenericExamples(word, translation);
+        console.log(`✅ GENERIC: Created ${examples.length} generic examples`);
+
+        return examples;
+    }
+
+    async getYandexExamples(word) {
+        try {
+            console.log(`🔍 Yandex API call for examples: "${word}"`);
             
-            // Генерируем контекстные примеры на основе перевода
-            const examples = this.generateContextualExamples(word, translation);
-            
-            console.log(`📝 Generated ${examples.length} examples`);
-            return examples;
+            const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
+                params: {
+                    key: process.env.YANDEX_DICTIONARY_API_KEY,
+                    lang: 'en-ru',
+                    text: word,
+                    ui: 'ru'
+                },
+                timeout: 10000
+            });
+
+            return this.extractExamplesFromYandex(response.data, word);
             
         } catch (error) {
-            console.error('❌ Error generating examples:', error.message);
-            return this.generateBasicExamples(word, translation);
+            console.error('❌ Yandex examples error:', error.message);
+            return [];
         }
     }
 
-    generateContextualExamples(word, translation) {
+    extractExamplesFromYandex(data, originalWord) {
         const examples = [];
         
-        // Определяем тип слова по переводу
-        const isVerb = translation.includes('глагол') || translation.match(/\b(verb|to\s+\w+)\b/i);
-        const isNoun = translation.includes('существительное') || translation.match(/\b(noun|the\s+\w+)\b/i);
-        const isAdjective = translation.includes('прилагательное') || translation.match(/\b(adjective)\b/i);
-        const isAdverb = translation.includes('наречие') || translation.match(/\b(adverb)\b/i);
-        
-        if (isVerb) {
-            examples.push(
-                `You should ${word} regularly to maintain good habits.`,
-                `She will ${word} the proposal before the meeting.`,
-                `They have ${word}ed together on many projects.`,
-                `I need to ${word} more carefully next time.`,
-                `Can you show me how to ${word} correctly?`
-            );
-        } 
-        else if (isNoun) {
-            examples.push(
-                `The ${word} was placed on the shelf.`,
-                `We need to discuss this ${word} in detail.`,
-                `Her favorite ${word} is the one she bought yesterday.`,
-                `The ${word} plays a crucial role in the process.`,
-                `I'm looking for a specific ${word} for my collection.`
-            );
+        if (!data.def || data.def.length === 0) {
+            console.log('❌ Yandex: No definitions found for examples');
+            return [];
         }
-        else if (isAdjective) {
-            examples.push(
-                `It was a ${word} experience that I'll never forget.`,
-                `She has such a ${word} personality that everyone likes her.`,
-                `The solution seems ${word} at first glance.`,
-                `This is the most ${word} thing I've ever seen.`,
-                `He felt ${word} after hearing the news.`
-            );
-        }
-        else if (isAdverb) {
-            examples.push(
-                `She spoke ${word} during the presentation.`,
-                `He worked ${word} to finish the project on time.`,
-                `They arrived ${word} for the meeting.`,
-                `The team performed ${word} under pressure.`,
-                `You should act ${word} in such situations.`
-            );
-        }
-        else {
-            // Общие контекстные примеры
-            examples.push(
-                `When "${word}" means "${translation}", it can be used like this.`,
-                `In the context of "${translation}", here's an example with "${word}".`,
-                `For the meaning "${translation}", consider this usage of "${word}".`,
-                `As "${translation}", "${word}" commonly appears in such contexts.`,
-                `If you understand "${word}" as "${translation}", this example will be helpful.`
-            );
-        }
-        
-        // Выбираем 3 случайных примера
-        const shuffled = [...examples].sort(() => 0.5 - Math.random());
-        return shuffled.slice(0, 3);
+
+        console.log(`🔍 Yandex found ${data.def.length} definition(s) for examples`);
+
+        data.def.forEach((definition) => {
+            // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ ПОЛЯ "ex"
+            if (definition.ex && Array.isArray(definition.ex)) {
+                console.log(`🔍 Processing ${definition.ex.length} example(s) from Yandex`);
+                
+                definition.ex.forEach((example) => {
+                    if (example.text && example.tr && Array.isArray(example.tr)) {
+                        const englishExample = example.text.trim();
+                        const russianExample = example.tr[0]?.text?.trim();
+                        
+                        if (englishExample && russianExample) {
+                            examples.push({
+                                english: englishExample,
+                                russian: russianExample
+                            });
+                            console.log(`✅ Yandex example: "${englishExample}" -> "${russianExample}"`);
+                        }
+                    }
+                });
+            }
+        });
+
+        return examples.slice(0, 3); // Возвращаем до 3 примеров
     }
 
-    generateBasicExamples(word, translation = null) {
-        let basicExamples = [];
-        
-        if (translation) {
-            basicExamples = [
-                `When "${word}" means "${translation}", it can be used in various contexts.`,
-                `In the sense of "${translation}", here's how "${word}" might be used.`,
-                `For the meaning "${translation}", consider this example with "${word}".`
-            ];
-        } else {
-            basicExamples = [
-                `I need to use the word "${word}" in my writing.`,
-                `Can you explain how to use "${word}" correctly?`,
-                `The word "${word}" appears frequently in English texts.`
-            ];
+    async getBackupExamples(word) {
+        try {
+            console.log(`🔍 Backup API call for examples: "${word}"`);
+            
+            const response = await axios.get(
+                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
+                { timeout: 5000 }
+            );
+
+            return this.extractExamplesFromFreeDictionary(response.data, word);
+        } catch (error) {
+            console.error('Free Dictionary API error for examples:', error.message);
+            return [];
         }
-        
-        const shuffled = [...basicExamples].sort(() => 0.5 - Math.random());
-        return shuffled.slice(0, 3);
     }
 
-    async checkApisAvailability() {
-        console.log('🔧 Example generator: Contextual examples available');
-        return ['Contextual examples'];
+    extractExamplesFromFreeDictionary(data, originalWord) {
+        const examples = [];
+        
+        if (!Array.isArray(data) || data.length === 0) {
+            console.log('❌ FreeDictionary: No entries found for examples');
+            return [];
+        }
+
+        console.log(`🔍 FreeDictionary found ${data.length} entry/entries for examples`);
+
+        data.forEach(entry => {
+            if (entry.meanings && Array.isArray(entry.meanings)) {
+                entry.meanings.forEach(meaning => {
+                    if (meaning.definitions && Array.isArray(meaning.definitions)) {
+                        meaning.definitions.forEach(definition => {
+                            // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ ПОЛЯ "example"
+                            if (definition.example && definition.example.trim()) {
+                                const englishExample = definition.example.trim();
+                                // Для бэкап словаря создаем упрощенный пример
+                                examples.push({
+                                    english: englishExample,
+                                    russian: `Пример: "${englishExample}"`
+                                });
+                                console.log(`✅ Backup example: "${englishExample}"`);
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        return examples.slice(0, 3); // Возвращаем до 3 примеров
+    }
+
+    getGenericExamples(word, translation) {
+        const genericExamples = [
+            {
+                english: `I often use the word "${word}" in my conversations.`,
+                russian: `Я часто использую слово "${translation}" в разговорах.`
+            },
+            {
+                english: `Can you give me an example with "${word}"?`,
+                russian: `Можете привести пример с "${translation}"?`
+            },
+            {
+                english: `The word "${word}" is very useful in English.`,
+                russian: `Слово "${translation}" очень полезно в английском языке.`
+            }
+        ];
+
+        return genericExamples.slice(0, 2); // Возвращаем 2 общих примера
     }
 }
