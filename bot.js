@@ -12,7 +12,7 @@ const transcriptionService = new TranscriptionService();
 // Хранилище состояний пользователей
 const userStates = new Map();
 
-// Хранилище для отслеживания воспроизведения аудио
+// Хранилище для отслеживания воспроизведения аудио по словам
 const audioPlaybackTracker = new Map();
 
 // Главное меню
@@ -51,10 +51,10 @@ function getAfterAudioKeyboard() {
 }
 
 // Функция для проверки и отметки воспроизведения аудио
-function canPlayAudio(audioId, chatId) {
-    const key = `${chatId}_${audioId}`;
+function canPlayAudio(englishWord, chatId) {
+    const key = `${chatId}_${englishWord.toLowerCase()}`;
     
-    // Если аудио уже воспроизводилось для этого чата
+    // Если аудио уже воспроизводилось для этого чата и слова
     if (audioPlaybackTracker.has(key)) {
         return false;
     }
@@ -208,10 +208,11 @@ bot.on('callback_query', async (callbackQuery) => {
     if (data.startsWith('audio_')) {
         const audioId = data.replace('audio_', '');
         const audioUrl = userState?.tempAudioUrl;
+        const englishWord = userState?.tempWord;
         
-        if (audioUrl) {
-            // Проверяем, можно ли воспроизвести аудио
-            if (!canPlayAudio(audioId, chatId)) {
+        if (audioUrl && englishWord) {
+            // Проверяем, можно ли воспроизвести аудио (по слову, а не по audioId)
+            if (!canPlayAudio(englishWord, chatId)) {
                 await bot.answerCallbackQuery(callbackQuery.id, {
                     text: '🔇 Аудио уже было воспроизведено. Можно повторить через 30 секунд.',
                     show_alert: true
@@ -243,7 +244,7 @@ bot.on('callback_query', async (callbackQuery) => {
             } catch (error) {
                 console.error('Error sending audio:', error);
                 // В случае ошибки удаляем отметку о воспроизведении
-                const key = `${chatId}_${audioId}`;
+                const key = `${chatId}_${englishWord.toLowerCase()}`;
                 audioPlaybackTracker.delete(key);
             }
         }
@@ -325,4 +326,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с защитой от множественного воспроизведения аудио');
+console.log('🤖 Бот запущен с исправленной защитой от множественного воспроизведения аудио');
