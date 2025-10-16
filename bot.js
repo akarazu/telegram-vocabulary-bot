@@ -12,9 +12,6 @@ const dictionaryService = new CombinedDictionaryService();
 // Хранилище состояний пользователей
 const userStates = new Map();
 
-// Хранилище для отслеживания отправленных аудио в каждом чате
-const sentAudios = new Map();
-
 // Главное меню
 function getMainMenu() {
     return {
@@ -50,33 +47,15 @@ function getAfterAudioKeyboard() {
     };
 }
 
-// Клавиатура для выбора переводов с английскими значениями
-function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
+// Клавиатура для выбора переводов
+function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
     const translationButtons = translations.map((translation, index) => {
         const isSelected = selectedIndices.includes(index);
         const emoji = isSelected ? '✅' : `${index + 1}️⃣`;
         
-        // ✅ НАХОДИМ СООТВЕТСТВУЮЩИЕ АНГЛИЙСКИЕ ЗНАЧЕНИЯ
-        const meaningsForTranslation = meanings.filter(
-            meaning => meaning.translation === translation
-        );
-        
-        let buttonText = '';
-        
-        // ✅ ОСНОВНАЯ СТРОКА: русский перевод
-        buttonText += `${emoji} ${translation}`;
-        
-        // ✅ ВТОРАЯ СТРОКА: английское значение
-        if (meaningsForTranslation.length > 0) {
-            const firstMeaning = meaningsForTranslation[0];
-            if (firstMeaning.englishDefinition) {
-                buttonText += `\n   🅰️ ${firstMeaning.englishDefinition}`;
-            }
-        }
-        
         return [
             { 
-                text: buttonText, 
+                text: `${emoji} ${translation}`, 
                 callback_data: `toggle_translation_${index}` 
             }
         ];
@@ -117,46 +96,32 @@ async function showMainMenu(chatId, text = '') {
     }
 }
 
-// Функция для проверки, есть ли предыдущие аудио в чате
-function hasPreviousAudios(chatId, currentAudioUrl) {
-    if (!sentAudios.has(chatId)) {
-        return false;
-    }
+// ✅ Упрощенная функция: находим примеры для слова
+function findExamplesForWord(word, meanings) {
+    const examples = [];
     
-    const chatAudios = sentAudios.get(chatId);
-    const previousAudios = chatAudios.filter(audio => audio.url !== currentAudioUrl);
-    return previousAudios.length > 0;
+    meanings.forEach(meaning => {
+        if (meaning.examples && meaning.examples.length > 0) {
+            meaning.examples.forEach(example => {
+                if (example.english && example.english.toLowerCase().includes(word.toLowerCase())) {
+                    examples.push(example.english);
+                }
+            });
+        }
+    });
+    
+    // Берем только первые 2 примера
+    return examples.slice(0, 2);
 }
 
-// Функция для добавления аудио в историю чата
-function addAudioToHistory(chatId, audioUrl, word) {
-    if (!sentAudios.has(chatId)) {
-        sentAudios.set(chatId, []);
-    }
-    
-    const chatAudios = sentAudios.get(chatId);
-    const existingAudioIndex = chatAudios.findIndex(audio => audio.url === audioUrl);
-    
-    if (existingAudioIndex !== -1) {
-        chatAudios[existingAudioIndex] = { url: audioUrl, word: word, timestamp: Date.now() };
-    } else {
-        chatAudios.push({ url: audioUrl, word: word, timestamp: Date.now() });
-    }
-    
-    if (chatAudios.length > 10) {
-        chatAudios.shift();
-    }
-}
-
-// ✅ ФУНКЦИЯ: сохранение с комбинированными данными
-async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslations) {
+// ✅ Упрощенная функция сохранения
+async function saveWordWithExamples(chatId, userState, selectedTranslations) {
     console.log(`💾 Saving word:`, {
         word: userState.tempWord,
         selectedTranslations: selectedTranslations
     });
     
     let success = true;
-    let matchedEnglishMeanings = []; // ✅ ОБЪЯВЛЯЕМ ПЕРЕМЕННУЮ ЗДЕСЬ!
     
     if (sheetsService.initialized) {
         // Проверяем дубликаты
@@ -178,40 +143,11 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
             console.error('❌ Error checking duplicates:', error);
         }
         
-        // ✅ НАХОДИМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ДЛЯ ВЫБРАННЫХ ПЕРЕВОДОВ
-        selectedTranslations.forEach(translation => {
-            // Ищем значения, которые имеют этот перевод
-            const meaningsForTranslation = userState.meanings.filter(
-                meaning => meaning.translation === translation
-            );
-            
-            if (meaningsForTranslation.length > 0) {
-                meaningsForTranslation.forEach(meaning => {
-                    if (meaning.englishDefinition) {
-                        matchedEnglishMeanings.push(meaning.englishDefinition);
-                    }
-                });
-                console.log(`✅ Found English meaning for translation: "${translation}"`);
-            } else {
-                console.log(`⚠️ No English meaning found for translation: "${translation}"`);
-            }
-        });
+        // ✅ НАХОДИМ ПРИМЕРЫ ДЛЯ СЛОВА
+        const examples = findExamplesForWord(userState.tempWord, userState.meanings);
+        console.log(`🎯 Found examples:`, examples);
         
-        console.log(`🎯 Total English meanings found: ${matchedEnglishMeanings.length}`);
-        
-        // ✅ ФОРМИРУЕМ ДАННЫЕ ДЛЯ СОХРАНЕНИЯ
         const translationText = selectedTranslations.join(', ');
-        
-        // ✅ ФОРМИРУЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ
-        let englishMeaningsText = '';
-        if (matchedEnglishMeanings.length > 0) {
-            englishMeaningsText = matchedEnglishMeanings.join(' | ');
-        } else {
-            // Если не нашли значений, используем оригинальное слово
-            englishMeaningsText = userState.tempWord;
-        }
-        
-        console.log(`📝 Saving: "${userState.tempWord}" -> "${translationText}" with meanings: "${englishMeaningsText}"`);
         
         // ✅ СОХРАНЯЕМ
         success = await sheetsService.addWordWithExamples(
@@ -220,7 +156,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
             userState.tempTranscription,
             translationText,
             userState.tempAudioUrl,
-            englishMeaningsText
+            examples.join(' | ') // Сохраняем примеры через разделитель
         );
     }
     
@@ -233,11 +169,12 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
         let successMessage = '✅ Слово добавлено в словарь!\n\n' +
             `💬 ${userState.tempWord}${transcriptionText} - ${selectedTranslations.join(', ')}\n\n`;
         
-        // ✅ ПОКАЗЫВАЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ
-        if (matchedEnglishMeanings.length > 0) {
-            successMessage += '🎯 **English meanings:**\n';
-            matchedEnglishMeanings.forEach((meaning, index) => {
-                successMessage += `${index + 1}. ${meaning}\n`;
+        // ✅ ПОКАЗЫВАЕМ ПРИМЕРЫ ЕСЛИ ЕСТЬ
+        const examples = findExamplesForWord(userState.tempWord, userState.meanings);
+        if (examples.length > 0) {
+            successMessage += '📝 **Примеры использования:**\n';
+            examples.forEach((example, index) => {
+                successMessage += `${index + 1}. ${example}\n`;
             });
         }
         
@@ -256,7 +193,7 @@ bot.onText(/\/start/, async (msg) => {
         '📚 Англо-русский словарь\n' +
         '🔤 С транскрипцией и произношением\n' +
         '🇬🇧 Британский вариант\n' +
-        '🤖 С английскими значениями слов'
+        '📝 С примерами использования'
     );
 });
 
@@ -307,24 +244,24 @@ bot.on('message', async (msg) => {
         
         await showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение, переводы...');
         
-try {
-    const result = await dictionaryService.getWordData(englishWord);
-    
-    let audioId = null;
-    if (result.audioUrl) {
-        audioId = Date.now().toString();
-    }
+        try {
+            const result = await dictionaryService.getWordData(englishWord);
             
-    userStates.set(chatId, {
-        state: 'showing_transcription',
-        tempWord: englishWord,
-        tempTranscription: result.transcription || '',
-        tempAudioUrl: result.audioUrl || '',
-        tempAudioId: audioId,
-        tempTranslations: result.translations || [],
-        meanings: result.meanings || [],
-        selectedTranslationIndices: []
-    });
+            let audioId = null;
+            if (result.audioUrl) {
+                audioId = Date.now().toString();
+            }
+                    
+            userStates.set(chatId, {
+                state: 'showing_transcription',
+                tempWord: englishWord,
+                tempTranscription: result.transcription || '',
+                tempAudioUrl: result.audioUrl || '',
+                tempAudioId: audioId,
+                tempTranslations: result.translations || [],
+                meanings: result.meanings || [],
+                selectedTranslationIndices: []
+            });
             
             let message = `📝 Слово: ${englishWord}`;
             
@@ -366,7 +303,7 @@ try {
             return;
         }
         
-        await saveWordWithEnglishMeanings(chatId, userState, [translation]);
+        await saveWordWithExamples(chatId, userState, [translation]);
     }
     else if (userState?.state === 'waiting_custom_translation_with_selected') {
         const customTranslation = text.trim();
@@ -381,7 +318,7 @@ try {
         
         const allTranslations = [...selectedTranslations, customTranslation];
         
-        await saveWordWithEnglishMeanings(chatId, userState, allTranslations);
+        await saveWordWithExamples(chatId, userState, allTranslations);
     }
     else {
         await showMainMenu(chatId, 'Выберите действие из меню:');
@@ -408,25 +345,9 @@ bot.on('callback_query', async (callbackQuery) => {
                     { chat_id: chatId, message_id: callbackQuery.message.message_id }
                 );
 
-                addAudioToHistory(chatId, audioUrl, englishWord);
-                const hasPrevious = hasPreviousAudios(chatId, audioUrl);
-                
                 await bot.sendAudio(chatId, audioUrl, {
                     caption: `🔊 Британское произношение: ${englishWord}`
                 });
-
-                if (hasPrevious) {
-                    await bot.sendMessage(chatId,
-                        '⚠️ Чтобы избежать автовоспроизведения старых аудио:\n\n' +
-                        '📱 На Android:\n' +
-                        '• Нажмите кнопку "Назад" после прослушивания\n' +
-                        '• Или закройте плеер свайпом вниз\n\n' +
-                        '📱 На iOS:\n' +
-                        '• Свайпните плеер вниз\n' +
-                        '• Или нажмите "Закрыть"\n\n' +
-                        '💡 Это нужно сделать только если начали играть старые слова'
-                    );
-                }
                 
                 await bot.sendMessage(chatId, 
                     '🎵 Вы прослушали произношение. Хотите ввести перевод?',
@@ -465,10 +386,8 @@ bot.on('callback_query', async (callbackQuery) => {
                         translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                     }
 
-                    translationMessage += '\n\n💡 Система автоматически сохранит соответствующие английские значения слова';
-
                     await bot.sendMessage(chatId, translationMessage, 
-                        getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, [])
+                        getTranslationSelectionKeyboard(userState.tempTranslations, [])
                     );
                 } else {
                     userStates.set(chatId, {
@@ -510,7 +429,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 });
                 
                 await bot.editMessageReplyMarkup(
-                    getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, selectedIndices).reply_markup,
+                    getTranslationSelectionKeyboard(userState.tempTranslations, selectedIndices).reply_markup,
                     {
                         chat_id: chatId,
                         message_id: callbackQuery.message.message_id
@@ -528,7 +447,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 const selectedTranslations = userState.selectedTranslationIndices
                     .map(index => userState.tempTranslations[index]);
                 
-                await saveWordWithEnglishMeanings(chatId, userState, selectedTranslations);
+                await saveWordWithExamples(chatId, userState, selectedTranslations);
                 
                 await bot.deleteMessage(chatId, callbackQuery.message.message_id);
             } catch (error) {
@@ -606,4 +525,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с английскими значениями слов');
+console.log('🤖 Бот запущен с упрощенной логикой примеров');
