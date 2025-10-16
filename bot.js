@@ -1,13 +1,13 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { GoogleSheetsService } from './services/google-sheets.js';
-import { YandexDictionaryService } from './services/yandex-dictionary-service.js';
+import { CombinedDictionaryService } from './services/combined-dictionary-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
     polling: true 
 });
 
 const sheetsService = new GoogleSheetsService();
-const yandexService = new YandexDictionaryService();
+const dictionaryService = new CombinedDictionaryService();
 
 // Хранилище состояний пользователей
 const userStates = new Map();
@@ -187,7 +187,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
             );
             
             if (meaningsForTranslation.length > 0) {
-                // ✅ СОХРАНЯЕМ АНГЛИЙСКИЕ ОПРЕДЕЛЕНИЯ
+                // ✅ СОХРАНЯЕМ АНГЛИЙСКИЕ ОПРЕДЕЛЕНИЯ ИЗ FreeDictionary
                 meaningsForTranslation.forEach(meaning => {
                     if (meaning.englishDefinition) {
                         matchedEnglishMeanings.push(meaning.englishDefinition);
@@ -196,7 +196,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
             }
         });
         
-        console.log(`🎯 Found ${matchedEnglishMeanings.length} English meanings`);
+        console.log(`🎯 Found ${matchedEnglishMeanings.length} English meanings from FreeDictionary`);
         
         // ✅ ФОРМИРУЕМ ДАННЫЕ ДЛЯ СОХРАНЕНИЯ
         const translationText = selectedTranslations.join(', ');
@@ -212,7 +212,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
         
         console.log(`📝 Saving with English meanings: "${englishMeaningsText}"`);
         
-        // ✅ СОХРАНЯЕМ С АНГЛИЙСКИМИ ЗНАЧЕНИЯМИ ВМЕСТО ПРИМЕРОВ
+        // ✅ СОХРАНЯЕМ С АНГЛИЙСКИМИ ЗНАЧЕНИЯМИ
         success = await sheetsService.addWordWithExamples(
             chatId, 
             userState.tempWord, 
@@ -232,7 +232,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
         let successMessage = '✅ Слово добавлено в словарь!\n\n' +
             `💬 ${userState.tempWord}${transcriptionText} - ${selectedTranslations.join(', ')}\n\n`;
         
-        // ✅ ПОКАЗЫВАЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ
+        // ✅ ПОКАЗЫВАЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ИЗ FreeDictionary
         if (matchedEnglishMeanings.length > 0) {
             successMessage += '🎯 **English meanings:**\n';
             matchedEnglishMeanings.forEach((meaning, index) => {
@@ -306,24 +306,24 @@ bot.on('message', async (msg) => {
         
         await showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение, переводы...');
         
-        try {
-            const result = await yandexService.getWordWithAutoExamples(englishWord);
+try {
+    const result = await dictionaryService.getWordData(englishWord);
+    
+    let audioId = null;
+    if (result.audioUrl) {
+        audioId = Date.now().toString();
+    }
             
-            let audioId = null;
-            if (result.audioUrl) {
-                audioId = Date.now().toString();
-            }
-            
-            userStates.set(chatId, {
-                state: 'showing_transcription',
-                tempWord: englishWord,
-                tempTranscription: result.transcription || '',
-                tempAudioUrl: result.audioUrl || '',
-                tempAudioId: audioId,
-                tempTranslations: result.translations || [],
-                meanings: result.meanings || [],
-                selectedTranslationIndices: []
-            });
+    userStates.set(chatId, {
+        state: 'showing_transcription',
+        tempWord: englishWord,
+        tempTranscription: result.transcription || '',
+        tempAudioUrl: result.audioUrl || '',
+        tempAudioId: audioId,
+        tempTranslations: result.translations || [],
+        meanings: result.meanings || [],
+        selectedTranslationIndices: []
+    });
             
             let message = `📝 Слово: ${englishWord}`;
             
@@ -606,3 +606,4 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с английскими значениями слов');
+
