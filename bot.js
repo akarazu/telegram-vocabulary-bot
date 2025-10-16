@@ -138,6 +138,7 @@ async function saveWordWithTranslation(chatId, userState, translation) {
     });
     
     let success = true;
+    let examplesText = ''; // ✅ ОБЪЯВЛЯЕМ ПЕРЕМЕННУЮ ЗДЕСЬ!
     
     if (sheetsService.initialized) {
         console.log('✅ Google Sheets service is initialized');
@@ -166,8 +167,6 @@ async function saveWordWithTranslation(chatId, userState, translation) {
         
         // ✅ ИСПОЛЬЗУЕМ ПРИМЕРЫ ИЗ YANDEX ВМЕСТО ГЕНЕРАЦИИ
         console.log('🔄 Getting examples from Yandex data...');
-        
-        let examplesText = '';
         
         // ✅ ЕСЛИ ЕСТЬ ВЫБРАННЫЕ ЗНАЧЕНИЯ - ИСПОЛЬЗУЕМ ИХ ПРИМЕРЫ
         if (userState.selectedTranslationIndices && userState.selectedTranslationIndices.length > 0) {
@@ -212,9 +211,8 @@ async function saveWordWithTranslation(chatId, userState, translation) {
             console.log(`✅ Using first available examples: ${examplesText}`);
         }
         
-        // ✅ ЕСЛИ ПРИМЕРОВ ВООБЩЕ НЕТ - СОЗДАЕМ ПУСТУЮ СТРОКУ
+        // ✅ ЕСЛИ ПРИМЕРОВ ВООБЩЕ НЕТ - ОСТАВЛЯЕМ ПУСТУЮ СТРОКУ
         if (!examplesText) {
-            examplesText = '';
             console.log('ℹ️ No examples available');
         }
         
@@ -228,7 +226,7 @@ async function saveWordWithTranslation(chatId, userState, translation) {
             userState.tempTranscription,
             translation,
             userState.tempAudioUrl,
-            examplesText
+            examplesText // ✅ ПЕРЕМЕННАЯ ТЕПЕРЬ ДОСТУПНА
         );
         
         console.log(`📊 Save result: ${success ? 'SUCCESS' : 'FAILED'}`);
@@ -664,3 +662,4 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с исправленной логикой сохранения и Яндекс API');
+
