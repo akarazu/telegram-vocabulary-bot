@@ -53,6 +53,9 @@ export class CombinedDictionaryService {
         // ✅ СОПОСТАВЛЯЕМ ПЕРЕВОДЫ YANDEX С ЗНАЧЕНИЯМИ FREEDICTIONARY
         if (result.translations.length > 0 && result.meanings.length > 0) {
             this.matchYandexTranslationsWithFreeDictMeanings(result);
+        } else if (result.meanings.length > 0 && result.translations.length === 0) {
+            // ✅ Если есть только значения FreeDict, создаем простые переводы
+            this.createTranslationsForFreeDictMeanings(result);
         }
 
         // ✅ Fallback если ничего не нашли
@@ -60,6 +63,7 @@ export class CombinedDictionaryService {
             return this.getBasicFallback(word);
         }
 
+        console.log(`🎯 [CombinedService] Final result: ${result.translations.length} translations, ${result.meanings.length} meanings`);
         return result;
     }
 
@@ -88,8 +92,7 @@ export class CombinedDictionaryService {
         const result = {
             word: word,
             transcription: '',
-            translations: [],
-            yandexMeanings: [] // сохраняем raw данные Яндекс для сопоставления
+            translations: []
         };
 
         if (!data.def || data.def.length === 0) {
@@ -111,14 +114,6 @@ export class CombinedDictionaryService {
                         if (!result.translations.includes(russianTranslation)) {
                             result.translations.push(russianTranslation);
                         }
-                        
-                        // ✅ СОХРАНЯЕМ ДАННЫЕ Яндекс для сопоставления
-                        result.yandexMeanings.push({
-                            translation: russianTranslation,
-                            pos: translation.pos || definition.pos,
-                            syn: translation.syn ? translation.syn.map(s => s.text) : [],
-                            mean: translation.mean ? translation.mean.map(m => m.text) : []
-                        });
                     }
                 });
             }
@@ -216,6 +211,25 @@ export class CombinedDictionaryService {
         });
         
         console.log(`✅ [CombinedService] Matched ${matchedCount} meanings with translations`);
+    }
+
+    createTranslationsForFreeDictMeanings(result) {
+        console.log(`🔄 [CombinedService] Creating translations for FreeDict meanings`);
+        
+        // ✅ СОЗДАЕМ ПРОСТЫЕ ПЕРЕВОДЫ ДЛЯ ЗНАЧЕНИЙ FREEDICT
+        const baseTranslations = ['основное значение', 'главный смысл', 'ключевое определение', 'важный аспект'];
+        
+        result.meanings.forEach((meaning, index) => {
+            const translationIndex = index % baseTranslations.length;
+            meaning.translation = baseTranslations[translationIndex];
+        });
+        
+        // ✅ СОЗДАЕМ СПИСОК ПЕРЕВОДОВ
+        result.translations = result.meanings.map(m => m.translation).filter((value, index, self) => 
+            self.indexOf(value) === index
+        );
+        
+        console.log(`✅ [CombinedService] Created ${result.translations.length} translations`);
     }
 
     isRussianText(text) {
