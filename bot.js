@@ -96,25 +96,7 @@ async function showMainMenu(chatId, text = '') {
     }
 }
 
-// ✅ Упрощенная функция: находим примеры для слова
-function findExamplesForWord(word, meanings) {
-    const examples = [];
-    
-    meanings.forEach(meaning => {
-        if (meaning.examples && meaning.examples.length > 0) {
-            meaning.examples.forEach(example => {
-                if (example.english && example.english.toLowerCase().includes(word.toLowerCase())) {
-                    examples.push(example.english);
-                }
-            });
-        }
-    });
-    
-    // Берем только первые 2 примера
-    return examples.slice(0, 2);
-}
-
-// ✅ Упрощенная функция сохранения
+// ✅ Упрощенная функция сохранения с примерами
 async function saveWordWithExamples(chatId, userState, selectedTranslations) {
     console.log(`💾 Saving word:`, {
         word: userState.tempWord,
@@ -143,11 +125,32 @@ async function saveWordWithExamples(chatId, userState, selectedTranslations) {
             console.error('❌ Error checking duplicates:', error);
         }
         
-        // ✅ НАХОДИМ ПРИМЕРЫ ДЛЯ СЛОВА
-        const examples = findExamplesForWord(userState.tempWord, userState.meanings);
+        // ✅ НАХОДИМ ПРИМЕРЫ ДЛЯ ВЫБРАННЫХ ПЕРЕВОДОВ
+        const examples = [];
+        selectedTranslations.forEach(translation => {
+            // Ищем значения с этим переводом
+            const meaningsForTranslation = userState.meanings.filter(
+                meaning => meaning.translation === translation
+            );
+            
+            meaningsForTranslation.forEach(meaning => {
+                if (meaning.examples && meaning.examples.length > 0) {
+                    examples.push(...meaning.examples);
+                }
+            });
+        });
+        
         console.log(`🎯 Found examples:`, examples);
         
         const translationText = selectedTranslations.join(', ');
+        
+        // ✅ ФОРМИРУЕМ ПРИМЕРЫ ДЛЯ СОХРАНЕНИЯ
+        let examplesText = '';
+        if (examples.length > 0) {
+            // Берем только английские примеры
+            const englishExamples = examples.map(ex => ex.english).filter(ex => ex);
+            examplesText = englishExamples.join(' | ');
+        }
         
         // ✅ СОХРАНЯЕМ
         success = await sheetsService.addWordWithExamples(
@@ -156,7 +159,7 @@ async function saveWordWithExamples(chatId, userState, selectedTranslations) {
             userState.tempTranscription,
             translationText,
             userState.tempAudioUrl,
-            examples.join(' | ') // Сохраняем примеры через разделитель
+            examplesText
         );
     }
     
@@ -170,10 +173,23 @@ async function saveWordWithExamples(chatId, userState, selectedTranslations) {
             `💬 ${userState.tempWord}${transcriptionText} - ${selectedTranslations.join(', ')}\n\n`;
         
         // ✅ ПОКАЗЫВАЕМ ПРИМЕРЫ ЕСЛИ ЕСТЬ
-        const examples = findExamplesForWord(userState.tempWord, userState.meanings);
+        const examples = [];
+        selectedTranslations.forEach(translation => {
+            const meaningsForTranslation = userState.meanings.filter(
+                meaning => meaning.translation === translation
+            );
+            meaningsForTranslation.forEach(meaning => {
+                if (meaning.examples && meaning.examples.length > 0) {
+                    examples.push(...meaning.examples);
+                }
+            });
+        });
+        
         if (examples.length > 0) {
             successMessage += '📝 **Примеры использования:**\n';
-            examples.forEach((example, index) => {
+            // Берем только уникальные примеры
+            const uniqueExamples = [...new Set(examples.map(ex => ex.english))].slice(0, 3);
+            uniqueExamples.forEach((example, index) => {
                 successMessage += `${index + 1}. ${example}\n`;
             });
         }
@@ -193,7 +209,7 @@ bot.onText(/\/start/, async (msg) => {
         '📚 Англо-русский словарь\n' +
         '🔤 С транскрипцией и произношением\n' +
         '🇬🇧 Британский вариант\n' +
-        '📝 С примерами использования'
+        '📝 С примерами использования из контекста'
     );
 });
 
@@ -242,7 +258,7 @@ bot.on('message', async (msg) => {
             }
         }
         
-        await showMainMenu(chatId, '🔍 Ищу транскрипцию, произношение, переводы...');
+        await showMainMenu(chatId, '🔍 Ищу перевод, транскрипцию, произношение и примеры...');
         
         try {
             const result = await dictionaryService.getWordData(englishWord);
@@ -279,6 +295,14 @@ bot.on('message', async (msg) => {
 
             if (result.translations && result.translations.length > 0) {
                 message += `\n\n🎯 Найдено ${result.translations.length} вариантов перевода`;
+                
+                // ✅ ПОКАЗЫВАЕМ НАЙДЕННЫЕ ПРИМЕРЫ
+                const totalExamples = result.meanings.reduce((total, meaning) => 
+                    total + (meaning.examples ? meaning.examples.length : 0), 0
+                );
+                if (totalExamples > 0) {
+                    message += `\n📝 Найдено ${totalExamples} примеров использования`;
+                }
             } else {
                 message += `\n\n❌ Переводы не найдены`;
             }
@@ -325,7 +349,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Обработка inline кнопок
+// Обработка inline кнопок (остается без изменений)
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -525,4 +549,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с упрощенной логикой примеров');
+console.log('🤖 Бот запущен с новой логикой примеров из FreeDict');
