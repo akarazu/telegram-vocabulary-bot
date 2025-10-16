@@ -51,7 +51,18 @@ function getAfterAudioKeyboard() {
 function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
     const translationButtons = translations.map((translation, index) => {
         const isSelected = selectedIndices.includes(index);
-        const emoji = isSelected ? '✅' : `${index + 1}️⃣`;
+        
+        // ✅ ФИКС: для всех номеров используем цифры вместо эмодзи
+        let numberDisplay;
+        if (index < 9) {
+            // Для первых 9 используем эмодзи с цифрами
+            numberDisplay = `${index + 1}️⃣`;
+        } else {
+            // Для 10+ используем просто цифры в скобках
+            numberDisplay = `[${index + 1}]`;
+        }
+        
+        const emoji = isSelected ? '✅' : numberDisplay;
         
         return [
             { 
@@ -550,3 +561,4 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с новой логикой примеров из FreeDict');
+
