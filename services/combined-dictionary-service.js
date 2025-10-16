@@ -12,61 +12,54 @@ export class CombinedDictionaryService {
             word: word,
             transcription: '',
             audioUrl: '',
-            meanings: [],
-            translations: []
+            meanings: [], // ✅ ЗНАЧЕНИЯ И ПЕРЕВОДЫ ВМЕСТЕ
+            translations: [] // ✅ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
         };
 
-        // ✅ Яндекс для переводов и транскрипции
-        let yandexData = null;
+        // ✅ Яндекс для переводов и РЕАЛЬНЫХ значений
         if (this.useYandex) {
             try {
-                yandexData = await this.getYandexData(word);
-                if (yandexData.translations.length > 0) {
+                const yandexData = await this.getYandexData(word);
+                if (yandexData.meanings.length > 0) {
+                    result.meanings = yandexData.meanings;
                     result.translations = yandexData.translations;
                     result.transcription = yandexData.transcription;
-                    console.log(`✅ [CombinedService] Yandex found ${result.translations.length} translations`);
-                    
-                    // ✅ СРАЗУ СОЗДАЕМ ЗНАЧЕНИЯ ИЗ YANDEX (правильно сопоставленные)
-                    this.createMeaningsFromYandex(result, yandexData);
+                    console.log(`✅ [CombinedService] Yandex found ${result.meanings.length} meanings with REAL definitions`);
                 }
             } catch (error) {
                 console.log('❌ [CombinedService] Yandex failed:', error.message);
             }
         }
 
-        // ✅ Free Dictionary для английских значений (если Яндекс не сработал)
+        // ✅ Free Dictionary только если Яндекс не сработал
         if (result.meanings.length === 0) {
             try {
                 const freeDictData = await this.getFreeDictionaryData(word);
                 if (freeDictData.meanings.length > 0) {
                     result.meanings = freeDictData.meanings;
                     result.audioUrl = freeDictData.audioUrl;
-                    console.log(`✅ [CombinedService] FreeDictionary found ${result.meanings.length} meanings`);
-                    
-                    // ✅ СОЗДАЕМ ПЕРЕВОДЫ ДЛЯ ЗНАЧЕНИЙ FREEDICT
+                    result.transcription = freeDictData.transcription;
                     this.createTranslationsForFreeDict(result);
+                    console.log(`✅ [CombinedService] FreeDictionary found ${result.meanings.length} meanings`);
                 }
             } catch (error) {
                 console.log('❌ [CombinedService] FreeDictionary failed:', error.message);
             }
         }
 
-        // ✅ Fallback если ничего не нашли
+        // ✅ Fallback
         if (result.meanings.length === 0) {
-            console.log('⚠️ [CombinedService] No data found, creating basic meanings');
             this.createBasicMeanings(result, word);
         }
 
-        console.log(`🎯 [CombinedService] Final: ${result.translations.length} translations, ${result.meanings.length} meanings`);
-        
-        // ✅ ВАЖНО: Убеждаемся, что каждый перевод имеет соответствующее значение
-        this.ensureTranslationMeaningMatch(result);
-        
+        console.log(`🎯 [CombinedService] Final: ${result.meanings.length} meanings`);
         return result;
     }
 
     async getYandexData(word) {
         try {
+            console.log(`🔍 [CombinedService] Making Yandex request for: "${word}"`);
+            
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
                     key: process.env.YANDEX_DICTIONARY_API_KEY,
@@ -88,120 +81,123 @@ export class CombinedDictionaryService {
         const result = {
             word: word,
             transcription: '',
-            translations: [],
-            yandexMeanings: []
+            meanings: [], // ✅ ОСНОВНОЙ МАССИВ ЗНАЧЕНИЙ
+            translations: [] // ✅ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
         };
 
         if (!data.def || data.def.length === 0) {
             return result;
         }
 
-        // ✅ ТРАНСКРИПЦИЯ из Яндекс
+        console.log(`📦 [CombinedService] Yandex raw data for "${word}":`, JSON.stringify(data, null, 2));
+
+        // ✅ ТРАНСКРИПЦИЯ
         if (data.def[0].ts) {
             result.transcription = `/${data.def[0].ts}/`;
         }
 
-        // ✅ ИЗВЛЕКАЕМ ПЕРЕВОДЫ и данные для значений
+        // ✅ ИЗВЛЕКАЕМ РЕАЛЬНЫЕ ЗНАЧЕНИЯ ИЗ YANDEX
         data.def.forEach((definition, defIndex) => {
+            const englishWord = definition.text || word;
+            const mainPOS = definition.pos || 'unknown';
+
             if (definition.tr && Array.isArray(definition.tr)) {
                 definition.tr.forEach((translation, transIndex) => {
                     if (translation.text && this.isRussianText(translation.text)) {
                         const russianTranslation = translation.text.trim();
+                        const translationPOS = translation.pos || mainPOS;
+
+                        // ✅ СОЗДАЕМ ЗНАЧЕНИЕ С РЕАЛЬНЫМИ ДАННЫМИ ИЗ API
+                        const detailedMeaning = {
+                            id: `yd_${defIndex}_${transIndex}`,
+                            translation: russianTranslation, // русский перевод
+                            englishDefinition: this.extractRealEnglishDefinition(translation, englishWord), // ✅ РЕАЛЬНОЕ значение
+                            englishWord: englishWord,
+                            partOfSpeech: this.translatePOS(translationPOS),
+                            examples: this.extractExamples(translation),
+                            synonyms: translation.syn ? translation.syn.map(s => s.text).filter(Boolean) : [],
+                            source: 'Yandex'
+                        };
+
+                        result.meanings.push(detailedMeaning);
                         
+                        // ✅ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
                         if (!result.translations.includes(russianTranslation)) {
                             result.translations.push(russianTranslation);
                         }
 
-                        // ✅ СОХРАНЯЕМ ДАННЫЕ для создания значений
-                        result.yandexMeanings.push({
-                            translation: russianTranslation, // русский перевод
-                            pos: translation.pos || definition.pos,
-                            syn: translation.syn ? translation.syn.map(s => s.text) : [],
-                            mean: translation.mean ? translation.mean.map(m => m.text) : [],
-                            definition: definition // исходное определение
-                        });
+                        console.log(`✅ [CombinedService] Meaning: "${russianTranslation}" -> "${detailedMeaning.englishDefinition}"`);
                     }
                 });
             }
         });
 
+        console.log(`🎯 [CombinedService] Yandex processed: ${result.meanings.length} meanings`);
         return result;
     }
 
-    createMeaningsFromYandex(result, yandexData) {
-        if (!yandexData || !yandexData.yandexMeanings || yandexData.yandexMeanings.length === 0) {
-            return;
-        }
-
-        console.log(`🔄 [CombinedService] Creating meanings from Yandex`);
-        
-        // ✅ СОЗДАЕМ ЗНАЧЕНИЯ - КАЖДОМУ ПЕРЕВОДУ СООТВЕТСТВУЕТ СВОЕ ЗНАЧЕНИЕ
-        yandexData.yandexMeanings.forEach((yandexMeaning, index) => {
-            const englishDefinition = this.generateAccurateEnglishDefinition(result.word, yandexMeaning);
-            
-            const detailedMeaning = {
-                id: `yd_${index}`,
-                translation: yandexMeaning.translation, // русский перевод
-                englishDefinition: englishDefinition,   // английское значение
-                englishWord: result.word,
-                partOfSpeech: this.translatePOS(yandexMeaning.pos) || 'unknown',
-                example: '',
-                source: 'Yandex'
-            };
-            
-            result.meanings.push(detailedMeaning);
+    extractRealEnglishDefinition(translation, englishWord) {
+        console.log(`🔍 [CombinedService] Extracting definition from:`, {
+            mean: translation.mean,
+            syn: translation.syn
         });
 
-        console.log(`✅ [CombinedService] Created ${result.meanings.length} meanings from Yandex`);
-    }
+        // ✅ ПРИОРИТЕТ 1: поле "mean" - РЕАЛЬНЫЕ английские значения
+        if (translation.mean && Array.isArray(translation.mean)) {
+            const englishMeans = translation.mean
+                .filter(mean => mean.text && !this.isRussianText(mean.text))
+                .map(mean => mean.text);
 
-    generateAccurateEnglishDefinition(word, yandexMeaning) {
-        // ✅ СОЗДАЕМ ТОЧНОЕ АНГЛИЙСКОЕ ОПРЕДЕЛЕНИЕ НА ОСНОВЕ ПЕРЕВОДА
-        
-        const translation = yandexMeaning.translation.toLowerCase();
-        
-        // ✅ СПЕЦИФИЧНЫЕ ОПРЕДЕЛЕНИЯ ДЛЯ РАЗНЫХ ПЕРЕВОДОВ
-        const definitionMap = {
-            // Для слова "ship"
-            'корабль': `a large watercraft for sea transport`,
-            'судно': `a vessel for navigation on water`,
-            'отправлять': `to send or transport by ship`,
-            'отгружать': `to load and send goods for transport`,
-            'отгружаться': `to be loaded onto a ship for transport`,
-            'судовой': `relating to or belonging to a ship`,
-            
-            // Для слова "run"  
-            'бежать': `to move quickly using one's legs`,
-            'управлять': `to operate or be in charge of`,
-            'работать': `to function or operate`,
-            'запускать': `to start or initiate operation`,
-            'течь': `to flow in a stream`,
-            
-            // Общие паттерны
-            'существительное': `${word} (noun)`,
-            'глагол': `to ${word} (verb)`,
-            'прилагательное': `${word} (adjective)`
-        };
-
-        // ✅ Ищем точное соответствие
-        for (const [key, definition] of Object.entries(definitionMap)) {
-            if (translation.includes(key)) {
-                return definition;
+            if (englishMeans.length > 0) {
+                console.log(`✅ [CombinedService] Using MEAN values: ${englishMeans.join(', ')}`);
+                return englishMeans.join(', ');
             }
         }
 
-        // ✅ Используем английские оттенки значений из Яндекс
-        if (yandexMeaning.mean && yandexMeaning.mean.length > 0) {
-            return `${word} (${yandexMeaning.mean.join(', ')})`;
+        // ✅ ПРИОРИТЕТ 2: поле "syn" - английские синонимы
+        if (translation.syn && Array.isArray(translation.syn)) {
+            const englishSynonyms = translation.syn
+                .filter(syn => syn.text && !this.isRussianText(syn.text))
+                .map(syn => syn.text);
+
+            if (englishSynonyms.length > 0) {
+                console.log(`✅ [CombinedService] Using SYN values: ${englishSynonyms.join(', ')}`);
+                return englishSynonyms.join(', ');
+            }
         }
 
-        // ✅ Используем синонимы
-        if (yandexMeaning.syn && yandexMeaning.syn.length > 0) {
-            return `${word} → ${yandexMeaning.syn.join(', ')}`;
+        // ✅ ПРИОРИТЕТ 3: русские синонимы (если нет английских)
+        if (translation.syn && Array.isArray(translation.syn)) {
+            const russianSynonyms = translation.syn
+                .filter(syn => syn.text && this.isRussianText(syn.text))
+                .map(syn => syn.text);
+
+            if (russianSynonyms.length > 0) {
+                console.log(`✅ [CombinedService] Using Russian SYN: ${russianSynonyms.join(', ')}`);
+                return `${englishWord} (${russianSynonyms.join(', ')})`;
+            }
         }
 
-        // ✅ Базовое определение
-        return `${word} - ${yandexMeaning.translation}`;
+        // ✅ ПРИОРИТЕТ 4: базовое определение
+        console.log(`⚠️ [CombinedService] No API definition found, using basic`);
+        return `${englishWord} - ${translation.text}`;
+    }
+
+    extractExamples(translation) {
+        const examples = [];
+        
+        if (translation.ex && Array.isArray(translation.ex)) {
+            translation.ex.forEach(exampleObj => {
+                if (exampleObj.text && exampleObj.tr && Array.isArray(exampleObj.tr)) {
+                    examples.push({
+                        english: exampleObj.text,
+                        russian: exampleObj.tr[0].text
+                    });
+                }
+            });
+        }
+        
+        return examples;
     }
 
     translatePOS(englishPOS) {
@@ -213,7 +209,10 @@ export class CombinedDictionaryService {
             'pronoun': 'местоимение',
             'preposition': 'предлог',
             'conjunction': 'союз',
-            'interjection': 'междометие'
+            'interjection': 'междометие',
+            'существительное': 'существительное',
+            'глагол': 'глагол',
+            'прилагательное': 'прилагательное'
         };
         return posMap[englishPOS] || englishPOS;
     }
@@ -270,11 +269,12 @@ export class CombinedDictionaryService {
                         if (definition.definition) {
                             const detailedMeaning = {
                                 id: `fd_${meaningId}`,
+                                translation: '', // будет заполнено позже
                                 englishDefinition: definition.definition,
                                 englishWord: word,
                                 partOfSpeech: partOfSpeech,
-                                example: definition.example || '',
-                                translation: '', // будет заполнено позже
+                                examples: definition.example ? [{ english: definition.example, russian: '' }] : [],
+                                synonyms: definition.synonyms || [],
                                 source: 'FreeDictionary'
                             };
                             
@@ -289,29 +289,22 @@ export class CombinedDictionaryService {
     }
 
     createTranslationsForFreeDict(result) {
-        console.log(`🔄 [CombinedService] Creating translations for FreeDict meanings`);
-        
-        // ✅ СОЗДАЕМ ПЕРЕВОДЫ ДЛЯ КАЖДОГО ЗНАЧЕНИЯ FREEDICT
-        const baseTranslations = ['основное значение', 'ключевой смысл', 'важное определение', 'главный аспект'];
+        const baseTranslations = ['основное значение', 'ключевой смысл', 'важное определение'];
         
         result.meanings.forEach((meaning, index) => {
             const translationIndex = index % baseTranslations.length;
             meaning.translation = baseTranslations[translationIndex];
         });
 
-        // ✅ ОБНОВЛЯЕМ СПИСОК ПЕРЕВОДОВ
         result.translations = result.meanings.map(m => m.translation).filter((value, index, self) => 
             self.indexOf(value) === index
         );
     }
 
     createBasicMeanings(result, word) {
-        console.log(`🔄 [CombinedService] Creating basic meanings`);
-        
         const basicMeanings = [
             { translation: 'основное значение', english: 'primary meaning' },
-            { translation: 'ключевой смысл', english: 'key significance' },
-            { translation: 'важный аспект', english: 'important aspect' }
+            { translation: 'ключевой смысл', english: 'key significance' }
         ];
         
         basicMeanings.forEach((meaning, index) => {
@@ -321,45 +314,13 @@ export class CombinedDictionaryService {
                 englishDefinition: `${word} - ${meaning.english}`,
                 englishWord: word,
                 partOfSpeech: 'noun',
-                example: '',
+                examples: [],
+                synonyms: [],
                 source: 'basic'
             });
-            
-            if (!result.translations.includes(meaning.translation)) {
-                result.translations.push(meaning.translation);
-            }
-        });
-    }
-
-    ensureTranslationMeaningMatch(result) {
-        console.log(`🔄 [CombinedService] Ensuring translation-meaning match`);
-        
-        // ✅ УБЕЖДАЕМСЯ, ЧТО КАЖДОМУ ПЕРЕВОДУ СООТВЕТСТВУЕТ ЗНАЧЕНИЕ
-        const usedTranslations = new Set();
-        
-        result.meanings.forEach(meaning => {
-            usedTranslations.add(meaning.translation);
         });
 
-        // ✅ ДОБАВЛЯЕМ ОТСУТСТВУЮЩИЕ ЗНАЧЕНИЯ ДЛЯ ПЕРЕВОДОВ
-        result.translations.forEach(translation => {
-            if (!usedTranslations.has(translation)) {
-                console.log(`⚠️ [CombinedService] Adding missing meaning for translation: "${translation}"`);
-                
-                result.meanings.push({
-                    id: `missing_${result.meanings.length}`,
-                    translation: translation,
-                    englishDefinition: `${result.word} - ${translation}`,
-                    englishWord: result.word,
-                    partOfSpeech: 'unknown',
-                    example: '',
-                    source: 'auto'
-                });
-            }
-        });
-
-        // ✅ УДАЛЯЕМ ДУБЛИКАТЫ ПЕРЕВОДОВ
-        result.translations = [...new Set(result.translations)];
+        result.translations = basicMeanings.map(m => m.translation);
     }
 
     isRussianText(text) {
