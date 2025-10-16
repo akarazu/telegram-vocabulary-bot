@@ -365,7 +365,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Обработка inline кнопок (остается без изменений)
+// Обработка inline кнопок
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -393,8 +393,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     '🎵 Вы прослушали произношение. Хотите ввести перевод?',
                     getAfterAudioKeyboard()
                 );
-                
-                // ✅ ПРАВИЛЬНО - убрали лишний showMainMenu
                 
             } catch (error) {
                 console.error('Error sending audio:', error);
@@ -450,7 +448,6 @@ bot.on('callback_query', async (callbackQuery) => {
                 await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
             }
         }
-    }
     }
     else if (data.startsWith('toggle_translation_')) {
         const translationIndex = parseInt(data.replace('toggle_translation_', ''));
@@ -568,6 +565,3 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с новой логикой примеров из FreeDict');
-
-
-
