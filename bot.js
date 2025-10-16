@@ -394,7 +394,7 @@ bot.on('callback_query', async (callbackQuery) => {
                     getAfterAudioKeyboard()
                 );
                 
-                await showMainMenu(chatId);
+                // ✅ ПРАВИЛЬНО - убрали лишний showMainMenu
                 
             } catch (error) {
                 console.error('Error sending audio:', error);
@@ -429,6 +429,7 @@ bot.on('callback_query', async (callbackQuery) => {
                     await bot.sendMessage(chatId, translationMessage, 
                         getTranslationSelectionKeyboard(userState.tempTranslations, [])
                     );
+                    
                 } else {
                     userStates.set(chatId, {
                         ...userState,
@@ -449,6 +450,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
             }
         }
+    }
     }
     else if (data.startsWith('toggle_translation_')) {
         const translationIndex = parseInt(data.replace('toggle_translation_', ''));
@@ -566,5 +568,6 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с новой логикой примеров из FreeDict');
+
 
 
