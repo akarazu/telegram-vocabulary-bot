@@ -150,7 +150,7 @@ function addAudioToHistory(chatId, audioUrl, word) {
 
 // ✅ ФУНКЦИЯ: сохранение с английскими значениями
 async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslations) {
-    console.log(`💾 Saving word with English meanings:`, {
+    console.log(`💾 Saving word:`, {
         word: userState.tempWord,
         selectedTranslations: selectedTranslations
     });
@@ -177,42 +177,44 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
             console.error('❌ Error checking duplicates:', error);
         }
         
-        // ✅ АВТОМАТИЧЕСКОЕ СОПОСТАВЛЕНИЕ: находим АНГЛИЙСКИЕ значения для выбранных переводов
+        // ✅ НАХОДИМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ДЛЯ ВЫБРАННЫХ ПЕРЕВОДОВ
         const matchedEnglishMeanings = [];
         
         selectedTranslations.forEach(translation => {
-            // Ищем все значения, которые соответствуют этому переводу
+            // Ищем значения, которые имеют этот перевод
             const meaningsForTranslation = userState.meanings.filter(
                 meaning => meaning.translation === translation
             );
             
             if (meaningsForTranslation.length > 0) {
-                // ✅ СОХРАНЯЕМ АНГЛИЙСКИЕ ОПРЕДЕЛЕНИЯ ИЗ FreeDictionary
                 meaningsForTranslation.forEach(meaning => {
                     if (meaning.englishDefinition) {
                         matchedEnglishMeanings.push(meaning.englishDefinition);
                     }
                 });
+                console.log(`✅ Found English meaning for translation: "${translation}"`);
+            } else {
+                console.log(`⚠️ No English meaning found for translation: "${translation}"`);
             }
         });
         
-        console.log(`🎯 Found ${matchedEnglishMeanings.length} English meanings from FreeDictionary`);
+        console.log(`🎯 Total English meanings found: ${matchedEnglishMeanings.length}`);
         
         // ✅ ФОРМИРУЕМ ДАННЫЕ ДЛЯ СОХРАНЕНИЯ
         const translationText = selectedTranslations.join(', ');
         
-        // ✅ ФОРМИРУЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ДЛЯ СОХРАНЕНИЯ
+        // ✅ ФОРМИРУЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ
         let englishMeaningsText = '';
         if (matchedEnglishMeanings.length > 0) {
             englishMeaningsText = matchedEnglishMeanings.join(' | ');
         } else {
-            // Если не нашли английских значений, используем оригинальное слово
+            // Если не нашли значений, используем оригинальное слово
             englishMeaningsText = userState.tempWord;
         }
         
-        console.log(`📝 Saving with English meanings: "${englishMeaningsText}"`);
+        console.log(`📝 Saving: "${userState.tempWord}" -> "${translationText}" with meanings: "${englishMeaningsText}"`);
         
-        // ✅ СОХРАНЯЕМ С АНГЛИЙСКИМИ ЗНАЧЕНИЯМИ
+        // ✅ СОХРАНЯЕМ
         success = await sheetsService.addWordWithExamples(
             chatId, 
             userState.tempWord, 
@@ -232,7 +234,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
         let successMessage = '✅ Слово добавлено в словарь!\n\n' +
             `💬 ${userState.tempWord}${transcriptionText} - ${selectedTranslations.join(', ')}\n\n`;
         
-        // ✅ ПОКАЗЫВАЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ИЗ FreeDictionary
+        // ✅ ПОКАЗЫВАЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ
         if (matchedEnglishMeanings.length > 0) {
             successMessage += '🎯 **English meanings:**\n';
             matchedEnglishMeanings.forEach((meaning, index) => {
@@ -606,4 +608,5 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с английскими значениями слов');
+
 
