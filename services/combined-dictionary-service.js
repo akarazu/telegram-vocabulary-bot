@@ -160,10 +160,9 @@ export class CombinedDictionaryService {
                         console.log(`\n   🔸 Translation ${transIndex + 1}: "${russianTranslation}"`);
                         console.log(`      - POS: ${translationPOS}`);
                         console.log(`      - Mean:`, translation.mean);
-                        console.log(`      - Syn:`, translation.syn);
                         console.log(`      - Ex:`, translation.ex);
 
-                        // ✅ СОЗДАЕМ ЗНАЧЕНИЕ С РЕАЛЬНЫМИ ДАННЫМИ ИЗ API
+                        // ✅ СОЗДАЕМ ЗНАЧЕНИЕ С РЕАЛЬНЫМИ ДАННЫМИ ИЗ API (БЕЗ СИНОНИМОВ)
                         const detailedMeaning = {
                             id: `yd_${defIndex}_${transIndex}`,
                             translation: russianTranslation,
@@ -171,7 +170,7 @@ export class CombinedDictionaryService {
                             englishWord: englishWord,
                             partOfSpeech: this.translatePOS(translationPOS),
                             examples: this.extractExamples(translation),
-                            synonyms: translation.syn ? translation.syn.map(s => s.text).filter(Boolean) : [],
+                            synonyms: [], // УБИРАЕМ СИНОНИМЫ
                             source: 'Yandex'
                         };
 
@@ -212,36 +211,8 @@ export class CombinedDictionaryService {
             console.log(`      ❌ No MEAN field`);
         }
 
-        // ✅ ПРИОРИТЕТ 2: поле "syn" - английские синонимы
-        if (translation.syn && Array.isArray(translation.syn)) {
-            const englishSynonyms = translation.syn
-                .filter(syn => syn.text && !this.isRussianText(syn.text))
-                .map(syn => syn.text);
-
-            if (englishSynonyms.length > 0) {
-                console.log(`      ✅ Using SYN: ${englishSynonyms.join(', ')}`);
-                return englishSynonyms.join(', ');
-            } else {
-                console.log(`      ❌ No English values in SYN`);
-            }
-        } else {
-            console.log(`      ❌ No SYN field`);
-        }
-
-        // ✅ ПРИОРИТЕТ 3: русские синонимы (если нет английских)
-        if (translation.syn && Array.isArray(translation.syn)) {
-            const russianSynonyms = translation.syn
-                .filter(syn => syn.text && this.isRussianText(syn.text))
-                .map(syn => syn.text);
-
-            if (russianSynonyms.length > 0) {
-                console.log(`      ✅ Using Russian SYN: ${russianSynonyms.join(', ')}`);
-                return `${englishWord} (${russianSynonyms.join(', ')})`;
-            }
-        }
-
-        // ✅ ПРИОРИТЕТ 4: базовое определение
-        console.log(`      ⚠️ No API definition found, using basic`);
+        // ✅ ПРИОРИТЕТ 2: использовать английское слово + русский перевод
+        console.log(`      ✅ Using English word + Russian translation`);
         return `${englishWord} - ${translation.text}`;
     }
 
@@ -337,7 +308,7 @@ export class CombinedDictionaryService {
                                 englishWord: word,
                                 partOfSpeech: partOfSpeech,
                                 examples: definition.example ? [{ english: definition.example, russian: '' }] : [],
-                                synonyms: definition.synonyms || [],
+                                synonyms: [], // УБИРАЕМ СИНОНИМЫ
                                 source: 'FreeDictionary'
                             };
                             
@@ -379,7 +350,7 @@ export class CombinedDictionaryService {
                 englishWord: word,
                 partOfSpeech: 'noun',
                 examples: [],
-                synonyms: [],
+                synonyms: [], // УБИРАЕМ СИНОНИМЫ
                 source: 'basic'
             });
         });
