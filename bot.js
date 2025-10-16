@@ -52,17 +52,22 @@ function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
     const translationButtons = translations.map((translation, index) => {
         const isSelected = selectedIndices.includes(index);
         
-        // ✅ ФИКС: для всех номеров используем цифры вместо эмодзи
-        let numberDisplay;
+        // ✅ ФИКС: для всех номеров используем эмодзи
+        let numberEmoji;
         if (index < 9) {
-            // Для первых 9 используем эмодзи с цифрами
-            numberDisplay = `${index + 1}️⃣`;
+            // Для первых 9 используем эмодзи с цифрами 1️⃣-9️⃣
+            numberEmoji = `${index + 1}️⃣`;
         } else {
-            // Для 10+ используем просто цифры в скобках
-            numberDisplay = `[${index + 1}]`;
+            // Для 10+ разбиваем на две цифры эмодзи
+            const number = index + 1;
+            const digits = number.toString().split('');
+            numberEmoji = digits.map(digit => {
+                const digitEmojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+                return digitEmojis[parseInt(digit)];
+            }).join('');
         }
         
-        const emoji = isSelected ? '✅' : numberDisplay;
+        const emoji = isSelected ? '✅' : numberEmoji;
         
         return [
             { 
@@ -561,4 +566,5 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с новой логикой примеров из FreeDict');
+
 
