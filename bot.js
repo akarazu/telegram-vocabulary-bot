@@ -148,7 +148,7 @@ function addAudioToHistory(chatId, audioUrl, word) {
     }
 }
 
-// ✅ ФУНКЦИЯ: сохранение с английскими значениями
+// ✅ ФУНКЦИЯ: сохранение с комбинированными данными
 async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslations) {
     console.log(`💾 Saving word:`, {
         word: userState.tempWord,
@@ -156,6 +156,7 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
     });
     
     let success = true;
+    let matchedEnglishMeanings = []; // ✅ ОБЪЯВЛЯЕМ ПЕРЕМЕННУЮ ЗДЕСЬ!
     
     if (sheetsService.initialized) {
         // Проверяем дубликаты
@@ -178,8 +179,6 @@ async function saveWordWithEnglishMeanings(chatId, userState, selectedTranslatio
         }
         
         // ✅ НАХОДИМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ДЛЯ ВЫБРАННЫХ ПЕРЕВОДОВ
-        const matchedEnglishMeanings = [];
-        
         selectedTranslations.forEach(translation => {
             // Ищем значения, которые имеют этот перевод
             const meaningsForTranslation = userState.meanings.filter(
@@ -608,5 +607,6 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('🤖 Бот запущен с английскими значениями слов');
+
 
 
