@@ -17,63 +17,41 @@ export class CombinedDictionaryService {
             translations: []
         };
 
-        // ✅ Яндекс для переводов и значений
+        // ✅ 1. Получаем данные от Яндекс (английское слово -> русский)
         if (this.useYandex) {
             try {
-                console.log(`🔍 [CombinedService] Calling Yandex API...`);
-                const yandexData = await this.getYandexData(word);
+                console.log(`🔍 [CombinedService] Getting Yandex data for English word: "${word}"`);
+                const yandexData = await this.getYandexDataEnRu(word);
                 
                 if (yandexData.meanings.length > 0) {
                     result.meanings = yandexData.meanings;
                     result.translations = yandexData.translations;
                     result.transcription = yandexData.transcription;
+                    result.audioUrl = yandexData.audioUrl;
                     console.log(`✅ [CombinedService] Yandex SUCCESS: ${result.meanings.length} meanings`);
+                    
+                    // ✅ 2. Для каждого значения ищем примеры в Free Dictionary
+                    await this.enrichWithFreeDictExamples(result);
                 } else {
                     console.log(`❌ [CombinedService] Yandex returned 0 meanings`);
                 }
             } catch (error) {
                 console.log(`❌ [CombinedService] Yandex ERROR: ${error.message}`);
             }
-        } else {
-            console.log(`⚠️ [CombinedService] Yandex API key not available`);
-        }
-
-        // ✅ Free Dictionary только если Яндекс не сработал
-        if (result.meanings.length === 0) {
-            try {
-                console.log(`🔍 [CombinedService] Trying FreeDictionary API...`);
-                const freeDictData = await this.getFreeDictionaryData(word);
-                if (freeDictData.meanings.length > 0) {
-                    result.meanings = freeDictData.meanings;
-                    result.audioUrl = freeDictData.audioUrl;
-                    result.transcription = freeDictData.transcription;
-                    this.createTranslationsForFreeDict(result);
-                    console.log(`✅ [CombinedService] FreeDictionary SUCCESS: ${result.meanings.length} meanings`);
-                } else {
-                    console.log(`❌ [CombinedService] FreeDictionary returned 0 meanings`);
-                }
-            } catch (error) {
-                console.log(`❌ [CombinedService] FreeDictionary ERROR: ${error.message}`);
-            }
-        }
-
-        // ✅ Fallback
-        if (result.meanings.length === 0) {
-            console.log(`⚠️ [CombinedService] No data from APIs, using fallback`);
-            this.createBasicMeanings(result, word);
         }
 
         console.log(`📊 [CombinedService] FINAL RESULT:`);
         console.log(`   - Word: ${result.word}`);
-        console.log(`   - Transcription: ${result.transcription}`);
         console.log(`   - Meanings: ${result.meanings.length}`);
         console.log(`   - Translations: ${result.translations.length}`);
-        console.log(`   - Examples found: ${this.countExamples(result.meanings)}`);
         
         result.meanings.forEach((meaning, index) => {
-            console.log(`   ${index + 1}. "${meaning.translation}" -> "${meaning.englishDefinition}"`);
+            console.log(`   ${index + 1}. "${meaning.translation}" (${meaning.partOfSpeech}) -> "${meaning.englishDefinition}"`);
+            console.log(`      Examples: ${meaning.examples?.length || 0}`);
             if (meaning.examples && meaning.examples.length > 0) {
-                console.log(`      Examples: ${meaning.examples.length}`);
+                meaning.examples.forEach((ex, exIndex) => {
+                    console.log(`        ${exIndex + 1}. ${ex.english}`);
+                });
             }
         });
         
@@ -82,15 +60,9 @@ export class CombinedDictionaryService {
         return result;
     }
 
-    countExamples(meanings) {
-        return meanings.reduce((total, meaning) => {
-            return total + (meaning.examples ? meaning.examples.length : 0);
-        }, 0);
-    }
-
-    async getYandexData(word) {
+    async getYandexDataEnRu(word) {
         try {
-            console.log(`\n🔍 [Yandex] Making API request for: "${word}"`);
+            console.log(`\n🔍 [Yandex] Making API request for EN-RU: "${word}"`);
             
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
@@ -103,7 +75,7 @@ export class CombinedDictionaryService {
             });
 
             console.log(`✅ [Yandex] API Response Status: ${response.status}`);
-            return this.processYandexResponse(response.data, word);
+            return this.processYandexResponseEnRu(response.data, word);
             
         } catch (error) {
             console.error(`❌ [Yandex] API ERROR:`, {
@@ -114,12 +86,13 @@ export class CombinedDictionaryService {
         }
     }
 
-    processYandexResponse(data, word) {
-        console.log(`\n🔍 [Yandex] Processing response for: "${word}"`);
+    processYandexResponseEnRu(data, word) {
+        console.log(`\n🔍 [Yandex] Processing EN-RU response for: "${word}"`);
         
         const result = {
             word: word,
             transcription: '',
+            audioUrl: `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(word)}&tl=en-gb&client=tw-ob`,
             meanings: [],
             translations: []
         };
@@ -137,7 +110,7 @@ export class CombinedDictionaryService {
             console.log(`🔤 [Yandex] Transcription: ${result.transcription}`);
         }
 
-        // ✅ ИЗВЛЕКАЕМ ЗНАЧЕНИЯ И ПРИМЕРЫ
+        // ✅ ИЗВЛЕКАЕМ ЗНАЧЕНИЯ И ПЕРЕВОДЫ
         data.def.forEach((definition, defIndex) => {
             const englishWord = definition.text || word;
             const mainPOS = definition.pos || 'unknown';
@@ -155,18 +128,14 @@ export class CombinedDictionaryService {
 
                         console.log(`\n   🔸 Translation ${transIndex + 1}: "${russianTranslation}"`);
 
-                        // ✅ ИЗВЛЕКАЕМ ПРИМЕРЫ ИЗ YANDEX
-                        const examples = this.extractYandexExamples(translation);
-
                         // ✅ СОЗДАЕМ ЗНАЧЕНИЕ
                         const detailedMeaning = {
                             id: `yd_${defIndex}_${transIndex}`,
+                            englishWord: englishWord,
                             translation: russianTranslation,
                             englishDefinition: this.extractRealEnglishDefinition(translation, englishWord),
-                            englishWord: englishWord,
-                            partOfSpeech: this.translatePOS(translationPOS),
-                            examples: examples,
-                            synonyms: [],
+                            partOfSpeech: this.normalizePOS(translationPOS),
+                            examples: [], // Будем заполнять из FreeDict
                             source: 'Yandex'
                         };
 
@@ -177,7 +146,6 @@ export class CombinedDictionaryService {
                         }
 
                         console.log(`      ✅ Created meaning: "${detailedMeaning.englishDefinition}"`);
-                        console.log(`      📝 Examples: ${examples.length}`);
                     }
                 });
             }
@@ -187,21 +155,133 @@ export class CombinedDictionaryService {
         return result;
     }
 
-    extractYandexExamples(translation) {
-        const examples = [];
+    async enrichWithFreeDictExamples(result) {
+        console.log(`\n🔍 [FreeDict] Enriching with examples for: "${result.word}"`);
         
-        if (translation.ex && Array.isArray(translation.ex)) {
-            translation.ex.forEach(exampleObj => {
-                if (exampleObj.text && exampleObj.tr && Array.isArray(exampleObj.tr)) {
-                    examples.push({
-                        english: exampleObj.text,
-                        russian: exampleObj.tr[0].text
-                    });
+        for (const meaning of result.meanings) {
+            try {
+                console.log(`\n📖 Processing meaning: "${meaning.englishWord}" -> "${meaning.translation}"`);
+                console.log(`   - POS: ${meaning.partOfSpeech}`);
+                console.log(`   - English definition: "${meaning.englishDefinition}"`);
+                
+                // ✅ Ищем примеры в Free Dictionary
+                const examples = await this.findExamplesInFreeDict(
+                    meaning.englishWord,
+                    meaning.partOfSpeech,
+                    meaning.englishDefinition
+                );
+                
+                meaning.examples = examples;
+                console.log(`   ✅ Found ${examples.length} examples`);
+                
+            } catch (error) {
+                console.log(`   ❌ Error finding examples: ${error.message}`);
+                meaning.examples = [];
+            }
+        }
+    }
+
+    async findExamplesInFreeDict(englishWord, pos, englishDefinition) {
+        try {
+            console.log(`   🔍 Searching FreeDict for: "${englishWord}" (${pos})`);
+            
+            const response = await axios.get(
+                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(englishWord)}`,
+                { timeout: 5000 }
+            );
+
+            const data = response.data;
+            
+            if (!Array.isArray(data) || data.length === 0) {
+                console.log(`   ❌ No FreeDict data found`);
+                return [];
+            }
+
+            const entry = data[0];
+            const examples = [];
+
+            // ✅ Ищем значения с подходящей частью речи
+            if (entry.meanings && Array.isArray(entry.meanings)) {
+                for (const meaning of entry.meanings) {
+                    const freeDictPOS = this.normalizePOS(meaning.partOfSpeech);
+                    
+                    // ✅ Проверяем совпадение части речи
+                    if (freeDictPOS === pos) {
+                        console.log(`   ✅ POS match: ${freeDictPOS}`);
+                        
+                        if (meaning.definitions && Array.isArray(meaning.definitions)) {
+                            for (const definition of meaning.definitions) {
+                                // ✅ Проверяем вхождение ключевых слов из английского определения
+                                if (this.doesDefinitionMatch(englishDefinition, definition.definition)) {
+                                    console.log(`   ✅ Definition match found`);
+                                    
+                                    // ✅ Берем пример если есть
+                                    if (definition.example) {
+                                        examples.push({
+                                            english: definition.example,
+                                            russian: ''
+                                        });
+                                        console.log(`   ✅ Added example: ${definition.example.substring(0, 50)}...`);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            });
+            }
+
+            return examples.slice(0, 2); // Ограничиваем количество примеров
+
+        } catch (error) {
+            console.log(`   ❌ FreeDict error: ${error.message}`);
+            return [];
+        }
+    }
+
+    doesDefinitionMatch(yandexDefinition, freeDictDefinition) {
+        if (!freeDictDefinition) return false;
+        
+        // ✅ Извлекаем ключевые слова из Яндекс определения
+        const keywords = this.extractKeywords(yandexDefinition);
+        const freeDictLower = freeDictDefinition.toLowerCase();
+        
+        console.log(`      Checking definition match:`);
+        console.log(`      Yandex: "${yandexDefinition}"`);
+        console.log(`      FreeDict: "${freeDictDefinition}"`);
+        console.log(`      Keywords: ${keywords.join(', ')}`);
+        
+        // ✅ Проверяем вхождение ключевых слов
+        for (const keyword of keywords) {
+            if (freeDictLower.includes(keyword)) {
+                console.log(`      ✅ Keyword "${keyword}" found in FreeDict definition`);
+                return true;
+            }
         }
         
-        return examples;
+        console.log(`      ❌ No keyword matches found`);
+        return false;
+    }
+
+    extractKeywords(definition) {
+        // Извлекаем значимые слова из определения
+        const words = definition.toLowerCase()
+            .replace(/[^\w\s]/g, ' ')
+            .split(/\s+/)
+            .filter(word => 
+                word.length > 3 && // Слова длиннее 3 символов
+                !this.isStopWord(word)
+            );
+        
+        return [...new Set(words)]; // Уникальные слова
+    }
+
+    isStopWord(word) {
+        const stopWords = new Set([
+            'the', 'and', 'for', 'with', 'from', 'that', 'this', 'which',
+            'have', 'has', 'had', 'been', 'being', 'what', 'when', 'where',
+            'who', 'whom', 'whose', 'how', 'why', 'because', 'about'
+        ]);
+        return stopWords.has(word);
     }
 
     extractRealEnglishDefinition(translation, englishWord) {
@@ -220,129 +300,32 @@ export class CombinedDictionaryService {
         return `${englishWord} - ${translation.text}`;
     }
 
-    async getFreeDictionaryData(word) {
-        try {
-            console.log(`\n🔍 [FreeDict] Making API request for: "${word}"`);
-            
-            const response = await axios.get(
-                `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
-                { timeout: 5000 }
-            );
-
-            console.log(`✅ [FreeDict] API Response Status: ${response.status}`);
-            return this.processFreeDictionaryResponse(response.data, word);
-            
-        } catch (error) {
-            console.error(`❌ [FreeDict] API ERROR:`, {
-                message: error.message,
-                status: error.response?.status
-            });
-            throw new Error(`FreeDictionary: ${error.message}`);
-        }
-    }
-
-    processFreeDictionaryResponse(data, word) {
-        const result = {
-            word: word,
-            transcription: '',
-            audioUrl: `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(word)}&tl=en-gb&client=tw-ob`,
-            meanings: []
-        };
-
-        if (!Array.isArray(data) || data.length === 0) {
-            console.log(`❌ [FreeDict] No data array`);
-            return result;
-        }
-
-        const entry = data[0];
+    normalizePOS(pos) {
+        if (!pos) return 'unknown';
         
-        if (entry.phonetic) {
-            result.transcription = `/${entry.phonetic}/`;
-            console.log(`🔤 [FreeDict] Transcription: ${result.transcription}`);
-        }
-
-        let meaningId = 0;
-        
-        if (entry.meanings && Array.isArray(entry.meanings)) {
-            console.log(`📊 [FreeDict] Found ${entry.meanings.length} meanings`);
-            
-            entry.meanings.forEach((meaning, meaningIndex) => {
-                const partOfSpeech = meaning.partOfSpeech || 'unknown';
-                
-                if (meaning.definitions && Array.isArray(meaning.definitions)) {
-                    meaning.definitions.forEach((definition, defIndex) => {
-                        meaningId++;
-                        
-                        if (definition.definition) {
-                            const detailedMeaning = {
-                                id: `fd_${meaningId}`,
-                                translation: '',
-                                englishDefinition: definition.definition,
-                                englishWord: word,
-                                partOfSpeech: partOfSpeech,
-                                examples: definition.example ? [{ english: definition.example, russian: '' }] : [],
-                                synonyms: [],
-                                source: 'FreeDictionary'
-                            };
-                            
-                            result.meanings.push(detailedMeaning);
-                            console.log(`   ✅ [FreeDict] Meaning ${meaningId}: ${definition.definition.substring(0, 50)}...`);
-                        }
-                    });
-                }
-            });
-        }
-
-        return result;
-    }
-
-    translatePOS(englishPOS) {
         const posMap = {
-            'noun': 'существительное',
-            'verb': 'глагол',
-            'adjective': 'прилагательное',
-            'adverb': 'наречие',
-            'pronoun': 'местоимение',
-            'preposition': 'предлог',
-            'conjunction': 'союз',
-            'interjection': 'междометие'
+            // Русские -> английские
+            'существительное': 'noun',
+            'глагол': 'verb', 
+            'прилагательное': 'adjective',
+            'наречие': 'adverb',
+            'местоимение': 'pronoun',
+            'предлог': 'preposition',
+            'союз': 'conjunction',
+            'междометие': 'interjection',
+            // Английские -> нормализованные
+            'noun': 'noun',
+            'verb': 'verb',
+            'adjective': 'adjective',
+            'adverb': 'adverb',
+            'pronoun': 'pronoun',
+            'preposition': 'preposition',
+            'conjunction': 'conjunction',
+            'interjection': 'interjection'
         };
-        return posMap[englishPOS] || englishPOS;
-    }
 
-    createTranslationsForFreeDict(result) {
-        const baseTranslations = ['основное значение', 'ключевой смысл', 'важное определение'];
-        
-        result.meanings.forEach((meaning, index) => {
-            const translationIndex = index % baseTranslations.length;
-            meaning.translation = baseTranslations[translationIndex];
-        });
-
-        result.translations = result.meanings.map(m => m.translation).filter((value, index, self) => 
-            self.indexOf(value) === index
-        );
-    }
-
-    createBasicMeanings(result, word) {
-        const basicMeanings = [
-            { translation: 'основное значение', english: 'primary meaning' },
-            { translation: 'ключевой смысл', english: 'key significance' }
-        ];
-        
-        basicMeanings.forEach((meaning, index) => {
-            result.meanings.push({
-                id: `basic_${index}`,
-                translation: meaning.translation,
-                englishDefinition: `${word} - ${meaning.english}`,
-                englishWord: word,
-                partOfSpeech: 'noun',
-                examples: [],
-                synonyms: [],
-                source: 'basic'
-            });
-        });
-
-        result.translations = basicMeanings.map(m => m.translation);
+        const normalized = posMap[pos.toLowerCase()] || pos.toLowerCase();
+        return normalized;
     }
 
     isRussianText(text) {
