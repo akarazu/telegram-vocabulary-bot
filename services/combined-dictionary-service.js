@@ -3,62 +3,85 @@ import axios from 'axios';
 export class CombinedDictionaryService {
     constructor() {
         this.useYandex = !!process.env.YANDEX_DICTIONARY_API_KEY;
+        console.log(`🔧 [CombinedService] Initialized. Yandex API: ${this.useYandex}`);
     }
 
     async getWordData(word) {
-        console.log(`🔍 [CombinedService] Getting data for: "${word}"`);
+        console.log(`\n🎯 ========== START getWordData for: "${word}" ==========`);
         
         const result = {
             word: word,
             transcription: '',
             audioUrl: '',
-            meanings: [], // ✅ ЗНАЧЕНИЯ И ПЕРЕВОДЫ ВМЕСТЕ
-            translations: [] // ✅ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
+            meanings: [],
+            translations: []
         };
 
         // ✅ Яндекс для переводов и РЕАЛЬНЫХ значений
         if (this.useYandex) {
             try {
+                console.log(`🔍 [CombinedService] Calling Yandex API...`);
                 const yandexData = await this.getYandexData(word);
+                
                 if (yandexData.meanings.length > 0) {
                     result.meanings = yandexData.meanings;
                     result.translations = yandexData.translations;
                     result.transcription = yandexData.transcription;
-                    console.log(`✅ [CombinedService] Yandex found ${result.meanings.length} meanings with REAL definitions`);
+                    console.log(`✅ [CombinedService] Yandex SUCCESS: ${result.meanings.length} meanings`);
+                } else {
+                    console.log(`❌ [CombinedService] Yandex returned 0 meanings`);
                 }
             } catch (error) {
-                console.log('❌ [CombinedService] Yandex failed:', error.message);
+                console.log(`❌ [CombinedService] Yandex ERROR: ${error.message}`);
             }
+        } else {
+            console.log(`⚠️ [CombinedService] Yandex API key not available`);
         }
 
         // ✅ Free Dictionary только если Яндекс не сработал
         if (result.meanings.length === 0) {
             try {
+                console.log(`🔍 [CombinedService] Trying FreeDictionary API...`);
                 const freeDictData = await this.getFreeDictionaryData(word);
                 if (freeDictData.meanings.length > 0) {
                     result.meanings = freeDictData.meanings;
                     result.audioUrl = freeDictData.audioUrl;
                     result.transcription = freeDictData.transcription;
                     this.createTranslationsForFreeDict(result);
-                    console.log(`✅ [CombinedService] FreeDictionary found ${result.meanings.length} meanings`);
+                    console.log(`✅ [CombinedService] FreeDictionary SUCCESS: ${result.meanings.length} meanings`);
+                } else {
+                    console.log(`❌ [CombinedService] FreeDictionary returned 0 meanings`);
                 }
             } catch (error) {
-                console.log('❌ [CombinedService] FreeDictionary failed:', error.message);
+                console.log(`❌ [CombinedService] FreeDictionary ERROR: ${error.message}`);
             }
         }
 
         // ✅ Fallback
         if (result.meanings.length === 0) {
+            console.log(`⚠️ [CombinedService] No data from APIs, using fallback`);
             this.createBasicMeanings(result, word);
         }
 
-        console.log(`🎯 [CombinedService] Final: ${result.meanings.length} meanings`);
+        console.log(`📊 [CombinedService] FINAL RESULT:`);
+        console.log(`   - Word: ${result.word}`);
+        console.log(`   - Transcription: ${result.transcription}`);
+        console.log(`   - Meanings: ${result.meanings.length}`);
+        console.log(`   - Translations: ${result.translations.length}`);
+        
+        result.meanings.forEach((meaning, index) => {
+            console.log(`   ${index + 1}. "${meaning.translation}" -> "${meaning.englishDefinition}"`);
+        });
+        
+        console.log(`🎯 ========== END getWordData for: "${word}" ==========\n`);
+        
         return result;
     }
 
     async getYandexData(word) {
         try {
-            console.log(`🔍 [CombinedService] Making Yandex request for: "${word}"`);
+            console.log(`\n🔍 [Yandex] Making API request for: "${word}"`);
+            console.log(`🔑 [Yandex] API Key: ${process.env.YANDEX_DICTIONARY_API_KEY ? 'PRESENT' : 'MISSING'}`);
             
             const response = await axios.get('https://dictionary.yandex.net/api/v1/dicservice.json/lookup', {
                 params: {
@@ -70,30 +93,52 @@ export class CombinedDictionaryService {
                 timeout: 10000
             });
 
+            console.log(`✅ [Yandex] API Response Status: ${response.status}`);
+            
+            // ✅ ВЫВОДИМ ПОЛНЫЙ ОТВЕТ API В КОНСОЛЬ
+            console.log(`📦 [Yandex] FULL API RESPONSE:`);
+            console.log(JSON.stringify(response.data, null, 2));
+            console.log(`📦 [Yandex] END OF API RESPONSE\n`);
+
             return this.processYandexResponse(response.data, word);
             
         } catch (error) {
+            console.error(`❌ [Yandex] API ERROR:`, {
+                message: error.message,
+                status: error.response?.status,
+                data: error.response?.data,
+                config: {
+                    url: error.config?.url,
+                    params: error.config?.params
+                }
+            });
             throw new Error(`Yandex: ${error.message}`);
         }
     }
 
     processYandexResponse(data, word) {
+        console.log(`\n🔍 [Yandex] Processing response for: "${word}"`);
+        
         const result = {
             word: word,
             transcription: '',
-            meanings: [], // ✅ ОСНОВНОЙ МАССИВ ЗНАЧЕНИЙ
-            translations: [] // ✅ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
+            meanings: [],
+            translations: []
         };
 
         if (!data.def || data.def.length === 0) {
+            console.log(`❌ [Yandex] No definitions found in response`);
             return result;
         }
 
-        console.log(`📦 [CombinedService] Yandex raw data for "${word}":`, JSON.stringify(data, null, 2));
+        console.log(`📊 [Yandex] Found ${data.def.length} definition(s)`);
 
         // ✅ ТРАНСКРИПЦИЯ
         if (data.def[0].ts) {
             result.transcription = `/${data.def[0].ts}/`;
+            console.log(`🔤 [Yandex] Transcription: ${result.transcription}`);
+        } else {
+            console.log(`⚠️ [Yandex] No transcription found`);
         }
 
         // ✅ ИЗВЛЕКАЕМ РЕАЛЬНЫЕ ЗНАЧЕНИЯ ИЗ YANDEX
@@ -101,17 +146,28 @@ export class CombinedDictionaryService {
             const englishWord = definition.text || word;
             const mainPOS = definition.pos || 'unknown';
 
+            console.log(`\n📖 [Yandex] Definition ${defIndex + 1}:`);
+            console.log(`   - English: ${englishWord}`);
+            console.log(`   - POS: ${mainPOS}`);
+            console.log(`   - Translations: ${definition.tr ? definition.tr.length : 0}`);
+
             if (definition.tr && Array.isArray(definition.tr)) {
                 definition.tr.forEach((translation, transIndex) => {
                     if (translation.text && this.isRussianText(translation.text)) {
                         const russianTranslation = translation.text.trim();
                         const translationPOS = translation.pos || mainPOS;
 
+                        console.log(`\n   🔸 Translation ${transIndex + 1}: "${russianTranslation}"`);
+                        console.log(`      - POS: ${translationPOS}`);
+                        console.log(`      - Mean:`, translation.mean);
+                        console.log(`      - Syn:`, translation.syn);
+                        console.log(`      - Ex:`, translation.ex);
+
                         // ✅ СОЗДАЕМ ЗНАЧЕНИЕ С РЕАЛЬНЫМИ ДАННЫМИ ИЗ API
                         const detailedMeaning = {
                             id: `yd_${defIndex}_${transIndex}`,
-                            translation: russianTranslation, // русский перевод
-                            englishDefinition: this.extractRealEnglishDefinition(translation, englishWord), // ✅ РЕАЛЬНОЕ значение
+                            translation: russianTranslation,
+                            englishDefinition: this.extractRealEnglishDefinition(translation, englishWord),
                             englishWord: englishWord,
                             partOfSpeech: this.translatePOS(translationPOS),
                             examples: this.extractExamples(translation),
@@ -121,26 +177,24 @@ export class CombinedDictionaryService {
 
                         result.meanings.push(detailedMeaning);
                         
-                        // ✅ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
                         if (!result.translations.includes(russianTranslation)) {
                             result.translations.push(russianTranslation);
                         }
 
-                        console.log(`✅ [CombinedService] Meaning: "${russianTranslation}" -> "${detailedMeaning.englishDefinition}"`);
+                        console.log(`      ✅ Created meaning: "${detailedMeaning.englishDefinition}"`);
                     }
                 });
+            } else {
+                console.log(`   ❌ No translations in definition`);
             }
         });
 
-        console.log(`🎯 [CombinedService] Yandex processed: ${result.meanings.length} meanings`);
+        console.log(`🎯 [Yandex] Processed ${result.meanings.length} meanings, ${result.translations.length} translations`);
         return result;
     }
 
     extractRealEnglishDefinition(translation, englishWord) {
-        console.log(`🔍 [CombinedService] Extracting definition from:`, {
-            mean: translation.mean,
-            syn: translation.syn
-        });
+        console.log(`   🔍 [Yandex] Extracting definition for: "${translation.text}"`);
 
         // ✅ ПРИОРИТЕТ 1: поле "mean" - РЕАЛЬНЫЕ английские значения
         if (translation.mean && Array.isArray(translation.mean)) {
@@ -149,9 +203,13 @@ export class CombinedDictionaryService {
                 .map(mean => mean.text);
 
             if (englishMeans.length > 0) {
-                console.log(`✅ [CombinedService] Using MEAN values: ${englishMeans.join(', ')}`);
+                console.log(`      ✅ Using MEAN: ${englishMeans.join(', ')}`);
                 return englishMeans.join(', ');
+            } else {
+                console.log(`      ❌ No English values in MEAN`);
             }
+        } else {
+            console.log(`      ❌ No MEAN field`);
         }
 
         // ✅ ПРИОРИТЕТ 2: поле "syn" - английские синонимы
@@ -161,9 +219,13 @@ export class CombinedDictionaryService {
                 .map(syn => syn.text);
 
             if (englishSynonyms.length > 0) {
-                console.log(`✅ [CombinedService] Using SYN values: ${englishSynonyms.join(', ')}`);
+                console.log(`      ✅ Using SYN: ${englishSynonyms.join(', ')}`);
                 return englishSynonyms.join(', ');
+            } else {
+                console.log(`      ❌ No English values in SYN`);
             }
+        } else {
+            console.log(`      ❌ No SYN field`);
         }
 
         // ✅ ПРИОРИТЕТ 3: русские синонимы (если нет английских)
@@ -173,13 +235,13 @@ export class CombinedDictionaryService {
                 .map(syn => syn.text);
 
             if (russianSynonyms.length > 0) {
-                console.log(`✅ [CombinedService] Using Russian SYN: ${russianSynonyms.join(', ')}`);
+                console.log(`      ✅ Using Russian SYN: ${russianSynonyms.join(', ')}`);
                 return `${englishWord} (${russianSynonyms.join(', ')})`;
             }
         }
 
         // ✅ ПРИОРИТЕТ 4: базовое определение
-        console.log(`⚠️ [CombinedService] No API definition found, using basic`);
+        console.log(`      ⚠️ No API definition found, using basic`);
         return `${englishWord} - ${translation.text}`;
     }
 
@@ -209,24 +271,28 @@ export class CombinedDictionaryService {
             'pronoun': 'местоимение',
             'preposition': 'предлог',
             'conjunction': 'союз',
-            'interjection': 'междометие',
-            'существительное': 'существительное',
-            'глагол': 'глагол',
-            'прилагательное': 'прилагательное'
+            'interjection': 'междометие'
         };
         return posMap[englishPOS] || englishPOS;
     }
 
     async getFreeDictionaryData(word) {
         try {
+            console.log(`\n🔍 [FreeDict] Making API request for: "${word}"`);
+            
             const response = await axios.get(
                 `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
                 { timeout: 5000 }
             );
 
+            console.log(`✅ [FreeDict] API Response Status: ${response.status}`);
             return this.processFreeDictionaryResponse(response.data, word);
             
         } catch (error) {
+            console.error(`❌ [FreeDict] API ERROR:`, {
+                message: error.message,
+                status: error.response?.status
+            });
             throw new Error(`FreeDictionary: ${error.message}`);
         }
     }
@@ -240,6 +306,7 @@ export class CombinedDictionaryService {
         };
 
         if (!Array.isArray(data) || data.length === 0) {
+            console.log(`❌ [FreeDict] No data array`);
             return result;
         }
 
@@ -247,18 +314,14 @@ export class CombinedDictionaryService {
         
         if (entry.phonetic) {
             result.transcription = `/${entry.phonetic}/`;
-        }
-
-        if (entry.phonetics && entry.phonetics.length > 0) {
-            const audioPhonetic = entry.phonetics.find(p => p.audio && p.audio.length > 0);
-            if (audioPhonetic && audioPhonetic.audio) {
-                result.audioUrl = audioPhonetic.audio;
-            }
+            console.log(`🔤 [FreeDict] Transcription: ${result.transcription}`);
         }
 
         let meaningId = 0;
         
         if (entry.meanings && Array.isArray(entry.meanings)) {
+            console.log(`📊 [FreeDict] Found ${entry.meanings.length} meanings`);
+            
             entry.meanings.forEach((meaning, meaningIndex) => {
                 const partOfSpeech = meaning.partOfSpeech || 'unknown';
                 
@@ -269,7 +332,7 @@ export class CombinedDictionaryService {
                         if (definition.definition) {
                             const detailedMeaning = {
                                 id: `fd_${meaningId}`,
-                                translation: '', // будет заполнено позже
+                                translation: '',
                                 englishDefinition: definition.definition,
                                 englishWord: word,
                                 partOfSpeech: partOfSpeech,
@@ -279,6 +342,7 @@ export class CombinedDictionaryService {
                             };
                             
                             result.meanings.push(detailedMeaning);
+                            console.log(`   ✅ [FreeDict] Meaning ${meaningId}: ${definition.definition.substring(0, 50)}...`);
                         }
                     });
                 }
