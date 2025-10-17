@@ -1,8 +1,5 @@
 import axios from 'axios';
 
-// Для Railway используем такой импорт
-let cheerio;
-
 class CambridgeDictionaryService {
     constructor() {
         this.baseUrl = 'https://dictionary.cambridge.org/dictionary/english';
@@ -21,14 +18,23 @@ class CambridgeDictionaryService {
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             ]
         };
+
+        this.cheerio = null;
     }
 
-    // 🔧 ДИНАМИЧЕСКАЯ ЗАГРУЗКА CHEERIO
+    // 🔧 ДИНАМИЧЕСКАЯ ЗАГРУЗКА CHEERIO С ОБРАБОТКОЙ ОШИБОК
     async loadCheerio() {
-        if (!cheerio) {
-            cheerio = (await import('cheerio')).default;
+        if (!this.cheerio) {
+            try {
+                const cheerioModule = await import('cheerio');
+                this.cheerio = cheerioModule.default;
+                console.log('✅ Cheerio успешно загружен');
+            } catch (error) {
+                console.error('❌ Ошибка загрузки cheerio:', error);
+                throw new Error('Не удалось загрузить парсер HTML');
+            }
         }
-        return cheerio;
+        return this.cheerio;
     }
 
     async randomDelay() {
@@ -77,12 +83,16 @@ class CambridgeDictionaryService {
                 },
                 timeout: this.config.timeout,
                 validateStatus: function (status) {
-                    return status < 500; // Принимаем все статусы кроме 5xx
+                    return status < 500;
                 }
             });
 
             // Загружаем cheerio
             const cheerio = await this.loadCheerio();
+            if (!cheerio) {
+                throw new Error('Cheerio не загружен');
+            }
+
             const $ = cheerio.load(response.data);
             
             // 🔧 ПРОВЕРКА НА БЛОКИРОВКУ ИЛИ CAPTCHA
@@ -98,7 +108,7 @@ class CambridgeDictionaryService {
             }
 
             console.log(`✅ [Cambridge] Успешно получены данные для: "${word}"`);
-            return this.parseCambridgeHTML(response.data, word, $);
+            return await this.parseCambridgeHTML(response.data, word, $);
             
         } catch (error) {
             console.error(`❌ [Cambridge] Ошибка (попытка ${retryCount + 1}):`, error.message);
@@ -140,10 +150,28 @@ class CambridgeDictionaryService {
             'big': 'большой',
             'small': 'маленький',
             'new': 'новый',
-            'old': 'старый'
+            'old': 'старый',
+            'man': 'мужчина',
+            'woman': 'женщина',
+            'child': 'ребенок',
+            'school': 'школа',
+            'city': 'город',
+            'country': 'страна',
+            'day': 'день',
+            'night': 'ночь',
+            'sun': 'солнце',
+            'moon': 'луна',
+            'star': 'звезда',
+            'tree': 'дерево',
+            'flower': 'цветок',
+            'animal': 'животное',
+            'dog': 'собака',
+            'cat': 'кошка',
+            'bird': 'птица',
+            'fish': 'рыба'
         };
 
-        const translation = basicTranslations[word.toLowerCase()] || 'основное значение';
+        const translation = basicTranslations[word.toLowerCase()] || this.generateBasicTranslation(word);
         
         return {
             word: word,
@@ -153,7 +181,7 @@ class CambridgeDictionaryService {
                     translation: translation,
                     englishDefinition: `The word "${word}" - basic definition`,
                     englishWord: word,
-                    partOfSpeech: 'unknown',
+                    partOfSpeech: this.guessPartOfSpeech(word),
                     examples: [
                         {
                             english: `This is an example sentence with the word "${word}".`,
@@ -165,7 +193,7 @@ class CambridgeDictionaryService {
                         }
                     ],
                     synonyms: [],
-                    source: 'Fallback Dictionary'
+                    source: 'Basic Dictionary'
                 }
             ],
             transcription: '',
@@ -173,6 +201,55 @@ class CambridgeDictionaryService {
             source: 'Fallback Service',
             error: errorMessage
         };
+    }
+
+    // 🔧 ГЕНЕРАЦИЯ БАЗОВОГО ПЕРЕВОДА
+    generateBasicTranslation(word) {
+        const wordLower = word.toLowerCase();
+        
+        // Простая логика для определения типа слова
+        if (wordLower.endsWith('ing') || wordLower.endsWith('ed')) {
+            return 'действие или процесс';
+        }
+        if (wordLower.endsWith('ly')) {
+            return 'образ действия';
+        }
+        if (wordLower.endsWith('ful') || wordLower.endsWith('ous') || wordLower.endsWith('ive')) {
+            return 'качество или свойство';
+        }
+        if (wordLower.endsWith('tion') || wordLower.endsWith('sion') || wordLower.endsWith('ment')) {
+            return 'процесс или результат';
+        }
+        if (wordLower.endsWith('er') || wordLower.endsWith('or')) {
+            return 'человек или предмет';
+        }
+        if (wordLower.endsWith('ness') || wordLower.endsWith('ity')) {
+            return 'состояние или качество';
+        }
+        
+        return 'основное значение';
+    }
+
+    // 🔧 ОПРЕДЕЛЕНИЕ ЧАСТИ РЕЧИ ПО СЛОВУ
+    guessPartOfSpeech(word) {
+        const wordLower = word.toLowerCase();
+        
+        if (wordLower.endsWith('ing') || wordLower.endsWith('ed')) {
+            return 'глагол';
+        }
+        if (wordLower.endsWith('ly')) {
+            return 'наречие';
+        }
+        if (wordLower.endsWith('ful') || wordLower.endsWith('ous') || wordLower.endsWith('ive') || 
+            wordLower.endsWith('able') || wordLower.endsWith('ible')) {
+            return 'прилагательное';
+        }
+        if (wordLower.endsWith('tion') || wordLower.endsWith('sion') || wordLower.endsWith('ment') ||
+            wordLower.endsWith('ness') || wordLower.endsWith('ity')) {
+            return 'существительное';
+        }
+        
+        return 'неизвестно';
     }
 
     // 🔧 ПРОВЕРКА НА БЛОКИРОВКУ
@@ -241,44 +318,48 @@ class CambridgeDictionaryService {
                 console.log(`🎵 [Cambridge] Аудио URL: ${result.audioUrl}`);
             }
 
-            // ✅ УПРОЩЕННЫЙ ПАРСИНГ ОПРЕДЕЛЕНИЙ
-            $('.def-block, .sense-body, .entry-body__el').each((entryIndex, entryElement) => {
-                const $entry = $(entryElement);
-                
-                // Ищем определение
-                const definition = $entry.find('.def, .ddef_d, .trans, .sense-title').text().trim();
-                if (!definition || definition.length < 5) return;
+            // ✅ ПАРСИНГ ОПРЕДЕЛЕНИЙ - УПРОЩЕННАЯ ВЕРСИЯ
+            $('.def-block, .sense-body, .entry-body__el, .ddef_h, .def-panel').each((entryIndex, entryElement) => {
+                try {
+                    const $entry = $(entryElement);
+                    
+                    // Ищем определение
+                    const definition = $entry.find('.def, .ddef_d, .trans, .sense-title, .def-info').text().trim();
+                    if (!definition || definition.length < 5) return;
 
-                console.log(`   📝 Найдено определение: ${definition.substring(0, 60)}...`);
+                    console.log(`   📝 Найдено определение: ${definition.substring(0, 60)}...`);
 
-                // Примеры использования
-                const examples = [];
-                $entry.find('.examp, .deg, .example').each((exIndex, exElement) => {
-                    const example = $(exElement).text().trim();
-                    if (example && example.length > 10) {
-                        examples.push({
-                            english: example,
-                            russian: ''
-                        });
-                    }
-                });
+                    // Примеры использования
+                    const examples = [];
+                    $entry.find('.examp, .deg, .example, .eg').each((exIndex, exElement) => {
+                        const example = $(exElement).text().trim();
+                        if (example && example.length > 10) {
+                            examples.push({
+                                english: example,
+                                russian: ''
+                            });
+                        }
+                    });
 
-                // Часть речи
-                const partOfSpeech = $entry.find('.pos, .dpos, .grammar').first().text().trim() || 'unknown';
+                    // Часть речи
+                    const partOfSpeech = $entry.find('.pos, .dpos, .grammar, .pg').first().text().trim() || 'unknown';
 
-                // Создаем объект значения
-                const meaning = {
-                    id: `cam_${entryIndex}_${Date.now()}`,
-                    translation: this.generateTranslation(definition, word),
-                    englishDefinition: definition,
-                    englishWord: word,
-                    partOfSpeech: this.translatePOS(partOfSpeech),
-                    examples: examples.slice(0, 3), // Ограничиваем количество примеров
-                    synonyms: [],
-                    source: 'Cambridge Dictionary'
-                };
+                    // Создаем объект значения
+                    const meaning = {
+                        id: `cam_${entryIndex}_${Date.now()}`,
+                        translation: this.generateTranslation(definition, word),
+                        englishDefinition: definition,
+                        englishWord: word,
+                        partOfSpeech: this.translatePOS(partOfSpeech),
+                        examples: examples.slice(0, 2),
+                        synonyms: [],
+                        source: 'Cambridge Dictionary'
+                    };
 
-                result.meanings.push(meaning);
+                    result.meanings.push(meaning);
+                } catch (entryError) {
+                    console.error('   ❌ Ошибка парсинга элемента:', entryError.message);
+                }
             });
 
             // 🔧 ЕСЛИ ОПРЕДЕЛЕНИЙ НЕ НАЙДЕНО, ИСПОЛЬЗУЕМ УПРОЩЕННЫЙ МЕТОД
@@ -290,7 +371,7 @@ class CambridgeDictionaryService {
         } catch (parseError) {
             console.error('❌ [Cambridge] Ошибка парсинга:', parseError);
             // В случае ошибки парсинга используем fallback
-            const fallback = this.getFallbackData(word, 'Parse error');
+            const fallback = this.getFallbackData(word, 'Parse error: ' + parseError.message);
             result.meanings = fallback.meanings;
         }
 
@@ -300,40 +381,47 @@ class CambridgeDictionaryService {
 
     // 🔧 УПРОЩЕННЫЙ ПАРСИНГ ДЛЯ СЛОЖНЫХ СЛУЧАЕВ
     simpleParse(html, word, $, result) {
-        // Ищем любой текст, который похож на определения
-        const text = $('body').text();
-        const lines = text.split('\n').map(line => line.trim()).filter(line => 
-            line.length > 20 && 
-            line.length < 300 &&
-            !line.includes('©') &&
-            !line.includes('Cambridge') &&
-            !line.includes('Privacy')
-        );
+        try {
+            // Ищем любой текст, который похож на определения
+            const text = $('body').text();
+            const lines = text.split('\n').map(line => line.trim()).filter(line => 
+                line.length > 20 && 
+                line.length < 300 &&
+                !line.includes('©') &&
+                !line.includes('Cambridge') &&
+                !line.includes('Privacy') &&
+                !line.includes('Terms')
+            );
 
-        lines.slice(0, 5).forEach((line, index) => {
-            if (line.toLowerCase().includes(word.toLowerCase())) {
-                const meaning = {
-                    id: `simple_${index}_${Date.now()}`,
-                    translation: this.generateTranslation(line, word),
-                    englishDefinition: line,
-                    englishWord: word,
-                    partOfSpeech: 'unknown',
-                    examples: [
-                        {
-                            english: `Example usage of "${word}" in context.`,
-                            russian: ''
-                        }
-                    ],
-                    synonyms: [],
-                    source: 'Cambridge Dictionary (Simple Parse)'
-                };
-                result.meanings.push(meaning);
+            lines.slice(0, 3).forEach((line, index) => {
+                if (line.toLowerCase().includes(word.toLowerCase()) && line.length > 30) {
+                    const meaning = {
+                        id: `simple_${index}_${Date.now()}`,
+                        translation: this.generateTranslation(line, word),
+                        englishDefinition: line.substring(0, 150) + '...',
+                        englishWord: word,
+                        partOfSpeech: this.guessPartOfSpeech(word),
+                        examples: [
+                            {
+                                english: `Example: "${word}" can be used in various contexts.`,
+                                russian: ''
+                            }
+                        ],
+                        synonyms: [],
+                        source: 'Cambridge Dictionary (Simple Parse)'
+                    };
+                    result.meanings.push(meaning);
+                }
+            });
+
+            // Если все еще нет значений, добавляем fallback
+            if (result.meanings.length === 0) {
+                const fallback = this.getFallbackData(word, 'No definitions found in simple parse');
+                result.meanings = fallback.meanings;
             }
-        });
-
-        // Если все еще нет значений, добавляем fallback
-        if (result.meanings.length === 0) {
-            const fallback = this.getFallbackData(word, 'No definitions found');
+        } catch (error) {
+            console.error('❌ Ошибка в simpleParse:', error);
+            const fallback = this.getFallbackData(word, 'Simple parse error');
             result.meanings = fallback.meanings;
         }
     }
@@ -372,16 +460,7 @@ class CambridgeDictionaryService {
             return 'относящийся к';
         }
         
-        // Базовые переводы для common words
-        const commonWords = {
-            'hello': 'привет',
-            'world': 'мир',
-            'book': 'книга',
-            'computer': 'компьютер',
-            'language': 'язык'
-        };
-        
-        return commonWords[wordLower] || 'основное значение';
+        return this.generateBasicTranslation(word);
     }
 
     translatePOS(cambridgePOS) {
