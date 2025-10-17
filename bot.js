@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { GoogleSheetsService } from './services/google-sheets.js';
 import { CombinedDictionaryService } from './services/combined-dictionary-service.js';
-import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js'; // Новый сервис
+import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
     polling: true 
@@ -9,7 +9,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 
 const sheetsService = new GoogleSheetsService();
 const dictionaryService = new CombinedDictionaryService();
-const cambridgeService = new CambridgeDictionaryService(); // Новый сервис
+const cambridgeService = new CambridgeDictionaryService();
 
 // Хранилище состояний пользователей
 const userStates = new Map();
@@ -54,7 +54,6 @@ function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
     const translationButtons = translations.map((translation, index) => {
         const isSelected = selectedIndices.includes(index);
         
-        // ✅ ФИКС: для всех номеров используем эмодзи
         let numberEmoji;
         if (index < 9) {
             numberEmoji = `${index + 1}️⃣`;
@@ -274,29 +273,25 @@ bot.on('message', async (msg) => {
         await showMainMenu(chatId, '🔍 Ищу перевод, транскрипцию, произношение и примеры...');
         
         try {
-            // ✅ НОВАЯ ЛОГИКА: Cambridge + Яндекс
+            // ✅ УПРОЩЕННАЯ ЛОГИКА: Cambridge + Яндекс транскрипция
             console.log(`🎯 Начинаем поиск для: "${englishWord}"`);
             
-            // 🔥 ПАРАЛЛЕЛЬНЫЙ ЗАПРОС К Cambridge И Яндекс
-            const [cambridgeData, yandexData] = await Promise.allSettled([
-                cambridgeService.getWordData(englishWord),
-                dictionaryService.getYandexData(englishWord) // Только Яндекс для транскрипции и аудио
-            ]);
-
             let audioId = null;
             let transcription = '';
             let audioUrl = '';
             let meanings = [];
             let translations = [];
 
-            // ✅ ОБРАБАТЫВАЕМ Cambridge Dictionary (основные данные)
-            if (cambridgeData.status === 'fulfilled' && cambridgeData.value.meanings.length > 0) {
-                console.log(`✅ Cambridge успешно: ${cambridgeData.value.meanings.length} значений`);
-                meanings = cambridgeData.value.meanings;
+            // ✅ 1. ПОЛУЧАЕМ ДАННЫЕ ОТ CAMBRIDGE
+            console.log(`📚 Запрашиваем Cambridge Dictionary...`);
+            const cambridgeData = await cambridgeService.getWordData(englishWord);
+            
+            if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
+                console.log(`✅ Cambridge успешно: ${cambridgeData.meanings.length} значений`);
+                meanings = cambridgeData.meanings;
                 translations = meanings.map(m => m.translation).filter((t, i, arr) => arr.indexOf(t) === i);
             } else {
-                console.log(`❌ Cambridge не сработал, используем fallback`);
-                // Fallback логика может быть добавлена здесь
+                console.log(`❌ Cambridge не сработал`);
                 meanings = [{ 
                     id: 'fallback',
                     translation: 'перевод не найден', 
@@ -310,23 +305,26 @@ bot.on('message', async (msg) => {
                 translations = ['перевод не найден'];
             }
 
-            // ✅ ОБРАБАТЫВАЕМ Яндекс (транскрипция и аудио)
-            if (yandexData.status === 'fulfilled') {
-                console.log(`✅ Яндекс успешно: транскрипция и аудио`);
-                transcription = yandexData.value.transcription || '';
-                audioUrl = yandexData.value.audioUrl || '';
+            // ✅ 2. ПОЛУЧАЕМ ТРАНСКРИПЦИЮ ОТ ЯНДЕКСА
+            console.log(`🔤 Запрашиваем транскрипцию у Яндекс...`);
+            try {
+                // Используем существующий метод getWordData из dictionaryService
+                const yandexData = await dictionaryService.getWordData(englishWord);
+                transcription = yandexData.transcription || '';
+                audioUrl = yandexData.audioUrl || '';
                 
                 if (audioUrl) {
                     audioId = Date.now().toString();
                 }
-            } else {
-                console.log(`❌ Яндекс не сработал для транскрипции`);
+                console.log(`✅ Яндекс транскрипция: ${transcription}`);
+            } catch (yandexError) {
+                console.log(`❌ Яндекс не сработал: ${yandexError.message}`);
                 // Fallback для аудио
                 audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(englishWord)}&tl=en-gb&client=tw-ob`;
                 audioId = Date.now().toString();
             }
 
-            // ✅ СОХРАНЯЕМ РЕЗУЛЬТАТЫ
+            // ✅ 3. СОХРАНЯЕМ РЕЗУЛЬТАТЫ
             userStates.set(chatId, {
                 state: 'showing_transcription',
                 tempWord: englishWord,
@@ -338,7 +336,7 @@ bot.on('message', async (msg) => {
                 selectedTranslationIndices: []
             });
             
-            // ✅ ФОРМИРУЕМ СООБЩЕНИЕ ДЛЯ ПОЛЬЗОВАТЕЛЯ
+            // ✅ 4. ФОРМИРУЕМ СООБЩЕНИЕ ДЛЯ ПОЛЬЗОВАТЕЛЯ
             let message = `📝 Слово: ${englishWord}`;
             
             if (transcription) {
