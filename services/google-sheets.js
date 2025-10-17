@@ -76,7 +76,7 @@ export class GoogleSheetsService {
 
     async initializeSheetStructure() {
         try {
-            // Получаем информацию о листаов
+            // Получаем информацию о листах
             const spreadsheet = await this.sheets.spreadsheets.get({
                 spreadsheetId: this.spreadsheetId,
             });
@@ -254,7 +254,7 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ ФУНКЦИЯ: Получение слов для повторения с FSRS данными
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения с лимитом 5 карточек в день
     async getWordsForReview(userId) {
         if (!this.initialized) {
             return [];
@@ -264,7 +264,8 @@ export class GoogleSheetsService {
             const userWords = await this.getUserWords(userId);
             const now = new Date();
             
-            return userWords.filter(word => {
+            // Фильтруем слова, готовые к повторению
+            const wordsForReview = userWords.filter(word => {
                 if (!word.nextReview || word.status !== 'active') return false;
                 try {
                     const reviewDate = new Date(word.nextReview);
@@ -274,9 +275,51 @@ export class GoogleSheetsService {
                     return false;
                 }
             });
+
+            // Сортируем по приоритету (сначала просроченные, потом по дате)
+            wordsForReview.sort((a, b) => {
+                const dateA = new Date(a.nextReview);
+                const dateB = new Date(b.nextReview);
+                return dateA - dateB; // Сначала самые старые
+            });
+
+            // Лимит 5 карточек в день
+            const DAILY_LIMIT = 5;
+            return wordsForReview.slice(0, DAILY_LIMIT);
+            
         } catch (error) {
             console.error('❌ Error getting words for review:', error.message);
             return [];
+        }
+    }
+
+    // ✅ НОВАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения (для нотификаций)
+    async hasWordsForReview(userId) {
+        if (!this.initialized) {
+            return false;
+        }
+        
+        try {
+            const wordsForReview = await this.getWordsForReview(userId);
+            return wordsForReview.length > 0;
+        } catch (error) {
+            console.error('❌ Error checking words for review:', error.message);
+            return false;
+        }
+    }
+
+    // ✅ НОВАЯ ФУНКЦИЯ: Получение количества слов для повторения
+    async getReviewWordsCount(userId) {
+        if (!this.initialized) {
+            return 0;
+        }
+        
+        try {
+            const wordsForReview = await this.getWordsForReview(userId);
+            return wordsForReview.length;
+        } catch (error) {
+            console.error('❌ Error getting review words count:', error.message);
+            return 0;
         }
     }
 
@@ -535,6 +578,37 @@ export class GoogleSheetsService {
         } catch (error) {
             console.error('❌ Error during migration:', error.message);
             return false;
+        }
+    }
+
+    // ✅ НОВАЯ ФУНКЦИЯ: Получение всех активных пользователей (для нотификаций)
+    async getAllActiveUsers() {
+        if (!this.initialized) {
+            return [];
+        }
+
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:I',
+            });
+
+            const rows = response.data.values || [];
+            
+            // Получаем уникальные ID пользователей
+            const userSet = new Set();
+            
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.length > 0 && row[0]) {
+                    userSet.add(row[0]);
+                }
+            }
+            
+            return Array.from(userSet);
+        } catch (error) {
+            console.error('❌ Error getting all active users:', error.message);
+            return [];
         }
     }
 }
