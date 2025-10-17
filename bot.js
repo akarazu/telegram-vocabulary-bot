@@ -773,8 +773,28 @@ bot.on('callback_query', async (callbackQuery) => {
     else if (data === 'back_to_translations') {
         if (userState?.state === 'choosing_translation') {
             try {
-                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-                // Сообщение с переводами остается активным
+                // Показываем сообщение с выбором переводов
+                let translationMessage = '🎯 **Выберите переводы из Cambridge Dictionary:**\n\n' +
+                    `🇬🇧 ${userState.tempWord}`;
+                
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+
+                translationMessage += '\n\n💡 Нажмите "🔍 Подробнее" чтобы увидеть английское определение и примеры';
+
+                // Отправляем новое сообщение с выбором переводов
+                await bot.sendMessage(chatId, translationMessage, 
+                    getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, userState.selectedTranslationIndices)
+                );
+                
+                // Удаляем сообщение с деталями (если возможно)
+                try {
+                    await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                } catch (deleteError) {
+                    console.log('Не удалось удалить сообщение с деталями, продолжаем...');
+                }
+                
             } catch (error) {
                 console.error('Error going back:', error);
             }
@@ -869,4 +889,4 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
 });
 
-console.log('🤖 Бот запущен: Исправленная версия');
+console.log('🤖 Бот запущен: Исправленная версия с правильной кнопкой "Назад"');
