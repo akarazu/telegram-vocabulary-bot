@@ -34,6 +34,10 @@ export class GoogleSheetsService {
             });
 
             this.sheets = google.sheets({ version: 'v4', auth });
+            
+            // Проверяем и создаем таблицу с новой структурой
+            await this.initializeSheetStructure();
+            
             this.initialized = true;
             console.log('✅ Google Sheets service initialized');
         } catch (error) {
@@ -74,38 +78,106 @@ export class GoogleSheetsService {
         }
     }
 
-    async addWord(chatId, english, transcription, translation, audioUrl = '', examples = '') {
+    async initializeSheetStructure() {
+        try {
+            // Получаем информацию о листах
+            const spreadsheet = await this.sheets.spreadsheets.get({
+                spreadsheetId: this.spreadsheetId,
+            });
+
+            const sheets = spreadsheet.data.sheets;
+            const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
+
+            if (!wordsSheet) {
+                // Создаем новый лист с заголовками
+                await this.sheets.spreadsheets.batchUpdate({
+                    spreadsheetId: this.spreadsheetId,
+                    resource: {
+                        requests: [
+                            {
+                                addSheet: {
+                                    properties: {
+                                        title: 'Words'
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                });
+
+                // Добавляем заголовки
+                await this.sheets.spreadsheets.values.update({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!A1:I1',
+                    valueInputOption: 'RAW',
+                    resource: {
+                        values: [[
+                            'UserID',
+                            'English',
+                            'Transcription',
+                            'AudioURL',
+                            'MeaningsJSON',
+                            'CreatedDate',
+                            'NextReview',
+                            'Interval',
+                            'Status'
+                        ]]
+                    }
+                });
+
+                console.log('✅ Created new Words sheet with JSON structure');
+            } else {
+                console.log('✅ Words sheet already exists');
+            }
+        } catch (error) {
+            console.error('❌ Error initializing sheet structure:', error.message);
+        }
+    }
+
+    // ✅ НОВАЯ ФУНКЦИЯ: Сохранение слова с несколькими значениями в JSON
+    async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
         if (!this.initialized) {
             console.log('❌ Google Sheets not initialized');
             return false;
         }
 
         try {
+            // Преобразуем массив значений в JSON строку
+            const meaningsJSON = JSON.stringify(meanings);
+            
+            // Рассчитываем дату следующего повторения (через 1 день)
+            const nextReview = new Date();
+            nextReview.setDate(nextReview.getDate() + 1);
+            
             const response = await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:F',
+                range: 'Words!A:I',
                 valueInputOption: 'RAW',
                 requestBody: {
                     values: [[
-                        chatId.toString(),
+                        userId.toString(),
                         english.toLowerCase(),
                         transcription || '',
-                        translation,
                         audioUrl || '',
-                        examples || ''
+                        meaningsJSON,
+                        new Date().toISOString(),
+                        nextReview.toISOString(),
+                        1, // начальный интервал (в днях)
+                        'active'
                     ]]
                 }
             });
 
-            console.log(`✅ Word "${english}" saved to Google Sheets`);
+            console.log(`✅ Word "${english}" saved with ${meanings.length} meanings to Google Sheets`);
             return true;
         } catch (error) {
-            console.error('❌ Error saving word to Google Sheets:', error.message);
+            console.error('❌ Error saving word with meanings to Google Sheets:', error.message);
             return false;
         }
     }
 
-    async getUserWords(chatId) {
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя
+    async getUserWords(userId) {
         if (!this.initialized) {
             return [];
         }
@@ -113,57 +185,206 @@ export class GoogleSheetsService {
         try {
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:F',
+                range: 'Words!A:I',
             });
 
             const rows = response.data.values || [];
-            const userWords = rows.filter(row => row[0] === chatId.toString());
             
-            return userWords.map(row => ({
-                chatId: row[0],
-                english: row[1],
-                transcription: row[2],
-                translation: row[3],
-                audioUrl: row[4],
-                examples: row[5] || ''
-            }));
+            // Пропускаем заголовок и фильтруем по UserID и статусу
+            const userWords = rows.slice(1).filter(row => 
+                row[0] === userId.toString() && 
+                (row[8] === 'active' || !row[8]) // поддерживаем старые записи без статуса
+            );
+            
+            return userWords.map(row => {
+                try {
+                    return {
+                        userId: row[0],
+                        english: row[1],
+                        transcription: row[2],
+                        audioUrl: row[3],
+                        meanings: row[4] ? JSON.parse(row[4]) : [], // парсим JSON обратно в массив
+                        createdDate: row[5],
+                        nextReview: row[6],
+                        interval: parseInt(row[7]) || 1,
+                        status: row[8] || 'active'
+                    };
+                } catch (parseError) {
+                    console.error('❌ Error parsing meanings JSON for word:', row[1], parseError);
+                    return {
+                        userId: row[0],
+                        english: row[1],
+                        transcription: row[2],
+                        audioUrl: row[3],
+                        meanings: [], // fallback при ошибке парсинга
+                        createdDate: row[5],
+                        nextReview: row[6],
+                        interval: parseInt(row[7]) || 1,
+                        status: row[8] || 'active'
+                    };
+                }
+            });
         } catch (error) {
             console.error('❌ Error reading words from Google Sheets:', error.message);
             return [];
         }
     }
 
-    async addWordWithExamples(chatId, english, transcription, translation, audioUrl = '', examples = '') {
+    // ✅ ФУНКЦИЯ: Обновление интервала повторения
+    async updateWordReview(userId, english, newInterval, nextReviewDate) {
         if (!this.initialized) {
-            console.log('❌ Google Sheets not initialized');
             return false;
         }
 
         try {
-            // examples уже должна быть строкой
-            const examplesText = typeof examples === 'string' ? examples : '';
-            
-            const response = await this.sheets.spreadsheets.values.append({
+            // Сначала находим строку для обновления
+            const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:F',
+                range: 'Words!A:I',
+            });
+
+            const rows = response.data.values || [];
+            let rowIndex = -1;
+
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][0] === userId.toString() && 
+                    rows[i][1].toLowerCase() === english.toLowerCase() &&
+                    (rows[i][8] === 'active' || !rows[i][8])) {
+                    rowIndex = i + 1; // +1 потому что в Sheets нумерация с 1
+                    break;
+                }
+            }
+
+            if (rowIndex === -1) {
+                console.error('❌ Word not found for update:', english);
+                return false;
+            }
+
+            // Обновляем интервал и дату следующего повторения
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Words!H${rowIndex}:I${rowIndex}`,
                 valueInputOption: 'RAW',
-                requestBody: {
+                resource: {
                     values: [[
-                        chatId.toString(),
-                        english.toLowerCase(),
-                        transcription || '',
-                        translation,
-                        audioUrl || '',
-                        examplesText
+                        newInterval,
+                        nextReviewDate.toISOString()
                     ]]
                 }
             });
 
-            console.log(`✅ Word "${english}" saved with examples to Google Sheets`);
+            console.log(`✅ Updated review for word "${english}": interval ${newInterval} days`);
             return true;
         } catch (error) {
-            console.error('❌ Error saving word with examples to Google Sheets:', error.message);
+            console.error('❌ Error updating word review:', error.message);
             return false;
         }
+    }
+
+    // ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
+    async addMeaningToWord(userId, english, newMeaning) {
+        if (!this.initialized) {
+            return false;
+        }
+
+        try {
+            // Находим слово
+            const userWords = await this.getUserWords(userId);
+            const word = userWords.find(w => w.english.toLowerCase() === english.toLowerCase());
+            
+            if (!word) {
+                console.error('❌ Word not found for adding meaning:', english);
+                return false;
+            }
+
+            // Добавляем новое значение
+            const updatedMeanings = [...word.meanings, newMeaning];
+            const updatedMeaningsJSON = JSON.stringify(updatedMeanings);
+
+            // Находим строку для обновления
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:I',
+            });
+
+            const rows = response.data.values || [];
+            let rowIndex = -1;
+
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][0] === userId.toString() && 
+                    rows[i][1].toLowerCase() === english.toLowerCase() &&
+                    (rows[i][8] === 'active' || !rows[i][8])) {
+                    rowIndex = i + 1;
+                    break;
+                }
+            }
+
+            if (rowIndex === -1) {
+                console.error('❌ Word not found for adding meaning:', english);
+                return false;
+            }
+
+            // Обновляем meanings
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Words!E${rowIndex}`,
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[updatedMeaningsJSON]]
+                }
+            });
+
+            console.log(`✅ Added new meaning to word "${english}"`);
+            return true;
+        } catch (error) {
+            console.error('❌ Error adding meaning to word:', error.message);
+            return false;
+        }
+    }
+
+    // ✅ ФУНКЦИЯ: Получение слов для повторения
+    async getWordsForReview(userId) {
+        if (!this.initialized) {
+            return [];
+        }
+
+        try {
+            const userWords = await this.getUserWords(userId);
+            const now = new Date();
+            
+            return userWords.filter(word => {
+                if (!word.nextReview) return false;
+                const reviewDate = new Date(word.nextReview);
+                return reviewDate <= now;
+            });
+        } catch (error) {
+            console.error('❌ Error getting words for review:', error.message);
+            return [];
+        }
+    }
+
+    // ❗ СТАРЫЕ ФУНКЦИИ ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ
+    async addWord(chatId, english, transcription, translation, audioUrl = '', examples = '') {
+        // Конвертируем старый формат в новый
+        const meanings = [{
+            translation: translation,
+            example: examples || '',
+            partOfSpeech: '',
+            definition: ''
+        }];
+        
+        return await this.addWordWithMeanings(chatId, english, transcription, audioUrl, meanings);
+    }
+
+    async addWordWithExamples(chatId, english, transcription, translation, audioUrl = '', examples = '') {
+        // Конвертируем старый формат в новый
+        const meanings = [{
+            translation: translation,
+            example: examples || '',
+            partOfSpeech: '',
+            definition: ''
+        }];
+        
+        return await this.addWordWithMeanings(chatId, english, transcription, audioUrl, meanings);
     }
 }
