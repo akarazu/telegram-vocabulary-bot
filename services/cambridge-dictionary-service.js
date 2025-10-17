@@ -1,5 +1,7 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
+
+// Для Railway используем такой импорт
+let cheerio;
 
 class CambridgeDictionaryService {
     constructor() {
@@ -9,18 +11,18 @@ class CambridgeDictionaryService {
         
         // 🔧 НАСТРОЙКИ ОБХОДА ОГРАНИЧЕНИЙ
         this.config = {
-            minDelay: 2000, // Минимальная задержка между запросами (2 секунды)
-            maxDelay: 5000, // Максимальная задержка (5 секундов)
-            maxRetries: 3,  // Максимальное количество попыток
-            timeout: 15000, // Таймаут запроса (15 секунд)
-            userAgents: [   // Ротация User-Agent
+            minDelay: 2000,
+            maxDelay: 5000,
+            maxRetries: 3,
+            timeout: 15000,
+            userAgents: [
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
                 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
             ],
-            referers: [     // Ротация Referer
+            referers: [
                 'https://www.google.com/',
                 'https://www.bing.com/',
                 'https://duckduckgo.com/',
@@ -30,24 +32,29 @@ class CambridgeDictionaryService {
         };
     }
 
-    // 🔧 ФУНКЦИЯ ДЛЯ СЛУЧАЙНОЙ ЗАДЕРЖКИ
+    // 🔧 ДИНАМИЧЕСКАЯ ЗАГРУЗКА CHEERIO
+    async loadCheerio() {
+        if (!cheerio) {
+            // Для Railway используем обычный require
+            cheerio = (await import('cheerio')).default;
+        }
+        return cheerio;
+    }
+
     async randomDelay() {
         const delay = Math.random() * (this.config.maxDelay - this.config.minDelay) + this.config.minDelay;
         console.log(`⏳ Задержка: ${Math.round(delay)}ms`);
         await new Promise(resolve => setTimeout(resolve, delay));
     }
 
-    // 🔧 ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СЛУЧАЙНОГО USER-AGENT
     getRandomUserAgent() {
         return this.config.userAgents[Math.floor(Math.random() * this.config.userAgents.length)];
     }
 
-    // 🔧 ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СЛУЧАЙНОГО REFERER
     getRandomReferer() {
         return this.config.referers[Math.floor(Math.random() * this.config.referers.length)];
     }
 
-    // 🔧 ФУНКЦИЯ ДЛЯ ПРОВЕРКИ RATE LIMITING
     async checkRateLimit() {
         const now = Date.now();
         const timeSinceLastRequest = now - this.lastRequestTime;
@@ -62,7 +69,6 @@ class CambridgeDictionaryService {
         this.requestCount++;
     }
 
-    // 🔧 ОСНОВНАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ДАННЫХ С ПОВТОРАМИ
     async getWordData(word, retryCount = 0) {
         await this.checkRateLimit();
         
@@ -86,34 +92,35 @@ class CambridgeDictionaryService {
                 },
                 timeout: this.config.timeout,
                 validateStatus: function (status) {
-                    return status < 400; // Принимаем только статусы < 400
+                    return status < 400;
                 }
             });
 
+            // Загружаем cheerio
+            const cheerio = await this.loadCheerio();
+            
             // 🔧 ПРОВЕРКА НА БЛОКИРОВКУ ИЛИ CAPTCHA
-            if (this.isBlocked(response.data)) {
-                throw new Error('Cambridge Dictionary заблокировал запрос (обнаружена CAPTCHA или блокировка)');
+            if (this.isBlocked(response.data, cheerio)) {
+                throw new Error('Cambridge Dictionary заблокировал запрос');
             }
 
             // 🔧 ПРОВЕРКА НА СУЩЕСТВОВАНИЕ СЛОВА
-            if (this.isWordNotFound(response.data)) {
+            if (this.isWordNotFound(response.data, cheerio)) {
                 throw new Error('Слово не найдено в Cambridge Dictionary');
             }
 
             console.log(`✅ [Cambridge] Успешно получены данные для: "${word}"`);
-            return this.parseCambridgeHTML(response.data, word);
+            return this.parseCambridgeHTML(response.data, word, cheerio);
             
         } catch (error) {
             console.error(`❌ [Cambridge] Ошибка (попытка ${retryCount + 1}):`, error.message);
             
-            // 🔧 ПОВТОР ПРИ ОПРЕДЕЛЕННЫХ ОШИБКАХ
             if (this.shouldRetry(error) && retryCount < this.config.maxRetries - 1) {
                 console.log(`🔄 [Cambridge] Повтор запроса через ${this.config.minDelay}ms...`);
                 await this.randomDelay();
                 return this.getWordData(word, retryCount + 1);
             }
             
-            // 🔧 ВОЗВРАТ ПУСТЫХ ДАННЫХ ПРИ ПРЕВЫШЕНИИ ПОПЫТОК
             return { 
                 word, 
                 meanings: [], 
@@ -124,31 +131,35 @@ class CambridgeDictionaryService {
         }
     }
 
-    // 🔧 ПРОВЕРКА НА БЛОКИРОВКУ
-    isBlocked(html) {
-        const $ = cheerio.load(html);
+    // 🔧 ПРОВЕРКА НА БЛОКИРОВКУ (теперь принимает cheerio)
+    isBlocked(html, $) {
+        if (!$) {
+            // Простая проверка без парсинга
+            return html.includes('captcha') || html.includes('blocked') || html.includes('robot');
+        }
         
-        // Проверяем наличие CAPTCHA
-        const hasCaptcha = $('input[name="captcha"]').length > 0 || 
+        const loaded$ = typeof $ === 'function' ? $(html) : $.load(html);
+        const hasCaptcha = loaded$('input[name="captcha"]').length > 0 || 
                           html.includes('captcha') || 
                           html.includes('robot') ||
                           html.includes('access denied');
         
-        // Проверяем наличие сообщения о блокировке
         const isBlocked = html.includes('blocked') || 
                          html.includes('too many requests') ||
                          html.includes('rate limit') ||
-                         $('.error-page').length > 0;
+                         loaded$('.error-page').length > 0;
         
         return hasCaptcha || isBlocked;
     }
 
-    // 🔧 ПРОВЕРКА НА НЕНАЙДЕННОЕ СЛОВО
-    isWordNotFound(html) {
-        const $ = cheerio.load(html);
+    // 🔧 ПРОВЕРКА НА НЕНАЙДЕННОЕ СЛОВО (теперь принимает cheerio)
+    isWordNotFound(html, $) {
+        if (!$) {
+            return html.includes('not found') || html.includes('no entries found');
+        }
         
-        // Проверяем наличие сообщения "слово не найдено"
-        const notFoundMessage = $('.cdo-search__no-results, .empty-page, .no-results');
+        const loaded$ = typeof $ === 'function' ? $(html) : $.load(html);
+        const notFoundMessage = loaded$('.cdo-search__no-results, .empty-page, .no-results');
         const hasNotFound = notFoundMessage.length > 0 || 
                            html.includes('not found') || 
                            html.includes('no entries found');
@@ -169,9 +180,12 @@ class CambridgeDictionaryService {
         );
     }
 
-    // 🔧 ПАРСИНГ HTML (БЕЗ ИЗМЕНЕНИЙ)
-    parseCambridgeHTML(html, word) {
-        const $ = cheerio.load(html);
+    // 🔧 ПАРСИНГ HTML (теперь принимает cheerio)
+    async parseCambridgeHTML(html, word, $) {
+        // Загружаем cheerio если не передан
+        const cheerio = $ || await this.loadCheerio();
+        const loaded$ = typeof cheerio === 'function' ? cheerio(html) : cheerio.load(html);
+        
         const result = {
             word: word,
             meanings: [],
@@ -183,14 +197,14 @@ class CambridgeDictionaryService {
         console.log(`📖 [Cambridge] Парсинг HTML для: "${word}"`);
 
         // ✅ ТРАНСКРИПЦИЯ
-        const pronunciation = $('.pronunciation .ipa').first().text();
+        const pronunciation = loaded$('.pronunciation .ipa').first().text();
         if (pronunciation) {
             result.transcription = `/${pronunciation}/`;
             console.log(`🔤 [Cambridge] Транскрипция: ${result.transcription}`);
         }
 
         // ✅ АУДИО ПРОИЗНОШЕНИЕ
-        const audioElement = $('.audio_play_button[data-src-mp3]').first();
+        const audioElement = loaded$('.audio_play_button[data-src-mp3]').first();
         if (audioElement.length) {
             const audioPath = audioElement.attr('data-src-mp3');
             result.audioUrl = `https://dictionary.cambridge.org${audioPath}`;
@@ -198,15 +212,15 @@ class CambridgeDictionaryService {
         }
 
         // ✅ ОБРАБАТЫВАЕМ КАЖДУЮ ЧАСТЬ РЕЧИ
-        $('.pr.entry-body__el').each((entryIndex, entryElement) => {
-            const $entry = $(entryElement);
+        loaded$('.pr.entry-body__el').each((entryIndex, entryElement) => {
+            const $entry = loaded$(entryElement);
             
             const partOfSpeech = $entry.find('.pos.dpos').first().text().trim();
             console.log(`\n📚 [Cambridge] Часть речи: ${partOfSpeech}`);
 
             // ✅ ОБРАБАТЫВАЕМ КАЖДОЕ ОПРЕДЕЛЕНИЕ
             $entry.find('.def-block.ddef_block').each((defIndex, defElement) => {
-                const $def = $(defElement);
+                const $def = loaded$(defElement);
                 
                 const definition = $def.find('.def.ddef_d.db').text().trim();
                 if (!definition) return;
@@ -216,7 +230,7 @@ class CambridgeDictionaryService {
                 // Примеры использования
                 const examples = [];
                 $def.find('.examp.dexamp').each((exIndex, exElement) => {
-                    const example = $(exElement).text().trim();
+                    const example = loaded$(exElement).text().trim();
                     if (example) {
                         examples.push({
                             english: example,
@@ -235,7 +249,7 @@ class CambridgeDictionaryService {
                     englishWord: word,
                     partOfSpeech: this.translatePOS(partOfSpeech),
                     examples: examples,
-                    synonyms: this.extractSynonyms($def),
+                    synonyms: this.extractSynonyms($def, loaded$),
                     source: 'Cambridge Dictionary'
                 };
 
@@ -244,7 +258,7 @@ class CambridgeDictionaryService {
         });
 
         // ✅ ОБРАБАТЫВАЕМ ИДИОМЫ И ВЫРАЖЕНИЯ
-        this.parseIdioms($, result, word);
+        this.parseIdioms(loaded$, result, word);
 
         console.log(`✅ [Cambridge] Распаршено ${result.meanings.length} значений`);
         return result;
@@ -282,7 +296,7 @@ class CambridgeDictionaryService {
         });
     }
 
-    extractSynonyms($defBlock) {
+    extractSynonyms($defBlock, $) {
         const synonyms = [];
         $defBlock.find('.synonyms .item').each((index, element) => {
             const synonym = $(element).text().trim();
@@ -339,14 +353,12 @@ class CambridgeDictionaryService {
         return 'основное значение';
     }
 
-    // 🔧 ФУНКЦИЯ ДЛЯ СБРОСА СЧЕТЧИКОВ (можно вызывать периодически)
     resetCounters() {
         this.requestCount = 0;
         this.lastRequestTime = 0;
         console.log('🔄 [Cambridge] Счетчики запросов сброшены');
     }
 
-    // 🔧 ПОЛУЧЕНИЕ СТАТИСТИКИ ИСПОЛЬЗОВАНИЯ
     getStats() {
         return {
             totalRequests: this.requestCount,
