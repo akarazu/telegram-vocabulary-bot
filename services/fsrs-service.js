@@ -1,4 +1,5 @@
-import { FSRS, createEmptyCard, generatorParameters, Rating } from 'fsrs.js';
+import pkg from 'fsrs.js';
+const { FSRS, createEmptyCard, generatorParameters, Rating } = pkg;
 
 export class FSRSService {
     constructor() {
