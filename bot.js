@@ -61,9 +61,11 @@ function getAfterAudioKeyboard() {
     };
 }
 
-// Клавиатура для выбора переводов
+// Клавиатура для выбора переводов с кнопкой "Подробнее" для всех переводов
 function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
-    const translationButtons = translations.map((translation, index) => {
+    const translationButtons = [];
+
+    translations.forEach((translation, index) => {
         const isSelected = selectedIndices.includes(index);
         
         let numberEmoji;
@@ -84,24 +86,22 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
         const meaningForTranslation = meanings.find(meaning => meaning.translation === translation);
         const englishDefinition = meaningForTranslation?.englishDefinition || '';
         
-        // Сокращаем только текст кнопки, но английское значение показываем полностью
-        let displayText = translation;
+        // Основная кнопка с переводом
+        const mainButtonText = `${emoji} ${translation}`;
         
-        if (displayText.length > 25) {
-            displayText = displayText.substring(0, 22) + '...';
-        }
-        
-        // Формируем текст кнопки с английским значением на новой строке
-        const buttonText = englishDefinition ? 
-            `${emoji} ${displayText}` : 
-            `${emoji} ${displayText}`;
-        
-        return [
+        // Всегда создаем две кнопки: основную и "Подробнее"
+        const row = [
             { 
-                text: buttonText, 
+                text: mainButtonText, 
                 callback_data: `toggle_translation_${index}` 
+            },
+            { 
+                text: '🔍 Подробнее', 
+                callback_data: `details_${index}` 
             }
         ];
+        
+        translationButtons.push(row);
     });
 
     const actionButtons = [];
@@ -488,13 +488,7 @@ bot.on('callback_query', async (callbackQuery) => {
                         translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                     }
 
-                    // ✅ ДОБАВЛЯЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ПОЛНОСТЬЮ С НОВОЙ СТРОКИ
-                    translationMessage += '\n\n**📖 Английские значения:**\n';
-                    userState.meanings.forEach((meaning, index) => {
-                        if (meaning.englishDefinition) {
-                            translationMessage += `\n${index + 1}. ${meaning.englishDefinition}`;
-                        }
-                    });
+                    translationMessage += '\n\n💡 Нажмите "🔍 Подробнее" чтобы увидеть английское определение и примеры';
 
                     await bot.sendMessage(chatId, translationMessage, 
                         getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, [])
@@ -556,6 +550,62 @@ bot.on('callback_query', async (callbackQuery) => {
             }
         }
     }
+    else if (data.startsWith('details_')) {
+        const translationIndex = parseInt(data.replace('details_', ''));
+        
+        if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
+            try {
+                const translation = userState.tempTranslations[translationIndex];
+                const meaning = userState.meanings.find(m => m.translation === translation);
+                
+                if (meaning) {
+                    let detailsMessage = `🔍 **Подробности перевода:**\n\n`;
+                    detailsMessage += `🇬🇧 **Слово:** ${userState.tempWord}\n`;
+                    detailsMessage += `🇷🇺 **Перевод:** ${translation}\n\n`;
+                    
+                    if (meaning.englishDefinition) {
+                        detailsMessage += `📖 **Английское определение:**\n${meaning.englishDefinition}\n\n`;
+                    }
+                    
+                    if (meaning.examples && meaning.examples.length > 0) {
+                        detailsMessage += `📝 **Примеры использования:**\n`;
+                        meaning.examples.forEach((example, index) => {
+                            if (index < 3) { // Показываем максимум 3 примера
+                                detailsMessage += `\n${index + 1}. ${example.english}`;
+                                if (example.russian) {
+                                    detailsMessage += `\n   ${example.russian}`;
+                                }
+                            }
+                        });
+                    }
+                    
+                    await bot.sendMessage(chatId, detailsMessage, {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔙 Назад к выбору переводов', callback_data: 'back_to_translations' }]
+                            ]
+                        }
+                    });
+                } else {
+                    await bot.sendMessage(chatId, '❌ Информация о переводе не найдена');
+                }
+                
+            } catch (error) {
+                console.error('Error showing details:', error);
+                await bot.sendMessage(chatId, '❌ Ошибка при показе подробностей');
+            }
+        }
+    }
+    else if (data === 'back_to_translations') {
+        if (userState?.state === 'choosing_translation') {
+            try {
+                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                // Сообщение с переводами остается активным
+            } catch (error) {
+                console.error('Error going back:', error);
+            }
+        }
+    }
     else if (data === 'save_selected_translations') {
         if (userState?.state === 'choosing_translation' && userState.selectedTranslationIndices.length > 0) {
             try {
@@ -590,16 +640,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     const selectedTranslations = userState.selectedTranslationIndices
                         .map(index => userState.tempTranslations[index]);
                     translationMessage += `\n\n✅ Уже выбрано: ${selectedTranslations.join(', ')}`;
-                }
-                
-                // ✅ ДОБАВЛЯЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ДЛЯ СПРАВКИ
-                if (userState.meanings.length > 0) {
-                    translationMessage += '\n\n**📖 Английские значения для справки:**\n';
-                    userState.meanings.forEach((meaning, index) => {
-                        if (meaning.englishDefinition) {
-                            translationMessage += `\n${index + 1}. ${meaning.englishDefinition}`;
-                        }
-                    });
                 }
                 
                 translationMessage += '\n\n💡 Ваш перевод будет добавлен к выбранным вариантам';
