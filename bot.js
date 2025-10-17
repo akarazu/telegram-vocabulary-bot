@@ -416,10 +416,14 @@ bot.on('message', async (msg) => {
             return;
         }
         
+        // ✅ ИСПРАВЛЕНИЕ: Получаем выбранные переводы из состояния
         const selectedTranslations = userState.selectedTranslationIndices
             .map(index => userState.tempTranslations[index]);
         
+        // ✅ ИСПРАВЛЕНИЕ: Добавляем ручной перевод к выбранным
         const allTranslations = [...selectedTranslations, customTranslation];
+        
+        console.log(`📝 Сохраняем переводы: выбранные = ${selectedTranslations.join(', ')}, ручной = ${customTranslation}, все = ${allTranslations.join(', ')}`);
         
         await saveWordWithExamples(chatId, userState, allTranslations);
     }
@@ -624,8 +628,9 @@ bot.on('callback_query', async (callbackQuery) => {
     else if (data === 'custom_translation') {
         if (userState?.state === 'choosing_translation') {
             try {
+                // ✅ ИСПРАВЛЕНИЕ: Сохраняем ВСЕ состояние пользователя, включая выбранные переводы
                 userStates.set(chatId, {
-                    ...userState,
+                    ...userState, // Важно: сохраняем все предыдущее состояние
                     state: 'waiting_custom_translation_with_selected'
                 });
                 
@@ -636,10 +641,13 @@ bot.on('callback_query', async (callbackQuery) => {
                     translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
                 
-                if (userState.selectedTranslationIndices.length > 0) {
+                // ✅ ИСПРАВЛЕНИЕ: Показываем выбранные переводы
+                if (userState.selectedTranslationIndices && userState.selectedTranslationIndices.length > 0) {
                     const selectedTranslations = userState.selectedTranslationIndices
                         .map(index => userState.tempTranslations[index]);
                     translationMessage += `\n\n✅ Уже выбрано: ${selectedTranslations.join(', ')}`;
+                } else {
+                    translationMessage += `\n\n📝 Вы еще не выбрали переводы из предложенных`;
                 }
                 
                 translationMessage += '\n\n💡 Ваш перевод будет добавлен к выбранным вариантам';
