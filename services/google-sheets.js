@@ -76,7 +76,7 @@ export class GoogleSheetsService {
 
     async initializeSheetStructure() {
         try {
-            // Получаем информацию о листах
+            // Получаем информацию о листаов
             const spreadsheet = await this.sheets.spreadsheets.get({
                 spreadsheetId: this.spreadsheetId,
             });
@@ -153,8 +153,8 @@ export class GoogleSheetsService {
                         userId.toString(),
                         english.toLowerCase(),
                         transcription || '',
-                        audioUrl || '',
-                        meaningsJSON,
+                        audioUrl || '', // AudioURL в столбце D
+                        meaningsJSON,   // MeaningsJSON в столбце E
                         new Date().toISOString(),
                         nextReview.toISOString(),
                         1, // начальный интервал (в днях)
@@ -171,7 +171,7 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя
+    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с обработкой ошибок JSON
     async getUserWords(userId) {
         if (!this.initialized) {
             return [];
@@ -187,37 +187,66 @@ export class GoogleSheetsService {
 
             // Пропускаем заголовок и фильтруем по UserID и статусу
             const userWords = rows.slice(1).filter(row => 
+                row.length >= 6 && // Проверяем что есть минимум 6 столбцов
                 row[0] === userId.toString() && 
-                (row[8] === 'active' || !row[8]) // поддерживаем старые записи без статуса
+                (row[8] === 'active' || !row[8] || row.length < 9) // поддерживаем старые записи без статуса
             );
 
             return userWords.map(row => {
+                // Безопасное извлечение данных из строки
+                const userId = row[0] || '';
+                const english = row[1] || '';
+                const transcription = row[2] || '';
+                const audioUrl = row[3] || '';
+                const meaningsJSON = row[4] || '[]';
+                const createdDate = row[5] || new Date().toISOString();
+                const nextReview = row[6] || new Date().toISOString();
+                const interval = parseInt(row[7]) || 1;
+                const status = row[8] || 'active';
+
+                let meanings = [];
+                
                 try {
-                    return {
-                        userId: row[0],
-                        english: row[1],
-                        transcription: row[2],
-                        audioUrl: row[3],
-                        meanings: row[4] ? JSON.parse(row[4]) : [], // парсим JSON обратно в массив
-                        createdDate: row[5],
-                        nextReview: row[6],
-                        interval: parseInt(row[7]) || 1,
-                        status: row[8] || 'active'
-                    };
+                    // Проверяем, является ли meaningsJSON валидным JSON
+                    if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
+                        meanings = JSON.parse(meaningsJSON);
+                    } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
+                        // Если это объект, оборачиваем в массив
+                        meanings = [JSON.parse(meaningsJSON)];
+                    } else {
+                        // Если это не JSON, создаем fallback значение
+                        console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
+                        meanings = [{
+                            translation: meaningsJSON || 'Неизвестный перевод',
+                            example: '',
+                            partOfSpeech: '',
+                            definition: ''
+                        }];
+                    }
                 } catch (parseError) {
-                    console.error('❌ Error parsing meanings JSON for word:', row[1], parseError);
-                    return {
-                        userId: row[0],
-                        english: row[1],
-                        transcription: row[2],
-                        audioUrl: row[3],
-                        meanings: [], // fallback при ошибке парсинга
-                        createdDate: row[5],
-                        nextReview: row[6],
-                        interval: parseInt(row[7]) || 1,
-                        status: row[8] || 'active'
-                    };
+                    console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
+                    console.log(`📝 Problematic JSON:`, meaningsJSON.substring(0, 100));
+                    
+                    // Fallback: создаем базовую структуру
+                    meanings = [{
+                        translation: 'Перевод не загружен',
+                        example: '',
+                        partOfSpeech: '',
+                        definition: ''
+                    }];
                 }
+
+                return {
+                    userId,
+                    english,
+                    transcription,
+                    audioUrl,
+                    meanings,
+                    createdDate,
+                    nextReview,
+                    interval,
+                    status
+                };
             });
         } catch (error) {
             console.error('❌ Error reading words from Google Sheets:', error.message);
@@ -237,8 +266,13 @@ export class GoogleSheetsService {
             
             return userWords.filter(word => {
                 if (!word.nextReview || word.status !== 'active') return false;
-                const reviewDate = new Date(word.nextReview);
-                return reviewDate <= now;
+                try {
+                    const reviewDate = new Date(word.nextReview);
+                    return reviewDate <= now;
+                } catch (dateError) {
+                    console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
+                    return false;
+                }
             });
         } catch (error) {
             console.error('❌ Error getting words for review:', error.message);
@@ -265,7 +299,7 @@ export class GoogleSheetsService {
             for (let i = 0; i < rows.length; i++) {
                 if (rows[i][0] === userId.toString() && 
                     rows[i][1].toLowerCase() === english.toLowerCase() && 
-                    rows[i][8] === 'active') {
+                    (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
                     rowIndex = i + 1;
                     break;
                 }
@@ -317,7 +351,7 @@ export class GoogleSheetsService {
             for (let i = 0; i < rows.length; i++) {
                 if (rows[i][0] === userId.toString() && 
                     rows[i][1].toLowerCase() === english.toLowerCase() && 
-                    (rows[i][8] === 'active' || !rows[i][8])) {
+                    (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
                     rowIndex = i + 1;
                     break;
                 }
@@ -381,7 +415,7 @@ export class GoogleSheetsService {
             for (let i = 0; i < rows.length; i++) {
                 if (rows[i][0] === userId.toString() && 
                     rows[i][1].toLowerCase() === english.toLowerCase() && 
-                    (rows[i][8] === 'active' || !rows[i][8])) {
+                    (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
                     rowIndex = i + 1;
                     break;
                 }
@@ -441,7 +475,62 @@ export class GoogleSheetsService {
         
         try {
             console.log(`🔄 Starting migration for user ${userId}`);
-            // Здесь можно добавить логику миграции если нужно
+            // Получаем все слова пользователя
+            const userWords = await this.getUserWords(userId);
+            
+            let migratedCount = 0;
+            
+            for (const word of userWords) {
+                // Проверяем, нужно ли мигрировать это слово
+                if (word.meanings.length === 0 || 
+                    (word.meanings.length === 1 && word.meanings[0].translation === 'Перевод не загружен')) {
+                    
+                    // Это слово с поврежденными данными, нужно исправить
+                    console.log(`🔄 Migrating word: ${word.english}`);
+                    
+                    // Создаем правильную структуру meanings
+                    const correctMeanings = [{
+                        translation: 'Перевод требуется обновить',
+                        example: '',
+                        partOfSpeech: '',
+                        definition: ''
+                    }];
+                    
+                    const correctMeaningsJSON = JSON.stringify(correctMeanings);
+                    
+                    // Находим строку для обновления
+                    const response = await this.sheets.spreadsheets.values.get({
+                        spreadsheetId: this.spreadsheetId,
+                        range: 'Words!A:I',
+                    });
+                    
+                    const rows = response.data.values || [];
+                    let rowIndex = -1;
+                    
+                    for (let i = 0; i < rows.length; i++) {
+                        if (rows[i][0] === userId.toString() && 
+                            rows[i][1].toLowerCase() === word.english.toLowerCase()) {
+                            rowIndex = i + 1;
+                            break;
+                        }
+                    }
+
+                    if (rowIndex !== -1) {
+                        // Обновляем meanings
+                        await this.sheets.spreadsheets.values.update({
+                            spreadsheetId: this.spreadsheetId,
+                            range: `Words!E${rowIndex}`,
+                            valueInputOption: 'RAW',
+                            resource: {
+                                values: [[correctMeaningsJSON]]
+                            }
+                        });
+                        migratedCount++;
+                    }
+                }
+            }
+            
+            console.log(`✅ Migration completed: ${migratedCount} words migrated`);
             return true;
         } catch (error) {
             console.error('❌ Error during migration:', error.message);
