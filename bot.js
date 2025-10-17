@@ -61,7 +61,7 @@ function getAfterAudioKeyboard() {
     };
 }
 
-// Клавиатура для выбора переводов С АНГЛИЙСКИМИ ЗНАЧЕНИЯМИ
+// Клавиатура для выбора переводов
 function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
     const translationButtons = translations.map((translation, index) => {
         const isSelected = selectedIndices.includes(index);
@@ -80,11 +80,11 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
         
         const emoji = isSelected ? '✅' : numberEmoji;
         
-        // ✅ НАХОДИМ АНГЛИЙСКОЕ ЗНАЧЕНИЕ ДЛЯ ЭТОГО ПЕРЕВОДА
+        // Находим английское значение для этого перевода
         const meaningForTranslation = meanings.find(meaning => meaning.translation === translation);
         const englishDefinition = meaningForTranslation?.englishDefinition || '';
         
-        // ✅ СОКРАЩАЕМ ДЛИННЫЙ ТЕКСТ ДЛЯ КНОПКИ
+        // Сокращаем длинный текст для кнопки
         let displayText = translation;
         let definitionText = englishDefinition;
         
@@ -313,7 +313,7 @@ bot.on('message', async (msg) => {
             let meanings = [];
             let translations = [];
 
-            // ✅ 1. ПОЛУЧАЕМ ПЕРЕВОДЫ, ЗНАЧЕНИЯ И ПРИМЕРЫ ИЗ CAMBRIDGE
+            // ✅ 1. ПОЛУЧАЕМ ПЕРЕВОДЫ ИЗ CAMBRIDGE
             console.log(`📚 Запрашиваем Cambridge Dictionary...`);
             const cambridgeData = await cambridgeService.getWordData(englishWord);
             
@@ -321,19 +321,14 @@ bot.on('message', async (msg) => {
                 console.log(`✅ Cambridge успешно: ${cambridgeData.meanings.length} значений`);
                 meanings = cambridgeData.meanings;
                 translations = meanings.map(m => m.translation).filter((t, i, arr) => arr.indexOf(t) === i);
+                
+                // Логируем найденные переводы для отладки
+                console.log(`📝 Найдены переводы:`, translations);
             } else {
-                console.log(`❌ Cambridge не сработал`);
-                meanings = [{ 
-                    id: 'fallback',
-                    translation: 'перевод не найден', 
-                    englishDefinition: `${englishWord} - definition not found`,
-                    englishWord: englishWord,
-                    partOfSpeech: 'unknown',
-                    examples: [],
-                    synonyms: [],
-                    source: 'fallback'
-                }];
-                translations = ['перевод не найден'];
+                console.log(`❌ Cambridge не вернул переводы`);
+                // Создаем пустой массив, чтобы перейти к ручному вводу
+                meanings = [];
+                translations = [];
             }
 
             // ✅ 2. ПОЛУЧАЕМ ТРАНСКРИПЦИЮ И АУДИО ОТ ЯНДЕКСА
@@ -392,7 +387,7 @@ bot.on('message', async (msg) => {
                     message += `\n📝 Найдено ${totalExamples} примеров использования`;
                 }
             } else {
-                message += `\n\n❌ Переводы не найдены`;
+                message += `\n\n❌ Переводы не найдены в Cambridge Dictionary\n✏️ Вы можете ввести перевод вручную`;
             }
             
             message += `\n\nВыберите действие:`;
@@ -482,6 +477,7 @@ bot.on('callback_query', async (callbackQuery) => {
                     { chat_id: chatId, message_id: callbackQuery.message.message_id }
                 );
 
+                // ✅ ИЗМЕНЕНИЕ: Проверяем есть ли переводы от Cambridge
                 if (userState.tempTranslations && userState.tempTranslations.length > 0) {
                     userStates.set(chatId, {
                         ...userState,
@@ -503,17 +499,21 @@ bot.on('callback_query', async (callbackQuery) => {
                     );
                     
                 } else {
+                    // ✅ ИЗМЕНЕНИЕ: Если переводов нет, сразу переходим к ручному вводу
                     userStates.set(chatId, {
                         ...userState,
                         state: 'waiting_manual_translation'
                     });
                     
-                    let translationMessage = '✏️ Введите перевод для слова:\n\n' +
+                    let translationMessage = '✏️ Cambridge Dictionary не нашел переводов\n\n' +
+                        'Введите перевод для слова:\n\n' +
                         `🇬🇧 ${userState.tempWord}`;
                     
                     if (userState.tempTranscription) {
                         translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                     }
+                    
+                    translationMessage += '\n\n💡 Вы можете ввести один или несколько переводов через запятую';
                     
                     await showMainMenu(chatId, translationMessage);
                 }
