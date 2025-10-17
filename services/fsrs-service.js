@@ -1,18 +1,32 @@
 import pkg from 'fsrs.js';
-const { FSRS, createEmptyCard, generatorParameters, Rating } = pkg;
+const { FSRS, createEmptyCard, Rating } = pkg;
 
 export class FSRSService {
     constructor() {
-        // Настройки для быстрого запоминания
-        const fastLearningParams = generatorParameters({
-            request_retention: 0.8,    // 80% - чаще повторения
-            maximum_interval: 365,     // Макс 1 год
-            enable_short_term: true,   // Включить краткосрочные повторения
-            w: [0.4, 0.9, 2.0, 0.2, 0.6, 0.3, 1.5, 0.1, 1.0, 0.5, 2.0, 0.3, 1.2, 0.6]
-        });
-        
-        this.fsrs = new FSRS(fastLearningParams);
-        console.log('✅ FSRS service initialized with FAST LEARNING parameters');
+        try {
+            // Используем стандартные параметры FSRS
+            // Если нужно кастомизировать, можно передать параметры вручную
+            this.fsrs = new FSRS();
+            console.log('✅ FSRS service initialized with default parameters');
+        } catch (error) {
+            console.error('❌ Error initializing FSRS:', error);
+            // Fallback: создаем базовый экземпляр
+            this.fsrs = { 
+                repeat: (card, date) => this.fallbackRepeat(card, date)
+            };
+        }
+    }
+
+    // Fallback метод если FSRS не инициализирован
+    fallbackRepeat(card, date) {
+        const now = new Date();
+        const defaultIntervals = {
+            [Rating.Again]: { card: { due: new Date(now.getTime() + 24 * 60 * 60 * 1000), interval: 1 } },
+            [Rating.Hard]: { card: { due: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), interval: 3 } },
+            [Rating.Good]: { card: { due: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000), interval: 7 } },
+            [Rating.Easy]: { card: { due: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000), interval: 14 } }
+        };
+        return defaultIntervals;
     }
 
     createNewCard() {
@@ -47,11 +61,34 @@ export class FSRSService {
             };
         } catch (error) {
             console.error('❌ FSRS review error:', error);
+            // Fallback: создаем новую карточку при ошибке
             const fallbackCard = createEmptyCard();
             const nextReview = new Date();
-            nextReview.setDate(nextReview.getDate() + 1);
+            
+            // Fallback интервалы для быстрого запоминания
+            switch(rating.toLowerCase()) {
+                case 'again':
+                    nextReview.setDate(nextReview.getDate() + 1);
+                    fallbackCard.interval = 1;
+                    break;
+                case 'hard':
+                    nextReview.setDate(nextReview.getDate() + 2);
+                    fallbackCard.interval = 2;
+                    break;
+                case 'good':
+                    nextReview.setDate(nextReview.getDate() + 4);
+                    fallbackCard.interval = 4;
+                    break;
+                case 'easy':
+                    nextReview.setDate(nextReview.getDate() + 7);
+                    fallbackCard.interval = 7;
+                    break;
+                default:
+                    nextReview.setDate(nextReview.getDate() + 4);
+                    fallbackCard.interval = 4;
+            }
+            
             fallbackCard.due = nextReview;
-            fallbackCard.interval = 1;
             
             return {
                 card: fallbackCard,
