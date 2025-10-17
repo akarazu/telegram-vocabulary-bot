@@ -11,9 +11,13 @@ class CambridgeDictionaryService {
             
             const response = await axios.get(`${this.baseUrl}/${encodeURIComponent(word.toLowerCase())}`, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
                 },
-                timeout: 10000,
+                timeout: 15000,
             });
 
             return this.parseCambridgeHTML(response.data, word);
@@ -33,34 +37,21 @@ class CambridgeDictionaryService {
         console.log(`📖 [Cambridge] Парсинг HTML для: "${word}"`);
 
         try {
-            // ПАРСИМ ПЕРЕВОДЫ - ищем русские переводы в HTML
-            const translationMatches = html.match(/<span class="trans dtrans dtrans-se[^>]*>([^<]+)<\/span>/g);
+            // 🔧 ОСНОВНОЙ ПАРСИНГ - ищем блоки с определениями
+            const definitionBlocks = html.match(/<div class="def-block ddef_block[^>]*>[\s\S]*?<\/div><\/div>/g);
             
-            if (translationMatches) {
-                translationMatches.forEach((match, index) => {
-                    const translation = match.replace(/<[^>]+>/g, '').trim();
-                    
-                    if (translation && !translation.includes('{') && !translation.includes('}')) {
-                        const meaning = {
-                            id: `cam_${index}`,
-                            translation: translation,
-                            englishDefinition: this.findEnglishDefinition(html, index),
-                            englishWord: word,
-                            partOfSpeech: this.findPartOfSpeech(html, index),
-                            examples: this.findExamples(html, index),
-                            synonyms: [],
-                            source: 'Cambridge Dictionary'
-                        };
-                        
-                        result.meanings.push(meaning);
-                        console.log(`✅ Найден перевод: ${translation}`);
-                    }
+            if (definitionBlocks) {
+                console.log(`🎯 Найдено блоков определений: ${definitionBlocks.length}`);
+                
+                definitionBlocks.forEach((block, blockIndex) => {
+                    this.parseDefinitionBlock(block, word, blockIndex, result);
                 });
             }
 
-            // Альтернативный поиск переводов
+            // 🔧 АЛЬТЕРНАТИВНЫЙ ПАРСИНГ - если не нашли блоки
             if (result.meanings.length === 0) {
-                this.alternativeTranslationParse(html, word, result);
+                console.log('🔧 Используем альтернативный парсинг...');
+                this.alternativeParse(html, word, result);
             }
 
         } catch (error) {
@@ -68,83 +59,180 @@ class CambridgeDictionaryService {
         }
 
         console.log(`✅ [Cambridge] Найдено ${result.meanings.length} переводов`);
+        
+        // Логируем найденные переводы для отладки
+        result.meanings.forEach((meaning, index) => {
+            console.log(`   ${index + 1}. "${meaning.translation}" - ${meaning.englishDefinition.substring(0, 50)}...`);
+        });
+        
         return result;
     }
 
-    alternativeTranslationParse(html, word, result) {
-        // Другие паттерны для поиска переводов
-        const patterns = [
-            /<span[^>]*data-trans="([^"]*)"[^>]*>/g,
-            /<span[^>]*class="[^"]*trans[^"]*"[^>]*>([^<]+)<\/span>/g,
-            /"translation":"([^"]+)"/g
-        ];
+    parseDefinitionBlock(block, word, blockIndex, result) {
+        try {
+            // 🔍 ИЩЕМ ПЕРЕВОД (русский)
+            const translationMatch = block.match(/<span class="trans dtrans dtrans-se[^>]*>([^<]+)<\/span>/);
+            if (!translationMatch) {
+                console.log(`   ❌ В блоке ${blockIndex} не найден перевод`);
+                return;
+            }
 
-        for (const pattern of patterns) {
-            const matches = [...html.matchAll(pattern)];
-            if (matches.length > 0) {
-                matches.forEach((match, index) => {
-                    const translation = match[1] || match[0].replace(pattern, '$1').replace(/<[^>]+>/g, '').trim();
+            const translation = translationMatch[1].trim();
+            console.log(`   ✅ Найден перевод: "${translation}"`);
+
+            // 🔍 ИЩЕМ АНГЛИЙСКОЕ ОПРЕДЕЛЕНИЕ
+            const definitionMatch = block.match(/<div class="def ddef_d db">([^<]+)<\/div>/);
+            const englishDefinition = definitionMatch ? definitionMatch[1].trim() : `Definition for ${word}`;
+
+            // 🔍 ИЩЕМ ЧАСТЬ РЕЧИ
+            const posMatch = block.match(/<span class="pos dpos">([^<]+)<\/span>/);
+            const partOfSpeech = posMatch ? this.translatePOS(posMatch[1].trim()) : 'unknown';
+
+            // 🔍 ИЩЕМ ПРИМЕРЫ
+            const examples = [];
+            const exampleMatches = block.match(/<span class="eg deg">([^<]+)<\/span>/g);
+            if (exampleMatches) {
+                exampleMatches.forEach(exampleMatch => {
+                    const exampleText = exampleMatch.replace(/<[^>]+>/g, '').trim();
+                    if (exampleText) {
+                        examples.push({
+                            english: exampleText,
+                            russian: ''
+                        });
+                    }
+                });
+            }
+
+            // 🔍 ИЩЕМ УРОВЕНЬ СЛОВА (A1, B2, etc)
+            const levelMatch = block.match(/<span class="epp-xref dxref[^>]*>([^<]+)<\/span>/);
+            const level = levelMatch ? levelMatch[1].trim() : '';
+
+            const meaning = {
+                id: `cam_${blockIndex}_${Date.now()}`,
+                translation: translation,
+                englishDefinition: englishDefinition,
+                englishWord: word,
+                partOfSpeech: partOfSpeech,
+                examples: examples,
+                synonyms: [],
+                level: level,
+                source: 'Cambridge Dictionary'
+            };
+
+            // Проверяем на дубликаты перед добавлением
+            const isDuplicate = result.meanings.some(m => 
+                m.translation === meaning.translation && 
+                m.englishDefinition === meaning.englishDefinition
+            );
+
+            if (!isDuplicate) {
+                result.meanings.push(meaning);
+                console.log(`   ✅ Добавлено значение: "${translation}"`);
+            } else {
+                console.log(`   ⚠️ Пропущен дубликат: "${translation}"`);
+            }
+
+        } catch (error) {
+            console.error(`   ❌ Ошибка парсинга блока ${blockIndex}:`, error.message);
+        }
+    }
+
+    alternativeParse(html, word, result) {
+        try {
+            // 🔧 ПРОСТОЙ ПОИСК ПО РЕГУЛЯРНЫМ ВЫРАЖЕНИЯМ
+            console.log('🔧 Простой поиск переводов...');
+            
+            // Ищем все русские переводы
+            const allTranslations = html.match(/<span[^>]*lang="ru"[^>]*>([^<]+)<\/span>/g) || 
+                                   html.match(/<span[^>]*class="[^"]*trans[^"]*"[^>]*>([^<]+)<\/span>/g);
+            
+            if (allTranslations) {
+                allTranslations.forEach((match, index) => {
+                    const translation = match.replace(/<[^>]+>/g, '').trim();
                     
-                    if (translation && translation.length > 1 && !translation.includes('{')) {
+                    // Фильтруем мусор
+                    if (translation && 
+                        translation.length > 2 && 
+                        !translation.includes('{') && 
+                        !translation.includes('}') &&
+                        !translation.includes('Cambridge') &&
+                        /[а-яА-Я]/.test(translation)) {
+                        
                         const meaning = {
-                            id: `alt_${index}`,
+                            id: `alt_${index}_${Date.now()}`,
                             translation: translation,
-                            englishDefinition: `Definition for ${word}`,
+                            englishDefinition: `Alternative definition for ${word}`,
                             englishWord: word,
                             partOfSpeech: 'unknown',
                             examples: [],
                             synonyms: [],
-                            source: 'Cambridge Dictionary'
+                            source: 'Cambridge Dictionary (Alt)'
                         };
                         
+                        // Проверяем на дубликаты
                         if (!result.meanings.some(m => m.translation === translation)) {
                             result.meanings.push(meaning);
-                            console.log(`✅ Найден перевод (alt): ${translation}`);
+                            console.log(`   ✅ Альтернативный перевод: "${translation}"`);
                         }
                     }
                 });
-                
-                if (result.meanings.length > 0) break;
             }
+
+            // 🔧 ПОИСК В JSON-LD структуре
+            const jsonLdMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+            if (jsonLdMatch) {
+                try {
+                    const jsonData = JSON.parse(jsonLdMatch[1]);
+                    this.parseJsonLd(jsonData, word, result);
+                } catch (jsonError) {
+                    console.log('   ❌ Не удалось распарсить JSON-LD');
+                }
+            }
+
+        } catch (error) {
+            console.error('❌ Ошибка альтернативного парсинга:', error);
         }
     }
 
-    findEnglishDefinition(html, index) {
-        // Ищем английское определение рядом с переводом
-        const defPattern = /<div class="def ddef_d db">([^<]+)<\/div>/g;
-        const matches = [...html.matchAll(defPattern)];
-        
-        if (matches[index]) {
-            return matches[index][1].trim();
+    parseJsonLd(jsonData, word, result) {
+        try {
+            if (jsonData.description) {
+                const meaning = {
+                    id: `json_${Date.now()}`,
+                    translation: this.generateTranslationFromDefinition(jsonData.description),
+                    englishDefinition: jsonData.description,
+                    englishWord: word,
+                    partOfSpeech: 'unknown',
+                    examples: [],
+                    synonyms: [],
+                    source: 'Cambridge Dictionary (JSON)'
+                };
+                
+                if (!result.meanings.some(m => m.translation === meaning.translation)) {
+                    result.meanings.push(meaning);
+                    console.log(`   ✅ JSON перевод: "${meaning.translation}"`);
+                }
+            }
+        } catch (error) {
+            console.log('   ❌ Ошибка парсинга JSON-LD');
         }
-        return `Definition ${index + 1}`;
     }
 
-    findPartOfSpeech(html, index) {
-        // Ищем часть речи
-        const posPattern = /<span class="pos dpos">([^<]+)<\/span>/g;
-        const matches = [...html.matchAll(posPattern)];
+    generateTranslationFromDefinition(definition) {
+        const def = definition.toLowerCase();
         
-        if (matches[index]) {
-            return this.translatePOS(matches[index][1]);
-        }
-        return 'unknown';
-    }
-
-    findExamples(html, index) {
-        // Ищем примеры использования
-        const examplePattern = /<span class="eg deg">([^<]+)<\/span>/g;
-        const matches = [...html.matchAll(examplePattern)];
-        const examples = [];
+        if (def.includes('enjoy') && def.includes('pleasure')) return 'получать удовольствие';
+        if (def.includes('person who') || def.includes('someone who')) return 'человек, который';
+        if (def.includes('something that') || def.includes('thing that')) return 'что-то, что';
+        if (def.includes('the ability to')) return 'способность';
+        if (def.includes('the process of')) return 'процесс';
+        if (def.includes('the state of')) return 'состояние';
+        if (def.includes('to make') || def.includes('to cause')) return 'сделать';
+        if (def.includes('to become')) return 'стать';
+        if (def.includes('having') || def.includes('with')) return 'имеющий';
+        if (def.includes('relating to')) return 'относящийся к';
         
-        if (matches[index]) {
-            examples.push({
-                english: matches[index][1].trim(),
-                russian: ''
-            });
-        }
-        
-        return examples;
+        return 'основное значение';
     }
 
     translatePOS(englishPOS) {
