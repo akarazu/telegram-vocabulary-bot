@@ -2,14 +2,17 @@ import { FSRS, createEmptyCard, generatorParameters, Rating } from 'fsrs.js';
 
 export class FSRSService {
     constructor() {
+        // Используем дефолтные параметры для простоты
         this.fsrs = new FSRS();
         console.log('✅ FSRS service initialized');
     }
 
+    // Создает новую карточку для слова
     createNewCard() {
         return createEmptyCard();
     }
 
+    // Обновляет карточку после повторения и возвращает новые данные
     reviewCard(card, rating) {
         try {
             const schedule = this.fsrs.repeat(card, new Date());
@@ -39,8 +42,14 @@ export class FSRSService {
         } catch (error) {
             console.error('❌ FSRS review error:', error);
             // Fallback: создаем новую карточку при ошибке
+            const fallbackCard = createEmptyCard();
+            const nextReview = new Date();
+            nextReview.setDate(nextReview.getDate() + 1);
+            fallbackCard.due = nextReview;
+            fallbackCard.interval = 1;
+            
             return {
-                card: createEmptyCard(),
+                card: fallbackCard,
                 reviewLog: null
             };
         }
