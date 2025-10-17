@@ -84,20 +84,16 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
         const meaningForTranslation = meanings.find(meaning => meaning.translation === translation);
         const englishDefinition = meaningForTranslation?.englishDefinition || '';
         
-        // Сокращаем длинный текст для кнопки
+        // Сокращаем только текст кнопки, но английское значение показываем полностью
         let displayText = translation;
-        let definitionText = englishDefinition;
         
         if (displayText.length > 25) {
             displayText = displayText.substring(0, 22) + '...';
         }
         
-        if (definitionText.length > 40) {
-            definitionText = definitionText.substring(0, 37) + '...';
-        }
-        
-        const buttonText = definitionText ? 
-            `${emoji} ${displayText}\n   📖 ${definitionText}` : 
+        // Формируем текст кнопки с английским значением на новой строке
+        const buttonText = englishDefinition ? 
+            `${emoji} ${displayText}` : 
             `${emoji} ${displayText}`;
         
         return [
@@ -492,7 +488,13 @@ bot.on('callback_query', async (callbackQuery) => {
                         translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                     }
 
-                    translationMessage += '\n\n💡 Каждый перевод включает английское значение слова';
+                    // ✅ ДОБАВЛЯЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ПОЛНОСТЬЮ С НОВОЙ СТРОКИ
+                    translationMessage += '\n\n**📖 Английские значения:**\n';
+                    userState.meanings.forEach((meaning, index) => {
+                        if (meaning.englishDefinition) {
+                            translationMessage += `\n${index + 1}. ${meaning.englishDefinition}`;
+                        }
+                    });
 
                     await bot.sendMessage(chatId, translationMessage, 
                         getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, [])
@@ -588,6 +590,16 @@ bot.on('callback_query', async (callbackQuery) => {
                     const selectedTranslations = userState.selectedTranslationIndices
                         .map(index => userState.tempTranslations[index]);
                     translationMessage += `\n\n✅ Уже выбрано: ${selectedTranslations.join(', ')}`;
+                }
+                
+                // ✅ ДОБАВЛЯЕМ АНГЛИЙСКИЕ ЗНАЧЕНИЯ ДЛЯ СПРАВКИ
+                if (userState.meanings.length > 0) {
+                    translationMessage += '\n\n**📖 Английские значения для справки:**\n';
+                    userState.meanings.forEach((meaning, index) => {
+                        if (meaning.englishDefinition) {
+                            translationMessage += `\n${index + 1}. ${meaning.englishDefinition}`;
+                        }
+                    });
                 }
                 
                 translationMessage += '\n\n💡 Ваш перевод будет добавлен к выбранным вариантам';
