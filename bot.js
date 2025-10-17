@@ -27,6 +27,9 @@ try {
 // Хранилище состояний пользователей
 const userStates = new Map();
 
+// Хранилище для планировщика нотификаций
+const notificationScheduler = new Map();
+
 // Главное меню
 function getMainMenu() {
     return {
@@ -323,6 +326,87 @@ async function processCustomTranslationWithExample(chatId, userState, example) {
     await showMainMenu(chatId);
 }
 
+// ✅ ФУНКЦИЯ: Отправка нотификаций о повторении
+async function sendReviewNotification(chatId) {
+    try {
+        const hasWords = await sheetsService.hasWordsForReview(chatId);
+        
+        if (hasWords) {
+            const wordsCount = await sheetsService.getReviewWordsCount(chatId);
+            
+            let message = '🔔 **Время повторять слова!**\n\n';
+            message += `📚 Сегодня готово к повторению: ${wordsCount} слов\n\n`;
+            message += '💪 Потратьте всего 5 минут чтобы укрепить память!\n\n';
+            message += 'Нажмите кнопку ниже чтобы начать:';
+            
+            await bot.sendMessage(chatId, message, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '📚 Начать повторение', callback_data: 'start_review_from_notification' }],
+                        [{ text: '⏰ Напомнить позже', callback_data: 'snooze_notification' }]
+                    ]
+                }
+            });
+            
+            console.log(`✅ Sent review notification to ${chatId}`);
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error('❌ Error sending review notification:', error);
+        return false;
+    }
+}
+
+// ✅ ФУНКЦИЯ: Запуск ежедневных нотификаций
+function startDailyNotifications() {
+    console.log('🕒 Starting daily notification scheduler...');
+    
+    // Проверяем каждые 30 минут есть ли слова для повторения
+    setInterval(async () => {
+        try {
+            const now = new Date();
+            const currentHour = now.getHours();
+            
+            // Отправляем нотификации только в рабочее время (9-21)
+            if (currentHour >= 9 && currentHour <= 21) {
+                console.log('🔍 Checking for review notifications...');
+                
+                // Получаем всех активных пользователей
+                if (sheetsService.initialized) {
+                    const activeUsers = await sheetsService.getAllActiveUsers();
+                    console.log(`📊 Active users found: ${activeUsers.length}`);
+                    
+                    for (const userId of activeUsers) {
+                        const chatId = userId; // В нашем случае userId = chatId
+                        
+                        // Проверяем, не отправляли ли уже нотификацию сегодня
+                        const lastNotification = notificationScheduler.get(chatId);
+                        const today = new Date().toDateString();
+                        
+                        if (!lastNotification || lastNotification.date !== today) {
+                            const sent = await sendReviewNotification(chatId);
+                            if (sent) {
+                                notificationScheduler.set(chatId, {
+                                    date: today,
+                                    sent: true
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('❌ Error in notification scheduler:', error);
+        }
+    }, 30 * 60 * 1000); // Проверяем каждые 30 минут
+    
+    // Также проверяем при старте бота
+    setTimeout(async () => {
+        console.log('🚀 Initial notification check...');
+    }, 10000);
+}
+
 // ✅ ФУНКЦИЯ: Начало сессии повторения
 async function startReviewSession(chatId) {
     if (!sheetsService.initialized) {
@@ -492,15 +576,33 @@ async function completeReviewSession(chatId, userState) {
     
     userStates.delete(chatId);
 
-    let message = '🎉 Сессия повторения завершена!\n\n';
+    let message = '🎉 **Сессия повторения завершена!**\n\n';
     message += `📊 Результаты:\n`;
     message += `• Всего слов: ${totalWords}\n`;
     message += `• Повторено: ${reviewedCount}\n`;
     message += `• Пропущено: ${totalWords - reviewedCount}\n\n`;
-    message += `Отличная работа! 🚀\n\n`;
-    message += `Следующую сессию можно начать командой /review или через меню`;
+    
+    if (reviewedCount === totalWords && totalWords > 0) {
+        message += `💪 Отличная работа! Вы повторили все слова на сегодня!\n\n`;
+        message += `🔄 Следующие слова будут доступны завтра.`;
+    } else if (totalWords > 0) {
+        message += `💡 Вы можете продолжить позже через меню.`;
+    }
+    
+    message += `\n\n📅 Следующую сессию можно начать командой /review или через меню`;
 
     await bot.sendMessage(chatId, message, getMainMenu());
+    
+    // Проверяем остались ли еще слова для повторения
+    setTimeout(async () => {
+        const remainingWords = await sheetsService.getReviewWordsCount(chatId);
+        if (remainingWords > 0) {
+            await bot.sendMessage(chatId, 
+                `ℹ️ Осталось слов для повторения: ${remainingWords}\n` +
+                `Можете продолжить когда будет удобно!`
+            );
+        }
+    }, 2000);
 }
 
 // ✅ ФУНКЦИЯ: Показ статистики пользователя
@@ -514,10 +616,11 @@ async function showUserStats(chatId) {
         const userWords = await sheetsService.getUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         const wordsForReview = await sheetsService.getWordsForReview(chatId);
+        const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
         
-        let message = '📊 Ваша статистика:\n\n';
+        let message = '📊 **Ваша статистика:**\n\n';
         message += `📚 Всего слов: ${activeWords.length}\n`;
-        message += `🔄 Слов для повторения: ${wordsForReview.length}\n`;
+        message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
         
         if (activeWords.length > 0) {
             // Считаем слова по интервалам повторения
@@ -535,12 +638,17 @@ async function showUserStats(chatId) {
                 else intervals['1+ месяц']++;
             });
             
-            message += `\n📅 Интервалы повторения:\n`;
+            message += `\n📅 **Интервалы повторения:**\n`;
             message += `• 1-2 дня: ${intervals['1-2 дня']} слов\n`;
             message += `• 3-7 дней: ${intervals['3-7 дней']} слов\n`;
             message += `• 1-4 недели: ${intervals['1-4 недели']} слов\n`;
             message += `• 1+ месяц: ${intervals['1+ месяц']} слов\n`;
         }
+        
+        message += `\n💡 **Система настроена на быстрое запоминание:**\n`;
+        message += `• Лимит: 5 слов в день\n`;
+        message += `• Частые повторения\n`;
+        message += `• Оптимальные интервалы\n`;
         
         message += `\n💪 Продолжайте в том же духе!`;
 
@@ -559,7 +667,8 @@ bot.onText(/\/start/, async (msg) => {
         '🔤 С транскрипцией и произношением\n' +
         '🇬🇧 Британский вариант\n' +
         '📝 Каждое слово хранится с несколькими значениями\n' +
-        '🔄 Интервальное повторение слов целиком\n\n' +
+        '🔄 **Умное интервальное повторение**\n' +
+        '🔔 **Автоматические напоминания**\n\n' +
         '💡 Используйте меню для навигации:'
     );
 });
@@ -605,6 +714,26 @@ bot.onText(/\/review/, async (msg) => {
 bot.onText(/\/stats/, async (msg) => {
     const chatId = msg.chat.id;
     await showUserStats(chatId);
+});
+
+// Команда для проверки нотификации
+bot.onText(/\/notify/, async (msg) => {
+    const chatId = msg.chat.id;
+    await sendReviewNotification(chatId);
+});
+
+// Команда для проверки количества слов для повторения
+bot.onText(/\/check/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (sheetsService.initialized) {
+        const count = await sheetsService.getReviewWordsCount(chatId);
+        await bot.sendMessage(chatId, 
+            `📊 Слов для повторения: ${count}\n\n` +
+            (count > 0 ? '💪 Начните повторение через меню!' : '🎉 На сегодня слов для повторения нет!')
+        );
+    } else {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+    }
 });
 
 // Обработка сообщений
@@ -1069,6 +1198,25 @@ bot.on('callback_query', async (callbackQuery) => {
             await completeReviewSession(chatId, userState);
         }
     }
+    // ✅ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ НОТИФИКАЦИЙ
+    else if (data === 'start_review_from_notification') {
+        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+        await startReviewSession(chatId);
+    }
+    else if (data === 'snooze_notification') {
+        await bot.editMessageText(
+            '⏰ Хорошо, напомню через 2 часа!',
+            {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id
+            }
+        );
+        
+        // Устанавливаем таймер на 2 часа
+        setTimeout(async () => {
+            await sendReviewNotification(chatId);
+        }, 2 * 60 * 60 * 1000);
+    }
 });
 
 // Обработка ошибок
@@ -1089,4 +1237,9 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
 });
 
-console.log('🤖 Бот запущен: Версия с системой интервального повторения FSRS');
+// Запускаем нотификации после инициализации бота
+setTimeout(() => {
+    startDailyNotifications();
+}, 5000);
+
+console.log('🤖 Бот запущен: Версия с лимитом 5 карточек, быстрым запоминанием и умными нотификациями!');
