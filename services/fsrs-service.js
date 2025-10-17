@@ -3,17 +3,22 @@ const { FSRS, createEmptyCard, generatorParameters, Rating } = pkg;
 
 export class FSRSService {
     constructor() {
-        // Используем дефолтные параметры для простоты
-        this.fsrs = new FSRS();
-        console.log('✅ FSRS service initialized');
+        // Настройки для быстрого запоминания
+        const fastLearningParams = generatorParameters({
+            request_retention: 0.8,    // 80% - чаще повторения
+            maximum_interval: 365,     // Макс 1 год
+            enable_short_term: true,   // Включить краткосрочные повторения
+            w: [0.4, 0.9, 2.0, 0.2, 0.6, 0.3, 1.5, 0.1, 1.0, 0.5, 2.0, 0.3, 1.2, 0.6]
+        });
+        
+        this.fsrs = new FSRS(fastLearningParams);
+        console.log('✅ FSRS service initialized with FAST LEARNING parameters');
     }
 
-    // Создает новую карточку для слова
     createNewCard() {
         return createEmptyCard();
     }
 
-    // Обновляет карточку после повторения и возвращает новые данные
     reviewCard(card, rating) {
         try {
             const schedule = this.fsrs.repeat(card, new Date());
@@ -42,7 +47,6 @@ export class FSRSService {
             };
         } catch (error) {
             console.error('❌ FSRS review error:', error);
-            // Fallback: создаем новую карточку при ошибке
             const fallbackCard = createEmptyCard();
             const nextReview = new Date();
             nextReview.setDate(nextReview.getDate() + 1);
@@ -56,7 +60,6 @@ export class FSRSService {
         }
     }
 
-    // Вспомогательный метод для получения интервала в днях
     getIntervalDays(dueDate) {
         const now = new Date();
         const due = new Date(dueDate);
