@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { GoogleSheetsService } from './services/google-sheets.js';
-import { CombinedDictionaryService } from './services/combined-dictionary-service.js';
+import { YandexDictionaryService } from './services/yandex-service.js';
 import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
@@ -8,7 +8,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 });
 
 const sheetsService = new GoogleSheetsService();
-const dictionaryService = new CombinedDictionaryService();
+const yandexService = new YandexDictionaryService();
 const cambridgeService = new CambridgeDictionaryService();
 
 // Хранилище состояний пользователей
@@ -49,8 +49,8 @@ function getAfterAudioKeyboard() {
     };
 }
 
-// Клавиатура для выбора переводов
-function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
+// Клавиатура для выбора переводов С АНГЛИЙСКИМИ ЗНАЧЕНИЯМИ
+function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
     const translationButtons = translations.map((translation, index) => {
         const isSelected = selectedIndices.includes(index);
         
@@ -68,9 +68,29 @@ function getTranslationSelectionKeyboard(translations, selectedIndices = []) {
         
         const emoji = isSelected ? '✅' : numberEmoji;
         
+        // ✅ НАХОДИМ АНГЛИЙСКОЕ ЗНАЧЕНИЕ ДЛЯ ЭТОГО ПЕРЕВОДА
+        const meaningForTranslation = meanings.find(meaning => meaning.translation === translation);
+        const englishDefinition = meaningForTranslation?.englishDefinition || '';
+        
+        // ✅ СОКРАЩАЕМ ДЛИННЫЙ ТЕКСТ ДЛЯ КНОПКИ
+        let displayText = translation;
+        let definitionText = englishDefinition;
+        
+        if (displayText.length > 25) {
+            displayText = displayText.substring(0, 22) + '...';
+        }
+        
+        if (definitionText.length > 40) {
+            definitionText = definitionText.substring(0, 37) + '...';
+        }
+        
+        const buttonText = definitionText ? 
+            `${emoji} ${displayText}\n   📖 ${definitionText}` : 
+            `${emoji} ${displayText}`;
+        
         return [
             { 
-                text: `${emoji} ${translation}`, 
+                text: buttonText, 
                 callback_data: `toggle_translation_${index}` 
             }
         ];
@@ -185,7 +205,7 @@ async function saveWordWithExamples(chatId, userState, selectedTranslations) {
         let successMessage = '✅ Слово добавлено в словарь!\n\n' +
             `💬 ${userState.tempWord}${transcriptionText} - ${selectedTranslations.join(', ')}\n\n`;
         
-        // ✅ ПОКАЗЫВАЕМ ПРИМЕРЫ ЕСЛИ ЕСТЬ
+        // ✅ ПОКАЗЫВАЕМ ПРИМЕРЫ ИЗ CAMBRIDGE DICTIONARY
         const examples = [];
         selectedTranslations.forEach(translation => {
             const meaningsForTranslation = userState.meanings.filter(
@@ -199,7 +219,7 @@ async function saveWordWithExamples(chatId, userState, selectedTranslations) {
         });
         
         if (examples.length > 0) {
-            successMessage += '📝 **Примеры использования:**\n';
+            successMessage += '📝 **Примеры использования из Cambridge Dictionary:**\n\n';
             const uniqueExamples = [...new Set(examples.map(ex => ex.english))].slice(0, 3);
             uniqueExamples.forEach((example, index) => {
                 successMessage += `${index + 1}. ${example}\n`;
@@ -273,7 +293,6 @@ bot.on('message', async (msg) => {
         await showMainMenu(chatId, '🔍 Ищу перевод, транскрипцию, произношение и примеры...');
         
         try {
-            // ✅ УПРОЩЕННАЯ ЛОГИКА: Cambridge + Яндекс транскрипция
             console.log(`🎯 Начинаем поиск для: "${englishWord}"`);
             
             let audioId = null;
@@ -282,7 +301,7 @@ bot.on('message', async (msg) => {
             let meanings = [];
             let translations = [];
 
-            // ✅ 1. ПОЛУЧАЕМ ДАННЫЕ ОТ CAMBRIDGE
+            // ✅ 1. ПОЛУЧАЕМ ПЕРЕВОДЫ, ЗНАЧЕНИЯ И ПРИМЕРЫ ИЗ CAMBRIDGE
             console.log(`📚 Запрашиваем Cambridge Dictionary...`);
             const cambridgeData = await cambridgeService.getWordData(englishWord);
             
@@ -305,11 +324,10 @@ bot.on('message', async (msg) => {
                 translations = ['перевод не найден'];
             }
 
-            // ✅ 2. ПОЛУЧАЕМ ТРАНСКРИПЦИЮ ОТ ЯНДЕКСА
+            // ✅ 2. ПОЛУЧАЕМ ТРАНСКРИПЦИЮ И АУДИО ОТ ЯНДЕКСА
             console.log(`🔤 Запрашиваем транскрипцию у Яндекс...`);
             try {
-                // Используем существующий метод getWordData из dictionaryService
-                const yandexData = await dictionaryService.getWordData(englishWord);
+                const yandexData = await yandexService.getTranscriptionAndAudio(englishWord);
                 transcription = yandexData.transcription || '';
                 audioUrl = yandexData.audioUrl || '';
                 
@@ -352,14 +370,14 @@ bot.on('message', async (msg) => {
             }
 
             if (translations.length > 0) {
-                message += `\n\n🎯 Найдено ${translations.length} вариантов перевода`;
+                message += `\n\n🎯 Найдено ${translations.length} вариантов перевода из Cambridge Dictionary`;
                 
                 // ✅ ПОКАЗЫВАЕМ НАЙДЕННЫЕ ПРИМЕРЫ
                 const totalExamples = meanings.reduce((total, meaning) => 
                     total + (meaning.examples ? meaning.examples.length : 0), 0
                 );
                 if (totalExamples > 0) {
-                    message += `\n📝 Найдено ${totalExamples} примеров использования из Cambridge Dictionary`;
+                    message += `\n📝 Найдено ${totalExamples} примеров использования`;
                 }
             } else {
                 message += `\n\n❌ Переводы не найдены`;
@@ -407,7 +425,7 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Обработка inline кнопок (БЕЗ ИЗМЕНЕНИЙ)
+// Обработка inline кнопок
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -459,15 +477,17 @@ bot.on('callback_query', async (callbackQuery) => {
                         selectedTranslationIndices: []
                     });
 
-                    let translationMessage = '🎯 **Выберите переводы:**\n\n' +
+                    let translationMessage = '🎯 **Выберите переводы из Cambridge Dictionary:**\n\n' +
                         `🇬🇧 ${userState.tempWord}`;
                     
                     if (userState.tempTranscription) {
                         translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                     }
 
+                    translationMessage += '\n\n💡 Каждый перевод включает английское значение слова';
+
                     await bot.sendMessage(chatId, translationMessage, 
-                        getTranslationSelectionKeyboard(userState.tempTranslations, [])
+                        getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, [])
                     );
                     
                 } else {
@@ -510,7 +530,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 });
                 
                 await bot.editMessageReplyMarkup(
-                    getTranslationSelectionKeyboard(userState.tempTranslations, selectedIndices).reply_markup,
+                    getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, selectedIndices).reply_markup,
                     {
                         chat_id: chatId,
                         message_id: callbackQuery.message.message_id
@@ -606,4 +626,4 @@ bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
 });
 
-console.log('🤖 Бот запущен с Cambridge Dictionary + Яндекс транскрипция');
+console.log('🤖 Бот запущен: Cambridge Dictionary + Яндекс транскрипция');
