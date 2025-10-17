@@ -44,7 +44,7 @@ function getListeningKeyboard(audioId) {
         reply_markup: {
             inline_keyboard: [
                 [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }],
-                [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }] // ИЗМЕНЕНО: Ввести → Выбрать
+                [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
             ]
         }
     };
@@ -55,8 +55,21 @@ function getAfterAudioKeyboard() {
     return {
         reply_markup: {
             inline_keyboard: [
-                [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }] // ИЗМЕНЕНО: Ввести → Выбрать
+                [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
             ]
+        }
+    };
+}
+
+// Клавиатура для ввода примера с кнопкой "Пропустить"
+function getExampleInputKeyboard() {
+    return {
+        reply_markup: {
+            keyboard: [
+                ['⏭️ Пропустить'],
+                ['➕ Добавить новое слово']
+            ],
+            resize_keyboard: true
         }
     };
 }
@@ -414,22 +427,33 @@ bot.on('message', async (msg) => {
             customTranslation: customTranslation
         });
         
-        await showMainMenu(chatId, 
-            `✏️ Вы ввели перевод: "${customTranslation}"\n\n` +
+        await bot.sendMessage(chatId, 
+            `✅ Вы ввели перевод: "${customTranslation}"\n\n` +
             `📝 Теперь вы можете добавить пример использования (необязательно):\n\n` +
-            `💡 Просто отправьте пример предложения с этим словом, или нажмите "➕ Добавить новое слово" чтобы пропустить`
+            `💡 Просто отправьте пример предложения с этим словом\n` +
+            `⏭️ Или нажмите "Пропустить" чтобы перейти к выбору переводов`,
+            getExampleInputKeyboard()
         );
     }
     else if (userState?.state === 'waiting_custom_example') {
-        const example = text.trim();
-        
-        // Если пользователь нажал "➕ Добавить новое слово" - пропускаем ввод примера
-        if (text === '➕ Добавить новое слово') {
-            example = '';
+        // Обработка кнопки "Пропустить"
+        if (text === '⏭️ Пропустить') {
+            // Пропускаем ввод примера
+            await processCustomTranslationWithoutExample(chatId, userState);
+            return;
         }
         
-        // Добавляем пользовательский перевод в список доступных переводов
-        const newTranslations = [...userState.tempTranslations, userState.customTranslation];
+        // Если пользователь нажал "➕ Добавить новое слово" - тоже пропускаем ввод примера
+        if (text === '➕ Добавить новое слово') {
+            await processCustomTranslationWithoutExample(chatId, userState);
+            return;
+        }
+        
+        // Пользователь ввел пример
+        const example = text.trim();
+        
+        // Добавляем пользовательский перевод в список доступных переводов (на первое место)
+        const newTranslations = [userState.customTranslation, ...userState.tempTranslations];
         
         // Создаем новое значение для пользовательского перевода
         const newMeaning = {
@@ -438,7 +462,7 @@ bot.on('message', async (msg) => {
             examples: example ? [{ english: example, russian: '' }] : []
         };
         
-        const newMeanings = [...userState.meanings, newMeaning];
+        const newMeanings = [newMeaning, ...userState.meanings];
         
         // Обновляем состояние
         userStates.set(chatId, {
@@ -446,8 +470,8 @@ bot.on('message', async (msg) => {
             state: 'choosing_translation',
             tempTranslations: newTranslations,
             meanings: newMeanings,
-            // Автоматически выбираем пользовательский перевод
-            selectedTranslationIndices: [newTranslations.length - 1]
+            // Автоматически выбираем пользовательский перевод (он теперь на первом месте)
+            selectedTranslationIndices: [0]
         });
         
         let successMessage = `✅ Ваш перевод "${userState.customTranslation}" добавлен!\n\n`;
@@ -456,12 +480,15 @@ bot.on('message', async (msg) => {
             successMessage += `📝 Пример: ${example}\n\n`;
         }
         
-        successMessage += `🎯 Теперь выберите переводы которые хотите сохранить:`;
+        successMessage += `🎯 Теперь выберите переводы которые хотите сохранить:\n` +
+                         `✅ Ваш перевод отмечен как выбранный`;
         
-        // Показываем обновленный список переводов с новым пользовательским переводом
+        // Показываем обновленный список переводов с новым пользовательским переводом наверху
         await bot.sendMessage(chatId, successMessage, 
-            getTranslationSelectionKeyboard(newTranslations, newMeanings, [newTranslations.length - 1])
+            getTranslationSelectionKeyboard(newTranslations, newMeanings, [0])
         );
+        
+        await showMainMenu(chatId);
     }
     else if (userState?.state === 'waiting_manual_translation') {
         const translation = text.trim();
@@ -497,6 +524,42 @@ bot.on('message', async (msg) => {
     }
 });
 
+// Вспомогательная функция для обработки пользовательского перевода без примера
+async function processCustomTranslationWithoutExample(chatId, userState) {
+    // Добавляем пользовательский перевод в список доступных переводов (на первое место)
+    const newTranslations = [userState.customTranslation, ...userState.tempTranslations];
+    
+    // Создаем новое значение для пользовательского перевода
+    const newMeaning = {
+        translation: userState.customTranslation,
+        englishDefinition: '', // Пользовательское значение не имеет английского определения
+        examples: []
+    };
+    
+    const newMeanings = [newMeaning, ...userState.meanings];
+    
+    // Обновляем состояние
+    userStates.set(chatId, {
+        ...userState,
+        state: 'choosing_translation',
+        tempTranslations: newTranslations,
+        meanings: newMeanings,
+        // Автоматически выбираем пользовательский перевод (он теперь на первом месте)
+        selectedTranslationIndices: [0]
+    });
+    
+    const successMessage = `✅ Ваш перевод "${userState.customTranslation}" добавлен!\n\n` +
+                          `🎯 Теперь выберите переводы которые хотите сохранить:\n` +
+                          `✅ Ваш перевод отмечен как выбранный и находится наверху списка`;
+    
+    // Показываем обновленный список переводов с новым пользовательским переводом наверху
+    await bot.sendMessage(chatId, successMessage, 
+        getTranslationSelectionKeyboard(newTranslations, newMeanings, [0])
+    );
+    
+    await showMainMenu(chatId);
+}
+
 // Обработка inline кнопок
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
@@ -522,7 +585,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 });
                 
                 await bot.sendMessage(chatId, 
-                    '🎵 Вы прослушали произношение. Хотите выбрать перевод?', // ИЗМЕНЕНО: ввести → выбрать
+                    '🎵 Вы прослушали произношение. Хотите выбрать перевод?',
                     getAfterAudioKeyboard()
                 );
                 
@@ -571,7 +634,7 @@ bot.on('callback_query', async (callbackQuery) => {
                     });
                     
                     let translationMessage = '✏️ Cambridge Dictionary не нашел переводов\n\n' +
-                        'Добавьте свой перевод для слова:\n\n' + // ИЗМЕНЕНО: Введите → Добавьте
+                        'Добавьте свой перевод для слова:\n\n' +
                         `🇬🇧 ${userState.tempWord}`;
                     
                     if (userState.tempTranscription) {
