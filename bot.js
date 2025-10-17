@@ -1,15 +1,27 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { GoogleSheetsService } from './services/google-sheets.js';
-import { YandexDictionaryService } from './services/yandex-service.js';
+import { YandexDictionaryService } from './services/yandex-dictionary-service.js';
 import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
     polling: true 
 });
 
-const sheetsService = new GoogleSheetsService();
-const yandexService = new YandexDictionaryService();
-const cambridgeService = new CambridgeDictionaryService();
+// Инициализация сервисов с обработкой ошибок
+let sheetsService, yandexService, cambridgeService;
+
+try {
+    sheetsService = new GoogleSheetsService();
+    yandexService = new YandexDictionaryService();
+    cambridgeService = new CambridgeDictionaryService();
+    console.log('✅ Все сервисы успешно инициализированы');
+} catch (error) {
+    console.error('❌ Ошибка инициализации сервисов:', error);
+    // Создаем заглушки чтобы бот не падал
+    sheetsService = { initialized: false };
+    yandexService = { getTranscriptionAndAudio: () => ({ transcription: '', audioUrl: '' }) };
+    cambridgeService = { getWordData: () => ({ meanings: [] }) };
+}
 
 // Хранилище состояний пользователей
 const userStates = new Map();
