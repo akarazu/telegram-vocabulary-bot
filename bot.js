@@ -30,115 +30,28 @@ const userStates = new Map();
 // Хранилище для планировщика нотификаций
 const notificationScheduler = new Map();
 
-// ✅ ДОБАВЬТЕ ЗДЕСЬ: Хранилище для отслеживания показанных сегодня слов
-const shownNewWordsToday = new Map();
-
-// ✅ ФУНКЦИЯ: Сброс показанных слов в начале дня
-function resetShownWordsDaily() {
-    const now = new Date();
-    const currentHour = now.getHours();
-    
-    // Сбрасываем в 4 утра каждый день
-    if (currentHour === 4) {
-        shownNewWordsToday.clear();
-        console.log('🔄 Сброшены показанные слова на новый день');
-    }
-}
-
-// Запускаем ежечасную проверку
-setInterval(resetShownWordsDaily, 60 * 60 * 1000);
-
-// ✅ ФУНКЦИЯ: Получение НЕ показанных сегодня слов с учетом лимита
-async function getUnshownNewWords(chatId) {
-    if (!sheetsService.initialized) {
-        return [];
-    }
-    
-    try {
-        const userWords = await sheetsService.getUserWords(chatId);
-        
-        // Получаем слова, показанные сегодня этому пользователю
-        const shownToday = shownNewWordsToday.get(chatId) || new Set();
-        const learnedToday = getLearnedToday(chatId);
-        const DAILY_LIMIT = 5;
-        
-        console.log(`🔍 Поиск новых слов для ${chatId}, показано: ${shownToday.size}, изучено: ${learnedToday}/${DAILY_LIMIT}`);
-
-        // Если достигнут лимит - возвращаем пустой массив
-        if (learnedToday >= DAILY_LIMIT) {
-            console.log(`🚫 Достигнут дневной лимит: ${learnedToday}/${DAILY_LIMIT}`);
-            return [];
-        }
-
-        // ✅ ИЗМЕНЕНИЕ: Ищем слова которые НИКОГДА не изучались (интервал = 1 день)
-        // и еще не показывались сегодня
-        const newWords = userWords.filter(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
-            
-            try {
-                // Слово считается новым если:
-                // 1. Интервал = 1 день (первое повторение)
-                // 2. Еще не показывалось сегодня
-                const isFirstInterval = word.interval === 1;
-                const isNotShownToday = !shownToday.has(word.english.toLowerCase());
-                
-                if (isFirstInterval && isNotShownToday) {
-                    console.log(`✅ Слово "${word.english}" - новое (интервал: ${word.interval}, не показано сегодня)`);
-                }
-                
-                return isFirstInterval && isNotShownToday;
-            } catch (error) {
-                console.error(`❌ Ошибка проверки слова "${word.english}"`);
-                return false;
-            }
-        });
-
-        console.log(`📊 Найдено потенциально новых слов: ${newWords.length}`);
-
-        // Сортируем по дате создания (сначала новые)
-        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
-
-        // Ограничиваем количеством оставшихся слов до лимита
-        const remainingSlots = DAILY_LIMIT - learnedToday;
-        const result = newWords.slice(0, remainingSlots);
-        
-        console.log(`🎯 Доступно для изучения: ${result.length} слов`);
-        return result;
-        
-    } catch (error) {
-        console.error('❌ Error getting unshown new words:', error);
-        return [];
-    }
-}
-
-// ✅ ФУНКЦИЯ: Отметка слова как показанного
-function markWordAsShown(chatId, englishWord) {
-    if (!shownNewWordsToday.has(chatId)) {
-        shownNewWordsToday.set(chatId, new Set());
-    }
-    
-    const userShownWords = shownNewWordsToday.get(chatId);
-    userShownWords.add(englishWord.toLowerCase());
-    console.log(`📝 Слово "${englishWord}" отмечено как показанное для ${chatId}`);
-}
-
-// ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
-async function getNewWordsCount(chatId) {
-    if (!sheetsService.initialized) {
-        return 0;
-    }
-    
-    try {
-        const newWords = await getUnshownNewWords(chatId);
-        return newWords.length;
-    } catch (error) {
-        console.error('❌ Error getting new words count:', error);
-        return 0;
-    }
-}
-
-// Хранилище для отслеживания дневного лимита изученных слов
+// ✅ ОБНОВЛЕНО: Хранилище для отслеживания дневного лимита изученных слов
 const dailyLearnedWords = new Map();
+
+// ✅ ОБНОВЛЕНО: Хранилище для слов, которые УЖЕ ИЗУЧЕНЫ (перешли в повторение)
+const learnedWords = new Map();
+
+// ✅ ФУНКЦИЯ: Отметка слова как изученного (перешедшего в повторение)
+function markWordAsLearned(chatId, englishWord) {
+    if (!learnedWords.has(chatId)) {
+        learnedWords.set(chatId, new Set());
+    }
+    
+    const userLearnedWords = learnedWords.get(chatId);
+    userLearnedWords.add(englishWord.toLowerCase());
+    console.log(`🎓 Слово "${englishWord}" отмечено как ИЗУЧЕННОЕ для ${chatId}`);
+}
+
+// ✅ ФУНКЦИЯ: Проверка изучено ли слово
+function isWordLearned(chatId, englishWord) {
+    const userLearnedWords = learnedWords.get(chatId);
+    return userLearnedWords ? userLearnedWords.has(englishWord.toLowerCase()) : false;
+}
 
 // ✅ ФУНКЦИЯ: Сброс дневного лимита
 function resetDailyLimit() {
@@ -179,6 +92,64 @@ function isDailyLimitReached(chatId) {
     const learnedToday = getLearnedToday(chatId);
     const DAILY_LIMIT = 5;
     return learnedToday >= DAILY_LIMIT;
+}
+
+// ✅ ФУНКЦИЯ: Получение НЕ ИЗУЧЕННЫХ слов
+async function getUnlearnedNewWords(chatId) {
+    if (!sheetsService.initialized) {
+        return [];
+    }
+    
+    try {
+        const userWords = await sheetsService.getUserWords(chatId);
+        const learnedToday = getLearnedToday(chatId);
+        const DAILY_LIMIT = 5;
+        
+        console.log(`🔍 Поиск новых слов для ${chatId}, изучено сегодня: ${learnedToday}/${DAILY_LIMIT}`);
+
+        // Если достигнут лимит изучения - возвращаем пустой массив
+        if (learnedToday >= DAILY_LIMIT) {
+            console.log(`🚫 Достигнут дневной лимит изучения: ${learnedToday}/${DAILY_LIMIT}`);
+            return [];
+        }
+
+        // ✅ ИСПРАВЛЕНИЕ: Фильтруем слова которые ЕЩЕ НЕ ИЗУЧЕНЫ (не в системе повторения)
+        const newWords = userWords.filter(word => {
+            if (!word.nextReview || word.status !== 'active') return false;
+            
+            try {
+                const isFirstInterval = word.interval === 1;
+                const isNotLearned = !isWordLearned(chatId, word.english);
+                
+                if (isFirstInterval && isNotLearned) {
+                    console.log(`✅ Слово "${word.english}" - новое и не изучено`);
+                } else if (isFirstInterval) {
+                    console.log(`❌ Слово "${word.english}" - уже изучено, пропускаем`);
+                }
+                
+                return isFirstInterval && isNotLearned;
+            } catch (error) {
+                console.error(`❌ Ошибка проверки слова "${word.english}"`);
+                return false;
+            }
+        });
+
+        console.log(`📊 Найдено не изученных слов: ${newWords.length}`);
+
+        // Сортируем по дате создания (сначала новые)
+        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+
+        // Ограничиваем количеством оставшихся слов до лимита
+        const remainingSlots = DAILY_LIMIT - learnedToday;
+        const result = newWords.slice(0, remainingSlots);
+        
+        console.log(`🎯 Будет показано: ${result.length} слов`);
+        return result;
+        
+    } catch (error) {
+        console.error('❌ Error getting unlearned new words:', error);
+        return [];
+    }
 }
 
 // Главное меню
@@ -758,7 +729,7 @@ async function completeReviewSession(chatId, userState) {
     }
     
     // Проверяем новые слова для изучения
-    const newWordsCount = await getNewWordsCount(chatId);
+    const newWordsCount = await getUnlearnedNewWords(chatId).then(words => words.length);
     if (newWordsCount > 0) {
         message += `🆕 Доступно новых слов для изучения: ${newWordsCount}\n`;
         message += `Можете изучить их через меню "🆕 Новые слова"!`;
@@ -789,7 +760,7 @@ async function startNewWordsSession(chatId) {
             return;
         }
 
-        const newWords = await getUnshownNewWords(chatId);
+        const newWords = await getUnlearnedNewWords(chatId);
         
         if (newWords.length === 0) {
             await bot.sendMessage(chatId, 
@@ -834,9 +805,6 @@ async function showNextNewWord(chatId) {
     const word = newWords[currentWordIndex];
     const progress = `${currentWordIndex + 1}/${newWords.length}`;
     
-    // ✅ ОТМЕЧАЕМ СЛОВО КАК ПОКАЗАННОЕ
-    markWordAsShown(chatId, word.english);
-    
     let message = `🆕 Изучение новых слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
     
@@ -873,7 +841,7 @@ async function showNextNewWord(chatId) {
     await bot.sendMessage(chatId, message, getNewWordsKeyboard());
 }
 
-// ✅ ФУНКЦИЯ: Обработка изучения нового слова
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -882,10 +850,13 @@ async function processNewWordLearning(chatId, action) {
     
     try {
         if (action === 'learned') {
-            // ✅ ОТМЕЧАЕМ СЛОВО КАК ИЗУЧЕННОЕ СЕГОДНЯ
+            // ✅ ВАЖНО: Отмечаем слово как ИЗУЧЕННОЕ (убрать из новых)
+            markWordAsLearned(chatId, word.english);
+            
+            // ✅ Отмечаем для дневного лимита
             markWordAsLearnedToday(chatId, word.english);
             
-            // Создаем карточку для FSRS и обновляем данные
+            // Обновляем данные FSRS
             const cardData = {
                 due: new Date(word.nextReview),
                 stability: 0,
@@ -897,10 +868,7 @@ async function processNewWordLearning(chatId, action) {
                 state: 0
             };
 
-            // Используем рейтинг "Good" для нового изученного слова
             const fsrsData = fsrsService.reviewCard(cardData, 'good');
-
-            // Сохраняем в Google Sheets
             const success = await sheetsService.updateCardAfterReview(
                 chatId, 
                 word.english, 
@@ -910,17 +878,16 @@ async function processNewWordLearning(chatId, action) {
 
             if (success) {
                 userState.learnedCount++;
+                console.log(`📚 Слово "${word.english}" перешло в систему повторения`);
             }
         } else if (action === 'repeat') {
-            // Для слова "Нужно повторить" - не отмечаем как изученное,
-            // но отмечаем как показанное чтобы оно не появлялось снова сегодня
-            markWordAsShown(chatId, word.english);
+            // Для "Нужно повторить" - не отмечаем как изученное,
+            // слово останется в новых словах для повторного изучения
+            console.log(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
         }
         
-        // Переходим к следующему слову в любом случае
         userState.currentWordIndex++;
         
-        // Показываем следующий вопрос или завершаем сессию
         if (userState.currentWordIndex < userState.newWords.length) {
             await showNextNewWord(chatId);
         } else {
@@ -963,56 +930,6 @@ async function completeNewWordsSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ ФУНКЦИЯ: Принудительное начало сессии изучения
-async function forceStartNewWordsSession(chatId) {
-    if (!sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
-        return;
-    }
-
-    try {
-        const userWords = await sheetsService.getUserWords(chatId);
-        const shownToday = shownNewWordsToday.get(chatId) || new Set();
-        
-        // Находим все слова с интервалом 1 день, которые не показаны сегодня
-        const newWords = userWords.filter(word => 
-            word.status === 'active' && 
-            word.interval === 1 && 
-            !shownToday.has(word.english.toLowerCase())
-        );
-
-        if (newWords.length === 0) {
-            await bot.sendMessage(chatId, 
-                '❌ Не найдено непоказанных слов с интервалом 1 день'
-            );
-            return;
-        }
-
-        // Сортируем по дате создания
-        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
-
-        // Сохраняем сессию изучения новых слов
-        userStates.set(chatId, {
-            state: 'learning_new_words',
-            newWords: newWords,
-            currentWordIndex: 0,
-            learnedCount: 0
-        });
-
-        await bot.sendMessage(chatId, 
-            `🎯 **Принудительная сессия начата!**\n\n` +
-            `📝 Слов для изучения: ${newWords.length}\n` +
-            `⚠️ Игнорируется дневной лимит`
-        );
-
-        await showNextNewWord(chatId);
-        
-    } catch (error) {
-        console.error('❌ Error force starting new words session:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при принудительном старте.');
-    }
-}
-
 // ✅ ФУНКЦИЯ: Показ статистики пользователя
 async function showUserStats(chatId) {
     if (!sheetsService.initialized) {
@@ -1024,7 +941,7 @@ async function showUserStats(chatId) {
         const userWords = await sheetsService.getUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
-        const newWordsCount = await sheetsService.getNewWordsCount(chatId);
+        const newWordsCount = await getUnlearnedNewWords(chatId).then(words => words.length);
         
         let message = '📊 **Ваша статистика:**\n\n';
         message += `📚 Всего слов: ${activeWords.length}\n`;
@@ -1095,27 +1012,19 @@ bot.onText(/\/reset/, async (msg) => {
     await showMainMenu(chatId);
 });
 
-// Команда для проверки состояния
-bot.onText(/\/state/, async (msg) => {
+// ✅ ОБНОВЛЕННАЯ КОМАНДА ДЛЯ СБРОСА ПРОГРЕССА
+bot.onText(/\/reset_progress/, async (msg) => {
     const chatId = msg.chat.id;
-    const userState = userStates.get(chatId);
-    await bot.sendMessage(chatId, `📊 Текущее состояние: ${userState ? userState.state : 'нет состояния'}`);
-});
-
-// Команда для миграции данных
-bot.onText(/\/migrate/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (sheetsService.initialized) {
-        await bot.sendMessage(chatId, '🔄 Миграция данных в новый формат...');
-        const success = await sheetsService.migrateOldDataToNewFormat(chatId);
-        if (success) {
-            await bot.sendMessage(chatId, '✅ Миграция завершена! Теперь все слова в новом формате.');
-        } else {
-            await bot.sendMessage(chatId, '❌ Ошибка при миграции данных.');
-        }
-    } else {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
-    }
+    
+    dailyLearnedWords.delete(chatId);
+    learnedWords.delete(chatId);
+    
+    await bot.sendMessage(chatId, 
+        '✅ **Весь прогресс сброшен!**\n\n' +
+        '• Дневной лимит сброшен\n' +
+        '• Изученные слова очищены\n' +
+        '• Все слова снова доступны для изучения'
+    );
 });
 
 // Команда для повторения слов
@@ -1156,7 +1065,7 @@ bot.onText(/\/new/, async (msg) => {
     if (sheetsService.initialized) {
         const learnedToday = getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
-        const newWords = await getUnshownNewWords(chatId);
+        const newWords = await getUnlearnedNewWords(chatId);
         const count = newWords.length;
         
         if (learnedToday >= DAILY_LIMIT) {
@@ -1204,101 +1113,6 @@ bot.onText(/\/limit/, async (msg) => {
         `• Лимит достигнут: ${learnedToday >= DAILY_LIMIT ? '✅ Да' : '❌ Нет'}\n\n` +
         `💡 Лимит сбрасывается каждый день в 4:00`
     );
-});
-
-// Команда для сброса показанных слов (отладка)
-bot.onText(/\/reset_shown/, async (msg) => {
-    const chatId = msg.chat.id;
-    shownNewWordsToday.delete(chatId);
-    await bot.sendMessage(chatId, '✅ Показанные слова сброшены. Теперь все слова будут считаться новыми.');
-});
-
-// ✅ КОМАНДА ДЛЯ СБРОСА ПРОГРЕССА (расширенная отладка)
-bot.onText(/\/reset_progress/, async (msg) => {
-    const chatId = msg.chat.id;
-    
-    // Сохраняем текущие значения для отчета
-    const shownBefore = (shownNewWordsToday.get(chatId) || new Set()).size;
-    const learnedBefore = getLearnedToday(chatId);
-    
-    // Сбрасываем прогресс
-    shownNewWordsToday.delete(chatId);
-    dailyLearnedWords.delete(chatId);
-    
-    await bot.sendMessage(chatId, 
-        '✅ **Весь прогресс сброшен!**\n\n' +
-        `📊 Было до сброса:\n` +
-        `• Показано слов: ${shownBefore}\n` +
-        `• Изучено слов: ${learnedBefore}\n\n` +
-        '🔄 Теперь можно:\n' +
-        '• Использовать `/new` для проверки\n' +
-        '• Использовать `/force_new` для отладки\n' +
-        '• Добавлять новые слова через меню'
-    );
-    
-    console.log(`🔄 Сброшен прогресс для ${chatId}: показано ${shownBefore}, изучено ${learnedBefore}`);
-});
-
-// ✅ КОМАНДА ДЛЯ ПРИНУДИТЕЛЬНОГО ПОКАЗА ВСЕХ СЛОВ (отладка)
-bot.onText(/\/force_new/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (!sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
-        return;
-    }
-
-    try {
-        const userWords = await sheetsService.getUserWords(chatId);
-        const shownToday = shownNewWordsToday.get(chatId) || new Set();
-        const learnedToday = getLearnedToday(chatId);
-        
-        // Находим все слова с интервалом 1 день
-        const allNewWords = userWords.filter(word => 
-            word.status === 'active' && word.interval === 1
-        );
-
-        let debugMessage = `🔍 **Отладка: Все слова с интервалом 1 день**\n\n`;
-        debugMessage += `📊 Статистика:\n`;
-        debugMessage += `• Всего слов: ${userWords.length}\n`;
-        debugMessage += `• С интервалом 1: ${allNewWords.length}\n`;
-        debugMessage += `• Показано сегодня: ${shownToday.size}\n`;
-        debugMessage += `• Изучено сегодня: ${learnedToday}\n\n`;
-        
-        debugMessage += `**Слова с интервалом 1:**\n`;
-        if (allNewWords.length > 0) {
-            allNewWords.forEach((word, index) => {
-                const isShown = shownToday.has(word.english.toLowerCase());
-                debugMessage += `\n${index + 1}. ${word.english} - ${isShown ? '❌ Показано' : '✅ Новое'} (создано: ${new Date(word.createdDate).toLocaleDateString()})`;
-            });
-        } else {
-            debugMessage += `Нет слов с интервалом 1 день`;
-        }
-
-        await bot.sendMessage(chatId, debugMessage);
-
-        // Если есть непоказанные слова - предлагаем начать изучение
-        const unshownWords = allNewWords.filter(word => 
-            !shownToday.has(word.english.toLowerCase())
-        );
-
-        if (unshownWords.length > 0) {
-            await bot.sendMessage(chatId,
-                `🆕 Найдено ${unshownWords.length} непоказанных слов\n` +
-                '💡 Хотите начать принудительное изучение?',
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '🎯 Принудительно начать', callback_data: 'force_start_learning' }]
-                        ]
-                    }
-                }
-            );
-        }
-        
-    } catch (error) {
-        console.error('❌ Error in /force_new:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при отладке');
-    }
 });
 
 // Обработка сообщений
@@ -1688,7 +1502,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 const selectedTranslations = userState.selectedTranslationIndices
                     .map(index => userState.tempTranslations[index]);
 
-                // ✅ ИЗМЕНЕНИЕ: Используем новую функцию сохранения
+                // ✅ ИСПРАВЛЕНИЕ: Используем новую функцию сохранения
                 await saveWordWithMeanings(chatId, userState, selectedTranslations);
                 await bot.deleteMessage(chatId, callbackQuery.message.message_id);
             } catch (error) {
@@ -1792,10 +1606,6 @@ bot.on('callback_query', async (callbackQuery) => {
         await bot.deleteMessage(chatId, callbackQuery.message.message_id);
         await startReviewSession(chatId);
     }
-            else if (data === 'force_start_learning') {
-        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-        await forceStartNewWordsSession(chatId);
-    }
     else if (data === 'snooze_notification') {
         await bot.editMessageText(
             '⏰ Хорошо, напомню через 2 часа!',
@@ -1816,7 +1626,7 @@ bot.on('callback_query', async (callbackQuery) => {
         await startNewWordsSession(chatId);
     }
     else if (data === 'show_new_stats_only') {
-        const count = await sheetsService.getNewWordsCount(chatId);
+        const count = await getUnlearnedNewWords(chatId).then(words => words.length);
         await bot.editMessageText(
             `🆕 Новых слов для изучения: ${count}\n\n` +
             '💡 Используйте кнопку "🆕 Новые слова" в меню чтобы начать изучение',
@@ -1851,8 +1661,4 @@ setTimeout(() => {
     startDailyNotifications();
 }, 5000);
 
-console.log('🤖 Бот запущен: Версия с примерами в карточках, изучением новых слов и умными нотификациями!');
-
-
-
-
+console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
