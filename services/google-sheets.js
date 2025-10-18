@@ -292,7 +292,7 @@ export class GoogleSheetsService {
         }
     }
 
- // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение новых слов для изучения (с лимитом 5 в день)
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Получение новых слов с проверкой повторений
 async getNewWordsForLearning(userId) {
     if (!this.initialized) {
         return [];
@@ -300,41 +300,40 @@ async getNewWordsForLearning(userId) {
     
     try {
         const userWords = await this.getUserWords(userId);
-        const now = new Date();
         const today = new Date();
-        today.setHours(0, 0, 0, 0); // Начало текущего дня
+        today.setHours(0, 0, 0, 0);
         
-        // Фильтруем слова, которые созданы сегодня и еще не изучались
+        console.log(`🔍 Поиск новых слов для пользователя ${userId}`);
+
+        // Фильтруем слова, которые созданы сегодня и имеют 0 повторений
         const newWords = userWords.filter(word => {
             if (!word.nextReview || word.status !== 'active') return false;
             
             try {
                 const createdDate = new Date(word.createdDate);
-                const reviewDate = new Date(word.nextReview);
-                
-                // Новые слова - те, которые созданы сегодня И имеют интервал 1 день
-                // И дата следующего повторения в будущем (еще не изучались)
                 const isCreatedToday = createdDate >= today;
-                const isNewWord = word.interval === 1;
-                const isNotReviewedYet = reviewDate > now;
+                const hasZeroRepetitions = !word.reps || word.reps === 0;
                 
-                return isCreatedToday && isNewWord && isNotReviewedYet;
+                const isNewWord = isCreatedToday && hasZeroRepetitions;
+                
+                if (isNewWord) {
+                    console.log(`✅ Слово "${word.english}" - НОВОЕ: создано сегодня, повторений: ${word.reps || 0}`);
+                }
+                
+                return isNewWord;
             } catch (dateError) {
-                console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
+                console.error(`❌ Invalid date for word "${word.english}"`);
                 return false;
             }
         });
 
-        // Сортируем по дате создания (сначала новые)
-        newWords.sort((a, b) => {
-            const dateA = new Date(a.createdDate);
-            const dateB = new Date(b.createdDate);
-            return dateB - dateA; // Сначала самые новые
-        });
+        console.log(`📊 Найдено новых слов: ${newWords.length}`);
+        
+        // Сортируем по дате создания
+        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
 
         // Лимит 5 новых слов в день
-        const DAILY_NEW_WORDS_LIMIT = 5;
-        return newWords.slice(0, DAILY_NEW_WORDS_LIMIT);
+        return newWords.slice(0, 5);
         
     } catch (error) {
         console.error('❌ Error getting new words for learning:', error.message);
@@ -675,4 +674,5 @@ async getNewWordsCount(userId) {
         }
     }
 }
+
 
