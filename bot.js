@@ -841,7 +841,7 @@ async function showNextNewWord(chatId) {
     await bot.sendMessage(chatId, message, getNewWordsKeyboard());
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
+// ✅ ПЕРЕПИСАННАЯ ФУНКЦИЯ: Обработка изучения нового слова
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -880,19 +880,28 @@ async function processNewWordLearning(chatId, action) {
                 userState.learnedCount++;
                 console.log(`📚 Слово "${word.english}" перешло в систему повторения`);
             }
+            
+            // ✅ УДАЛЯЕМ слово из массива новых слов при отметке "Выучил"
+            userState.newWords.splice(userState.currentWordIndex, 1);
+            
         } else if (action === 'repeat') {
             // Для "Нужно повторить" - не отмечаем как изученное,
-            // слово останется в новых словах для повторного изучения
+            // слово остается в массиве и будет показано снова
             console.log(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
+            
+            // ✅ ПЕРЕМЕЩАЕМ слово в конец массива для повторного показа
+            const repeatedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
+            userState.newWords.push(repeatedWord);
         }
         
-        // ✅ ИСПРАВЛЕНИЕ: Увеличиваем индекс после обработки ВСЕХ действий
-        userState.currentWordIndex++;
-        
-        // ✅ ИСПРАВЛЕНИЕ: Проверяем завершение сессии после увеличения индекса
-        if (userState.currentWordIndex < userState.newWords.length) {
+        // ✅ ИСПРАВЛЕННАЯ ЛОГИКА: Проверяем остались ли слова для изучения
+        if (userState.newWords.length > 0) {
+            // Если слова остались - показываем следующее
+            // currentWordIndex не увеличиваем, т.к. мы либо удалили текущее слово, 
+            // либо переместили его в конец массива
             await showNextNewWord(chatId);
         } else {
+            // Если все слова изучены - завершаем сессию
             await completeNewWordsSession(chatId, userState);
         }
 
@@ -900,6 +909,145 @@ async function processNewWordLearning(chatId, action) {
         console.error('❌ Error processing new word learning:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при сохранении прогресса.');
     }
+}
+
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего нового слова
+async function showNextNewWord(chatId) {
+    const userState = userStates.get(chatId);
+    if (!userState || userState.state !== 'learning_new_words') return;
+
+    const { newWords, currentWordIndex } = userState;
+    
+    // ✅ ПРОВЕРКА: Если слов не осталось - завершаем сессию
+    if (newWords.length === 0) {
+        await completeNewWordsSession(chatId, userState);
+        return;
+    }
+
+    // ✅ УБЕЖДАЕМСЯ, что индекс в пределах массива
+    if (currentWordIndex >= newWords.length) {
+        userState.currentWordIndex = 0; // Начинаем сначала если индекс вышел за пределы
+    }
+
+    const word = newWords[userState.currentWordIndex];
+    const progress = `${userState.learnedCount + 1}/${userState.learnedCount + newWords.length}`;
+    
+    let message = `🆕 Изучение новых слов ${progress}\n\n`;
+    message += `🇬🇧 **${word.english}**\n`;
+    
+    if (word.transcription) {
+        message += `🔤 ${word.transcription}\n`;
+    }
+    
+    // Показываем переводы сразу для изучения
+    message += `\n🇷🇺 **Переводы:**\n`;
+    
+    // Показываем переводы и примеры
+    word.meanings.forEach((meaning, index) => {
+        message += `\n${index + 1}. ${meaning.translation}`;
+        if (meaning.definition) {
+            message += ` - ${meaning.definition}`;
+        }
+        
+        // ✅ ДОБАВЛЯЕМ ПРИМЕРЫ ЕСЛИ ЕСТЬ
+        if (meaning.example && meaning.example.trim() !== '') {
+            message += `\n   📝 *Пример:* ${meaning.example}`;
+        }
+    });
+
+    if (word.audioUrl) {
+        try {
+            await bot.sendAudio(chatId, word.audioUrl, {
+                caption: '🔊 Произношение'
+            });
+        } catch (error) {
+            console.log('❌ Audio not available for new word');
+        }
+    }
+
+    await bot.sendMessage(chatId, message, getNewWordsKeyboard());
+}
+
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Начало сессии изучения новых слов
+async function startNewWordsSession(chatId) {
+    if (!sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        return;
+    }
+
+    try {
+        const learnedToday = getLearnedToday(chatId);
+        const DAILY_LIMIT = 5;
+        
+        // Проверяем достигнут ли дневной лимит
+        if (learnedToday >= DAILY_LIMIT) {
+            await bot.sendMessage(chatId, 
+                `🎉 Вы достигли дневного лимита!\n\n` +
+                `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
+                '💡 Возвращайтесь завтра для изучения новых слов!\n' +
+                '📚 Можете повторить уже изученные слова'
+            );
+            return;
+        }
+
+        const newWords = await getUnlearnedNewWords(chatId);
+        
+        if (newWords.length === 0) {
+            await bot.sendMessage(chatId, 
+                `🎉 На сегодня новых слов для изучения нет!\n\n` +
+                `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
+                '💡 Вы можете добавить новые слова через меню "➕ Добавить новое слово"\n' +
+                '📚 Или повторить уже изученные слова'
+            );
+            return;
+        }
+
+        // ✅ ИНИЦИАЛИЗИРУЕМ сессию изучения новых слов
+        userStates.set(chatId, {
+            state: 'learning_new_words',
+            newWords: newWords,
+            currentWordIndex: 0,
+            learnedCount: 0,
+            originalWordsCount: newWords.length // Сохраняем исходное количество
+        });
+
+        console.log(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${newWords.length}`);
+        await showNextNewWord(chatId);
+        
+    } catch (error) {
+        console.error('❌ Error starting new words session:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при загрузке новых слов.');
+    }
+}
+
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии изучения новых слов
+async function completeNewWordsSession(chatId, userState) {
+    const originalWordsCount = userState.originalWordsCount || userState.newWords.length + userState.learnedCount;
+    const learnedCount = userState.learnedCount;
+    
+    userStates.delete(chatId);
+
+    let message = '🎉 **Сессия изучения завершена!**\n\n';
+    message += `📊 Результаты:\n`;
+    message += `• Всего новых слов: ${originalWordsCount}\n`;
+    message += `• Изучено: ${learnedCount}\n`;
+    message += `• Отложено: ${originalWordsCount - learnedCount}\n\n`;
+    
+    if (learnedCount === originalWordsCount && originalWordsCount > 0) {
+        message += `💪 Отличная работа! Вы изучили все новые слова!\n\n`;
+        message += `🔄 Эти слова появятся для повторения завтра.`;
+    } else if (originalWordsCount > 0) {
+        message += `💡 Оставшиеся слова будут доступны для изучения в следующий раз.\n\n`;
+    }
+    
+    // Проверяем слова для повторения
+    const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
+    if (reviewWordsCount > 0) {
+        message += `\n📚 Слов для повторения: ${reviewWordsCount}\n`;
+        message += `Можете начать повторение через меню!`;
+    }
+    
+    await bot.sendMessage(chatId, message, getMainMenu());
 }
 
 // ✅ ФУНКЦИЯ: Завершение сессии изучения новых слов
@@ -1590,19 +1738,21 @@ bot.on('callback_query', async (callbackQuery) => {
     else if (data === 'need_repeat_word') {
         await processNewWordLearning(chatId, 'repeat');
     }
-    else if (data === 'skip_new_word') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'learning_new_words') {
-            userState.currentWordIndex++;
-            await showNextNewWord(chatId);
-        }
+else if (data === 'skip_new_word') {
+    const userState = userStates.get(chatId);
+    if (userState?.state === 'learning_new_words') {
+        // ✅ ПЕРЕМЕЩАЕМ текущее слово в конец массива при пропуске
+        const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
+        userState.newWords.push(skippedWord);
+        await showNextNewWord(chatId);
     }
-    else if (data === 'end_learning') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'learning_new_words') {
-            await completeNewWordsSession(chatId, userState);
-        }
+}
+else if (data === 'end_learning') {
+    const userState = userStates.get(chatId);
+    if (userState?.state === 'learning_new_words') {
+        await completeNewWordsSession(chatId, userState);
     }
+}
     // ✅ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ НОТИФИКАЦИЙ
     else if (data === 'start_review_from_notification') {
         await bot.deleteMessage(chatId, callbackQuery.message.message_id);
@@ -1664,4 +1814,5 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
