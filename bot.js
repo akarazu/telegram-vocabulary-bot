@@ -1178,7 +1178,7 @@ async function showUserStats(chatId) {
         const newWordsCount = allUnlearnedWords.length;
         
         // Информация о дневном прогрессе
-        const learnedToday = getLearnedToday(chatId);
+        const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
         
@@ -1545,7 +1545,7 @@ bot.onText(/\/check/, async (msg) => {
 bot.onText(/\/new/, async (msg) => {
     const chatId = msg.chat.id;
     if (sheetsService.initialized) {
-        const learnedToday = getLearnedToday(chatId);
+        const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         const newWords = await getUnlearnedNewWords(chatId);
         const count = newWords.length;
@@ -2201,6 +2201,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
