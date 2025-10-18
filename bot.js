@@ -30,6 +30,99 @@ const userStates = new Map();
 // Хранилище для планировщика нотификаций
 const notificationScheduler = new Map();
 
+// ✅ ДОБАВЬТЕ ЗДЕСЬ: Хранилище для отслеживания показанных сегодня слов
+const shownNewWordsToday = new Map();
+
+// ✅ ФУНКЦИЯ: Сброс показанных слов в начале дня
+function resetShownWordsDaily() {
+    const now = new Date();
+    const currentHour = now.getHours();
+    
+    // Сбрасываем в 4 утра каждый день
+    if (currentHour === 4) {
+        shownNewWordsToday.clear();
+        console.log('🔄 Сброшены показанные слова на новый день');
+    }
+}
+
+// Запускаем ежечасную проверку
+setInterval(resetShownWordsDaily, 60 * 60 * 1000);
+
+// ✅ ФУНКЦИЯ: Получение НЕ показанных сегодня слов
+async function getUnshownNewWords(chatId) {
+    if (!sheetsService.initialized) {
+        return [];
+    }
+    
+    try {
+        const userWords = await sheetsService.getUserWords(chatId);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Получаем слова, показанные сегодня этому пользователю
+        const shownToday = shownNewWordsToday.get(chatId) || new Set();
+        
+        console.log(`🔍 Поиск новых слов для ${chatId}, показано сегодня: ${shownToday.size}`);
+
+        // Фильтруем слова созданные сегодня и еще не показанные
+        const newWords = userWords.filter(word => {
+            if (!word.nextReview || word.status !== 'active') return false;
+            
+            try {
+                const createdDate = new Date(word.createdDate);
+                const isCreatedToday = createdDate >= today;
+                const isNotShownToday = !shownToday.has(word.english.toLowerCase());
+                
+                if (isCreatedToday && isNotShownToday) {
+                    console.log(`✅ Слово "${word.english}" - новое и не показано сегодня`);
+                }
+                
+                return isCreatedToday && isNotShownToday;
+            } catch (error) {
+                console.error(`❌ Ошибка проверки слова "${word.english}"`);
+                return false;
+            }
+        });
+
+        // Сортируем по дате создания (сначала новые)
+        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+
+        // Лимит 5 новых слов в день
+        return newWords.slice(0, 5);
+        
+    } catch (error) {
+        console.error('❌ Error getting unshown new words:', error);
+        return [];
+    }
+}
+
+// ✅ ФУНКЦИЯ: Отметка слова как показанного
+function markWordAsShown(chatId, englishWord) {
+    if (!shownNewWordsToday.has(chatId)) {
+        shownNewWordsToday.set(chatId, new Set());
+    }
+    
+    const userShownWords = shownNewWordsToday.get(chatId);
+    userShownWords.add(englishWord.toLowerCase());
+    console.log(`📝 Слово "${englishWord}" отмечено как показанное для ${chatId}`);
+}
+
+// ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
+async function getNewWordsCount(chatId) {
+    if (!sheetsService.initialized) {
+        return 0;
+    }
+    
+    try {
+        const newWords = await getUnshownNewWords(chatId);
+        return newWords.length;
+    } catch (error) {
+        console.error('❌ Error getting new words count:', error);
+        return 0;
+    }
+}
+
+
 // Главное меню
 function getMainMenu() {
     return {
@@ -607,7 +700,7 @@ async function completeReviewSession(chatId, userState) {
     }
     
     // Проверяем новые слова для изучения
-    const newWordsCount = await sheetsService.getNewWordsCount(chatId);
+    const newWordsCount = await getNewWordsCount(chatId);
     if (newWordsCount > 0) {
         message += `🆕 Доступно новых слов для изучения: ${newWordsCount}\n`;
         message += `Можете изучить их через меню "🆕 Новые слова"!`;
@@ -624,11 +717,11 @@ async function startNewWordsSession(chatId) {
     }
 
     try {
-        const newWords = await sheetsService.getNewWordsForLearning(chatId);
+        const newWords = await getUnshownNewWords(chatId);
         
         if (newWords.length === 0) {
             await bot.sendMessage(chatId, 
-                '🎉 Отлично! Вы изучили все новые слова на сегодня.\n\n' +
+                '🎉 На сегодня новых слов для изучения нет!\n\n' +
                 '💡 Вы можете добавить новые слова через меню "➕ Добавить новое слово"\n' +
                 '📚 Или повторить уже изученные слова'
             );
@@ -643,6 +736,7 @@ async function startNewWordsSession(chatId) {
             learnedCount: 0
         });
 
+        console.log(`🎯 Начата сессия изучения для ${chatId}, слов: ${newWords.length}`);
         await showNextNewWord(chatId);
         
     } catch (error) {
@@ -666,6 +760,9 @@ async function showNextNewWord(chatId) {
 
     const word = newWords[currentWordIndex];
     const progress = `${currentWordIndex + 1}/${newWords.length}`;
+    
+    // ✅ ОТМЕЧАЕМ СЛОВО КАК ПОКАЗАННОЕ
+    markWordAsShown(chatId, word.english);
     
     let message = `🆕 Изучение новых слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -923,11 +1020,13 @@ bot.onText(/\/check/, async (msg) => {
     }
 });
 
-// ✅ КОМАНДА ДЛЯ ПРОВЕРКИ НОВЫХ СЛОВ
+// Команда для проверки новых слов
 bot.onText(/\/new/, async (msg) => {
     const chatId = msg.chat.id;
     if (sheetsService.initialized) {
-        const count = await sheetsService.getNewWordsCount(chatId);
+        const newWords = await getUnshownNewWords(chatId);
+        const count = newWords.length;
+        
         if (count > 0) {
             await bot.sendMessage(chatId, 
                 `🆕 Новых слов для изучения: ${count}\n\n` +
@@ -942,8 +1041,10 @@ bot.onText(/\/new/, async (msg) => {
                 }
             );
         } else {
+            const shownToday = shownNewWordsToday.get(chatId) || new Set();
             await bot.sendMessage(chatId, 
-                '🎉 Вы изучили все новые слова на сегодня!\n\n' +
+                `🎉 Вы изучили все новые слова на сегодня!\n\n` +
+                `📝 Показано слов сегодня: ${shownToday.size}\n` +
                 '💡 Добавляйте новые слова через меню "➕ Добавить новое слово"'
             );
         }
@@ -1499,3 +1600,4 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с примерами в карточках, изучением новых слов и умными нотификациями!');
+
