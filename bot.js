@@ -279,14 +279,14 @@ function getReviewKeyboard() {
     };
 }
 
-// Клавиатура для изучения новых слов
+// ✅ ОБНОВЛЕННАЯ КЛАВИАТУРА: Заменяем "Следующее слово" на "Пропустить слово"
 function getNewWordsKeyboard() {
     return {
         reply_markup: {
             inline_keyboard: [
                 [{ text: '✅ Выучил', callback_data: 'learned_word' }],
                 [{ text: '🔄 Нужно повторить', callback_data: 'need_repeat_word' }],
-                [{ text: '⏭️ Следующее слово', callback_data: 'skip_new_word' }],
+                [{ text: '⏭️ Пропустить слово', callback_data: 'skip_new_word' }], // ИЗМЕНЕНО
                 [{ text: '❌ Завершить изучение', callback_data: 'end_learning' }]
             ]
         }
@@ -838,37 +838,37 @@ async function startNewWordsSession(chatId) {
             await bot.sendMessage(chatId, 
                 `🎉 Вы достигли дневного лимита!\n\n` +
                 `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
-                '💡 Возвращайтесь завтра для изучения новых слов!\n' +
-                '📚 Можете повторить уже изученные слова\n\n' +
-                '🔄 Или используйте /reset_progress чтобы сбросить лимит'
+                '💡 Возвращайтесь завтра для изучения новых слов!'
             );
             return;
         }
 
-        const newWords = await getUnlearnedNewWords(chatId);
+        // ✅ ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ для получения всех слов
+        const newWords = await getAllUnlearnedWords(chatId);
         
         if (newWords.length === 0) {
             await bot.sendMessage(chatId, 
                 `🎉 На сегодня новых слов для изучения нет!\n\n` +
                 `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
-                '💡 Вы можете:\n' +
-                '• Добавить новые слова через меню "➕ Добавить новое слово"\n' +
-                '• Повторить уже изученные слова\n' +
-                '• Использовать /reset_progress чтобы сбросить лимит'
+                '💡 Добавьте новые слова через меню "➕ Добавить новое слово"'
             );
             return;
         }
 
+        // Ограничиваем количеством оставшихся слотов
+        const remainingSlots = Math.max(0, DAILY_LIMIT - learnedToday);
+        const wordsForSession = newWords.slice(0, remainingSlots);
+
         // ✅ ИНИЦИАЛИЗИРУЕМ сессию изучения новых слов
         userStates.set(chatId, {
             state: 'learning_new_words',
-            newWords: newWords,
+            newWords: wordsForSession,
             currentWordIndex: 0,
             learnedCount: 0,
-            originalWordsCount: newWords.length
+            originalWordsCount: wordsForSession.length
         });
 
-        console.log(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${newWords.length}`);
+        console.log(`🎯 Начата сессия изучения для ${chatId}, слов в сессии: ${wordsForSession.length}`);
         await showNextNewWord(chatId);
         
     } catch (error) {
@@ -939,35 +939,77 @@ async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
 
-    const word = userState.newWords[userState.currentWordIndex];
-    
     try {
         if (action === 'learned') {
-            // ✅ ВАЖНО: Отмечаем слово как ИЗУЧЕННОЕ
+            const word = userState.newWords[userState.currentWordIndex];
+            
+            // ✅ Отмечаем слово как ИЗУЧЕННОЕ
             markWordAsLearned(chatId, word.english);
             markWordAsLearnedToday(chatId, word.english);
             
-            // ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обновляем интервал в Google Sheets
+            // ✅ Увеличиваем интервал в Google Sheets
+            const newInterval = 2;
+            const nextReview = new Date(Date.now() + newInterval * 24 * 60 * 60 * 1000);
+            
             const success = await sheetsService.updateWordReview(
                 chatId,
                 word.english,
-                2, // Меняем интервал с 1 на 2 (слово изучено)
-                new Date(Date.now() + 24 * 60 * 60 * 1000) // повтор через 1 день
+                newInterval,
+                nextReview
             );
 
             if (success) {
                 userState.learnedCount++;
-                console.log(`📚 Слово "${word.english}" перешло в систему повторения (интервал: 2)`);
+                console.log(`📚 Слово "${word.english}" перешло в систему повторения`);
+                
+                // ✅ УДАЛЯЕМ изученное слово из массива
+                userState.newWords.splice(userState.currentWordIndex, 1);
             } else {
                 console.error(`❌ Не удалось обновить интервал для слова "${word.english}"`);
+                return;
             }
             
-            userState.newWords.splice(userState.currentWordIndex, 1);
-            
         } else if (action === 'repeat') {
+            const word = userState.newWords[userState.currentWordIndex];
             console.log(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
-            const repeatedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
-            userState.newWords.push(repeatedWord);
+            // Просто переходим к следующему слову
+            userState.currentWordIndex++;
+            
+        } else if (action === 'skip') {
+            // ✅ НОВАЯ ЛОГИКА: Полностью заменяем текущее слово на новое из таблицы
+            const skippedWord = userState.newWords[userState.currentWordIndex];
+            console.log(`⏭️ Пропускаем слово "${skippedWord.english}", ищем замену...`);
+            
+            // Загружаем свежий список не изученных слов
+            const freshUnlearnedWords = await getUnlearnedNewWords(chatId);
+            
+            if (freshUnlearnedWords.length > 0) {
+                // Ищем слово, которого еще нет в текущей сессии
+                const availableWords = freshUnlearnedWords.filter(freshWord => 
+                    !userState.newWords.some(existingWord => 
+                        existingWord.english === freshWord.english
+                    )
+                );
+                
+                if (availableWords.length > 0) {
+                    // Заменяем пропущенное слово на новое
+                    const replacementWord = availableWords[0];
+                    userState.newWords[userState.currentWordIndex] = replacementWord;
+                    console.log(`🔄 Заменили "${skippedWord.english}" на "${replacementWord.english}"`);
+                } else {
+                    // Если новых слов нет, просто удаляем пропущенное слово
+                    userState.newWords.splice(userState.currentWordIndex, 1);
+                    console.log(`🗑️ Удалили пропущенное слово "${skippedWord.english}" (нет замены)`);
+                }
+            } else {
+                // Если нет новых слов, удаляем пропущенное
+                userState.newWords.splice(userState.currentWordIndex, 1);
+            }
+        }
+        
+        // ✅ ПРОВЕРЯЕМ остались ли слова
+        if (userState.currentWordIndex >= userState.newWords.length) {
+            userState.currentWordIndex = 0;
         }
         
         if (userState.newWords.length > 0) {
@@ -1863,6 +1905,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
