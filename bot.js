@@ -1054,7 +1054,7 @@ async function completeNewWordsSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Показ статистики пользователя
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ статистики с временем до повторения
 async function showUserStats(chatId) {
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -1065,61 +1065,153 @@ async function showUserStats(chatId) {
         const userWords = await sheetsService.getUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
-        const newWordsCount = await getUnlearnedNewWords(chatId).then(words => words.length);
+        
+        // Получаем ВСЕ не изученные слова без учета лимита
+        const allUnlearnedWords = await getAllUnlearnedWords(chatId);
+        const newWordsCount = allUnlearnedWords.length;
+        
+        // Информация о дневном прогрессе
+        const learnedToday = getLearnedToday(chatId);
+        const DAILY_LIMIT = 5;
+        const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
         
         let message = '📊 **Ваша статистика:**\n\n';
-        message += `📚 Всего слов: ${activeWords.length}\n`;
+        message += `📚 Всего слов в словаре: ${activeWords.length}\n`;
         message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
-        message += `🆕 Новых слов для изучения: ${newWordsCount}\n`;
+        message += `🆕 Новых слов доступно: ${newWordsCount}\n`;
+        message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
         
+        if (remainingToday > 0) {
+            message += `🎯 Осталось изучить сегодня: ${remainingToday} слов\n`;
+        } else {
+            message += `✅ Дневной лимит достигнут!\n`;
+        }
+        
+        // ✅ ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ВРЕМЕНИ ДО ПОВТОРЕНИЯ
         if (activeWords.length > 0) {
-            // Считаем слова по интервалам повторения
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            
+            // Находим ближайшее повторение среди ВСЕХ слов (кроме новых)
+            const wordsWithFutureReview = activeWords
+                .filter(word => word.interval > 1 && word.nextReview)
+                .map(word => {
+                    try {
+                        const nextReview = new Date(word.nextReview);
+                        const daysUntil = Math.ceil((nextReview - now) / (1000 * 60 * 60 * 24));
+                        return { word: word.english, daysUntil, nextReview };
+                    } catch (error) {
+                        return null;
+                    }
+                })
+                .filter(item => item !== null && item.daysUntil >= 0)
+                .sort((a, b) => a.daysUntil - b.daysUntil);
+
+            if (wordsWithFutureReview.length > 0) {
+                const nearestReview = wordsWithFutureReview[0];
+                
+                if (nearestReview.daysUntil === 0) {
+                    message += `\n⏰ **Ближайшее повторение:** сегодня!\n`;
+                } else if (nearestReview.daysUntil === 1) {
+                    message += `\n⏰ **Ближайшее повторение:** завтра\n`;
+                } else {
+                    message += `\n⏰ **Ближайшее повторение:** через ${nearestReview.daysUntil} дней\n`;
+                }
+                
+                // ✅ ДОБАВЛЯЕМ РАСПРЕДЕЛЕНИЕ ПОВТОРЕНИЙ ПО ДНЯМ
+                const reviewSchedule = {};
+                wordsWithFutureReview.forEach(item => {
+                    const dayKey = item.daysUntil === 0 ? 'Сегодня' : 
+                                  item.daysUntil === 1 ? 'Завтра' : 
+                                  `Через ${item.daysUntil} дней`;
+                    reviewSchedule[dayKey] = (reviewSchedule[dayKey] || 0) + 1;
+                });
+
+                if (Object.keys(reviewSchedule).length > 0) {
+                    message += `\n📅 **Расписание повторений:**\n`;
+                    Object.keys(reviewSchedule).slice(0, 5).forEach(day => { // Показываем только ближайшие 5 дней
+                        message += `• ${day}: ${reviewSchedule[day]} слов\n`;
+                    });
+                    
+                    if (Object.keys(reviewSchedule).length > 5) {
+                        const remainingWords = Object.values(reviewSchedule).slice(5).reduce((a, b) => a + b, 0);
+                        message += `• Далее: ${remainingWords} слов\n`;
+                    }
+                }
+            }
+            
+            // Статистика по интервалам
             const intervals = {
-                'Новые (1 день)': 0,
-                '2-3 дня': 0,
-                '4-7 дней': 0,
-                '1+ неделя': 0
+                'Новые (интервал 1)': 0,
+                'Повторение (2-3 дня)': 0,
+                'Повторение (4-7 дней)': 0,
+                'Долгосрочные (8+ дней)': 0
             };
             
             activeWords.forEach(word => {
-                if (word.interval === 1) intervals['Новые (1 день)']++;
-                else if (word.interval <= 3) intervals['2-3 дня']++;
-                else if (word.interval <= 7) intervals['4-7 дней']++;
-                else intervals['1+ неделя']++;
+                const interval = word.interval || 1;
+                if (interval === 1) intervals['Новые (интервал 1)']++;
+                else if (interval <= 3) intervals['Повторение (2-3 дня)']++;
+                else if (interval <= 7) intervals['Повторение (4-7 дней)']++;
+                else intervals['Долгосрочные (8+ дней)']++;
             });
             
-            message += `\n📅 **Интервалы повторения:**\n`;
-            message += `• Новые: ${intervals['Новые (1 день)']} слов\n`;
-            message += `• 2-3 дня: ${intervals['2-3 дня']} слов\n`;
-            message += `• 4-7 дней: ${intervals['4-7 дней']} слов\n`;
-            message += `• 1+ неделя: ${intervals['1+ неделя']} слов\n`;
+            message += `\n📈 **Распределение по интервалам:**\n`;
+            message += `• Новые слова: ${intervals['Новые (интервал 1)']}\n`;
+            message += `• Короткий интервал: ${intervals['Повторение (2-3 дня)']}\n`;
+            message += `• Средний интервал: ${intervals['Повторение (4-7 дней)']}\n`;
+            message += `• Долгосрочные: ${intervals['Долгосрочные (8+ дней)']}\n`;
             
-            // ✅ ДОБАВЛЯЕМ информацию о готовности к повторению
-            const readyForReview = activeWords.filter(word => {
-                if (!word.nextReview) return false;
-                const nextReview = new Date(word.nextReview);
-                const today = new Date();
-                return nextReview <= today && word.interval > 1;
-            }).length;
-            
-            message += `\n⏰ **Готово к повторению:** ${readyForReview} слов\n`;
+            // Статистика по изученным словам
+            const learnedWordsCount = activeWords.filter(word => word.interval > 1).length;
+            const progressPercentage = activeWords.length > 0 
+                ? Math.round((learnedWordsCount / activeWords.length) * 100) 
+                : 0;
+                
+            message += `\n🎓 **Общий прогресс:** ${learnedWordsCount}/${activeWords.length} (${progressPercentage}%)\n`;
         }
         
-        message += `\n💡 **Система настроена на БЫСТРОЕ ЗАПОМИНАНИЕ:**\n`;
-        message += `• Новые слова: 5 в день\n`;
-        message += `• Первое повторение: через 1 день\n`;
-        message += `• Частые повторения в начале\n`;
-        message += `• Автоматическая адаптация под вашу память\n`;
+        // ✅ ИНФОРМАЦИЯ О ПРОГРЕССЕ ИЗУЧЕНИЯ
+        message += `\n💡 **Рекомендации:**\n`;
         
-        message += `\n💪 Продолжайте в том же духе!`;
+        if (reviewWordsCount > 0) {
+            message += `• Начните с повторения слов (${reviewWordsCount} слов ждут)\n`;
+        }
+        
+        if (newWordsCount > 0 && remainingToday > 0) {
+            message += `• Изучите новые слова (доступно ${Math.min(newWordsCount, remainingToday)} из ${newWordsCount})\n`;
+        } else if (newWordsCount > 0) {
+            message += `• Новые слова доступны завтра (${newWordsCount} слов)\n`;
+        }
+        
+        // ✅ ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ПЛАНИРОВАНИИ
+        const totalWordsForReview = await sheetsService.getWordsForReview(chatId).then(words => words.length);
+        if (totalWordsForReview > 0) {
+            const avgInterval = activeWords
+                .filter(word => word.interval > 1)
+                .reduce((sum, word) => sum + (word.interval || 0), 0) / 
+                Math.max(1, activeWords.filter(word => word.interval > 1).length);
+                
+            message += `\n📆 **Планирование:**\n`;
+            message += `• Средний интервал: ${Math.round(avgInterval * 10) / 10} дней\n`;
+            message += `• Следующее новое слово: завтра\n`;
+        }
+        
+        if (reviewWordsCount === 0 && newWordsCount === 0) {
+            message += `\n🎉 Отличная работа! Все слова изучены и повторены!\n`;
+            message += `• Добавьте новые слова через меню\n`;
+        }
 
         await bot.sendMessage(chatId, message, getMainMenu());
+        
     } catch (error) {
         console.error('❌ Error showing stats:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при загрузке статистики.\n' +
+            'Попробуйте позже или используйте /debug_progress для диагностики.'
+        );
     }
 }
-
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -1187,6 +1279,103 @@ bot.onText(/\/reset_progress/, async (msg) => {
         );
     }
 });
+
+// ✅ КОМАНДА ДЛЯ ПОДРОБНОГО РАСПИСАНИЯ ПОВТОРЕНИЙ
+bot.onText(/\/schedule/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    if (!sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        return;
+    }
+
+    try {
+        const userWords = await sheetsService.getUserWords(chatId);
+        const activeWords = userWords.filter(word => word.status === 'active');
+        const now = new Date();
+        
+        // Группируем слова по датам повторения
+        const schedule = {};
+        
+        activeWords.forEach(word => {
+            if (word.interval > 1 && word.nextReview) {
+                try {
+                    const nextReview = new Date(word.nextReview);
+                    const reviewDate = new Date(nextReview.getFullYear(), nextReview.getMonth(), nextReview.getDate());
+                    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    const daysDiff = Math.ceil((reviewDate - today) / (1000 * 60 * 60 * 24));
+                    
+                    if (daysDiff >= 0) {
+                        const dateKey = daysDiff === 0 ? "Сегодня" :
+                                       daysDiff === 1 ? "Завтра" :
+                                       nextReview.toLocaleDateString('ru-RU', { 
+                                           day: 'numeric', 
+                                           month: 'long',
+                                           weekday: 'short'
+                                       });
+                        
+                        if (!schedule[dateKey]) {
+                            schedule[dateKey] = [];
+                        }
+                        schedule[dateKey].push({
+                            word: word.english,
+                            interval: word.interval,
+                            transcription: word.transcription
+                        });
+                    }
+                } catch (error) {
+                    console.error(`❌ Error processing word "${word.english}":`, error);
+                }
+            }
+        });
+
+        let message = '📅 **Ваше расписание повторений:**\n\n';
+        
+        if (Object.keys(schedule).length === 0) {
+            message += '🎉 На этой неделе повторений нет!\n';
+            message += 'Все слова уже повторены или являются новыми.\n\n';
+            message += '💡 Можете изучить новые слова или добавить новые в словарь.';
+        } else {
+            // Сортируем даты: сегодня, завтра, потом по дате
+            const sortedDates = Object.keys(schedule).sort((a, b) => {
+                if (a === "Сегодня") return -1;
+                if (b === "Сегодня") return 1;
+                if (a === "Завтра") return -1;
+                if (b === "Завтра") return 1;
+                return new Date(a) - new Date(b);
+            });
+
+            sortedDates.forEach(date => {
+                const words = schedule[date];
+                message += `**${date}** - ${words.length} слов\n`;
+                
+                words.slice(0, 5).forEach(wordObj => { // Показываем первые 5 слов каждого дня
+                    message += `• ${wordObj.word}`;
+                    if (wordObj.transcription) {
+                        message += ` [${wordObj.transcription}]`;
+                    }
+                    message += ` (интервал: ${wordObj.interval}д)\n`;
+                });
+                
+                if (words.length > 5) {
+                    message += `• ... и еще ${words.length - 5} слов\n`;
+                }
+                message += '\n';
+            });
+            
+            // Общая статистика расписания
+            const totalScheduled = Object.values(schedule).reduce((sum, words) => sum + words.length, 0);
+            message += `📊 Всего запланировано повторений: ${totalScheduled} слов`;
+        }
+
+        await bot.sendMessage(chatId, message, getMainMenu());
+        
+    } catch (error) {
+        console.error('❌ Error showing schedule:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при загрузке расписания.');
+    }
+});
+
 // ✅ ДОБАВЛЯЕМ команду для отладки
 bot.onText(/\/debug_progress/, async (msg) => {
     const chatId = msg.chat.id;
@@ -1905,6 +2094,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
