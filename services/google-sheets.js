@@ -169,88 +169,58 @@ async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
     }
 }
 
-    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с обработкой ошибок JSON
-    async getUserWords(userId) {
-        if (!this.initialized) {
-            return [];
-        }
-
-        try {
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:I',
-            });
-
-            const rows = response.data.values || [];
-
-            // Пропускаем заголовок и фильтруем по UserID и статусу
-            const userWords = rows.slice(1).filter(row => 
-                row.length >= 6 && // Проверяем что есть минимум 6 столбцов
-                row[0] === userId.toString() && 
-                (row[8] === 'active' || !row[8] || row.length < 9) // поддерживаем старые записи без статуса
-            );
-
-            return userWords.map(row => {
-                // Безопасное извлечение данных из строки
-                const userId = row[0] || '';
-                const english = row[1] || '';
-                const transcription = row[2] || '';
-                const audioUrl = row[3] || '';
-                const meaningsJSON = row[4] || '[]';
-                const createdDate = row[5] || new Date().toISOString();
-                const nextReview = row[6] || new Date().toISOString();
-                const interval = parseInt(row[7]) || 1;
-                const status = row[8] || 'active';
-
-                let meanings = [];
-                
-                try {
-                    // Проверяем, является ли meaningsJSON валидным JSON
-                    if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
-                        meanings = JSON.parse(meaningsJSON);
-                    } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
-                        // Если это объект, оборачиваем в массив
-                        meanings = [JSON.parse(meaningsJSON)];
-                    } else {
-                        // Если это не JSON, создаем fallback значение
-                        console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
-                        meanings = [{
-                            translation: meaningsJSON || 'Неизвестный перевод',
-                            example: '',
-                            partOfSpeech: '',
-                            definition: ''
-                        }];
-                    }
-                } catch (parseError) {
-                    console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
-                    console.log(`📝 Problematic JSON:`, meaningsJSON.substring(0, 100));
-                    
-                    // Fallback: создаем базовую структуру
-                    meanings = [{
-                        translation: 'Перевод не загружен',
-                        example: '',
-                        partOfSpeech: '',
-                        definition: ''
-                    }];
-                }
-
-                return {
-                    userId,
-                    english,
-                    transcription,
-                    audioUrl,
-                    meanings,
-                    createdDate,
-                    nextReview,
-                    interval,
-                    status
-                };
-            });
-        } catch (error) {
-            console.error('❌ Error reading words from Google Sheets:', error.message);
-            return [];
-        }
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя
+async getUserWords(userId) {
+    if (!this.initialized) {
+        return [];
     }
+
+    try {
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:I',
+        });
+
+        const rows = response.data.values || [];
+
+        // Пропускаем заголовок и фильтруем по UserID и статусу
+        const userWords = rows.slice(1).filter(row => 
+            row.length >= 6 && 
+            row[0] === userId.toString() && 
+            (row[8] === 'active' || !row[8] || row.length < 9)
+        );
+
+        return userWords.map(row => {
+            // ✅ ПРАВИЛЬНОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
+            const userId = row[0] || '';
+            const english = row[1] || '';
+            const transcription = row[2] || '';
+            const audioUrl = row[3] || '';
+            const meaningsJSON = row[4] || '[]';
+            const createdDate = row[5] || new Date().toISOString();
+            const nextReview = row[6] || new Date().toISOString(); // Столбец G
+            const interval = parseInt(row[7]) || 1; // Столбец H
+            const status = row[8] || 'active';
+
+            // ... остальной код парсинга meanings ...
+            
+            return {
+                userId,
+                english,
+                transcription,
+                audioUrl,
+                meanings,
+                createdDate,
+                nextReview,  // Из столбца G
+                interval,    // Из столбца H  
+                status
+            };
+        });
+    } catch (error) {
+        console.error('❌ Error reading words from Google Sheets:', error.message);
+        return [];
+    }
+}
 
 // ✅ ДОБАВЛЯЕМ в GoogleSheetsService новую функцию:
 async getWordsForReview(userId) {
@@ -684,6 +654,7 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
         }
     }
 }
+
 
 
 
