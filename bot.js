@@ -1161,7 +1161,7 @@ async function completeNewWordsSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показ статистики
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показ статистики с временем
 async function showUserStats(chatId) {
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -1173,7 +1173,6 @@ async function showUserStats(chatId) {
         const activeWords = userWords.filter(word => word.status === 'active');
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
         
-        // ✅ ИСПРАВЛЕНИЕ: Используем существующую функцию getAllUnlearnedWords
         const unlearnedWords = await getAllUnlearnedWords(chatId);
         const newWordsCount = unlearnedWords.length;
         
@@ -1215,11 +1214,11 @@ async function showUserStats(chatId) {
             if (wordsWithFutureReview.length > 0) {
                 const nearestReview = wordsWithFutureReview[0];
                 
-                // ✅ КОНКРЕТНАЯ ДАТА вместо "завтра"
+                // ✅ КОНКРЕТНАЯ ДАТА С ВРЕМЕНЕМ
                 const formattedDate = formatConcreteDate(nearestReview.nextReview);
                 message += `\n⏰ **Ближайшее повторение:** ${formattedDate}\n`;
                 
-                // ✅ РАСПРЕДЕЛЕНИЕ ПОВТОРЕНИЙ ПО КОНКРЕТНЫМ ДАТАМ
+                // ✅ РАСПРЕДЕЛЕНИЕ ПОВТОРЕНИЙ ПО КОНКРЕТНЫМ ДАТАМ С ВРЕМЕНЕМ
                 const reviewSchedule = {};
                 wordsWithFutureReview.forEach(item => {
                     const dateKey = formatConcreteDate(item.nextReview);
@@ -1231,7 +1230,9 @@ async function showUserStats(chatId) {
                     
                     // Группируем по датам и сортируем
                     const sortedDates = Object.keys(reviewSchedule).sort((a, b) => {
-                        return new Date(a.split(' (')[0]) - new Date(b.split(' (')[0]);
+                        const dateA = new Date(a.split(' ')[0].split('.').reverse().join('-'));
+                        const dateB = new Date(b.split(' ')[0].split('.').reverse().join('-'));
+                        return dateA - dateB;
                     });
                     
                     sortedDates.slice(0, 5).forEach(date => { // Показываем только 5 ближайших дат
@@ -1247,7 +1248,7 @@ async function showUserStats(chatId) {
                 message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
             }
             
-            // Статистика по интервалам
+            // Остальная статистика остается без изменений...
             const intervals = {
                 'Новые': 0,
                 'Короткие (2-3д)': 0,
@@ -1269,7 +1270,6 @@ async function showUserStats(chatId) {
             message += `• Средние: ${intervals['Средние (4-7д)']} слов\n`;
             message += `• Долгие: ${intervals['Долгие (8+д)']} слов\n`;
             
-            // Статистика по изученным словам
             const learnedWordsCount = activeWords.filter(word => word.interval > 1).length;
             const progressPercentage = activeWords.length > 0 
                 ? Math.round((learnedWordsCount / activeWords.length) * 100) 
@@ -1307,34 +1307,45 @@ async function showUserStats(chatId) {
     }
 }
 
-// ✅ НОВАЯ ФУНКЦИЯ: Форматирование конкретной даты
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Форматирование конкретной даты с временем
 function formatConcreteDate(date) {
     const now = new Date();
     const targetDate = new Date(date);
     
-    // Разница в днях
+    // Разница в днях и часах
     const diffTime = targetDate - now;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffHours = Math.ceil(diffTime / (1000 * 60 * 60));
     
     // Форматируем дату
     const day = targetDate.getDate().toString().padStart(2, '0');
     const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
     const year = targetDate.getFullYear();
     
+    // Форматируем время
+    const hours = targetDate.getHours().toString().padStart(2, '0');
+    const minutes = targetDate.getMinutes().toString().padStart(2, '0');
+    
     // День недели
     const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
     const dayOfWeek = daysOfWeek[targetDate.getDay()];
     
     if (diffDays === 0) {
-        return `сегодня (${day}.${month}.${year})`;
+        if (diffHours <= 1) {
+            return `сегодня (${hours}:${minutes}) - через ${diffHours} час`;
+        } else if (diffHours <= 24) {
+            return `сегодня (${hours}:${minutes}) - через ${diffHours} часов`;
+        } else {
+            return `сегодня (${day}.${month}.${year} ${hours}:${minutes})`;
+        }
     } else if (diffDays === 1) {
-        return `завтра (${day}.${month}.${year})`;
+        return `завтра (${day}.${month}.${year} ${hours}:${minutes})`;
     } else if (diffDays === 2) {
-        return `послезавтра (${day}.${month}.${year})`;
+        return `послезавтра (${day}.${month}.${year} ${hours}:${minutes})`;
     } else if (diffDays <= 7) {
-        return `${day}.${month}.${year} (${dayOfWeek}, через ${diffDays} дн.)`;
+        return `${day}.${month}.${year} ${hours}:${minutes} (${dayOfWeek}, через ${diffDays} дн.)`;
     } else {
-        return `${day}.${month}.${year} (${dayOfWeek})`;
+        return `${day}.${month}.${year} ${hours}:${minutes} (${dayOfWeek})`;
     }
 }
 
@@ -2220,6 +2231,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
