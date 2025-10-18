@@ -129,47 +129,45 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ НОВАЯ ФУНКЦИЯ: Сохранение слова с несколькими значениями в JSON
-    async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
-        if (!this.initialized) {
-            console.log('❌ Google Sheets not initialized');
-            return false;
-        }
-
-        try {
-            // Преобразуем массив значений в JSON строку
-            const meaningsJSON = JSON.stringify(meanings);
-
-            // Рассчитываем дату следующего повторения (через 1 день)
-            const nextReview = new Date();
-            nextReview.setDate(nextReview.getDate() + 1);
-
-            const response = await this.sheets.spreadsheets.values.append({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:I',
-                valueInputOption: 'RAW',
-                requestBody: {
-                    values: [[
-                        userId.toString(),
-                        english.toLowerCase(),
-                        transcription || '',
-                        audioUrl || '', // AudioURL в столбце D
-                        meaningsJSON,   // MeaningsJSON в столбце E
-                        new Date().toISOString(),
-                        nextReview.toISOString(),
-                        1, // начальный интервал (в днях)
-                        'active'
-                    ]]
-                }
-            });
-
-            console.log(`✅ Word "${english}" saved with ${meanings.length} meanings to Google Sheets`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error saving word with meanings to Google Sheets:', error.message);
-            return false;
-        }
+ // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с отслеживанием повторений
+async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
+    if (!this.initialized) {
+        console.log('❌ Google Sheets not initialized');
+        return false;
     }
+
+    try {
+        const meaningsJSON = JSON.stringify(meanings);
+        const nextReview = new Date();
+        nextReview.setDate(nextReview.getDate() + 1);
+
+        const response = await this.sheets.spreadsheets.values.append({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:I',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[
+                    userId.toString(),
+                    english.toLowerCase(),
+                    transcription || '',
+                    audioUrl || '',
+                    meaningsJSON,
+                    new Date().toISOString(),
+                    nextReview.toISOString(),
+                    1, // начальный интервал
+                    'active'
+                    // reps будет 0 по умолчанию (новое слово)
+                ]]
+            }
+        });
+
+        console.log(`✅ Word "${english}" saved as NEW word`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error saving word:', error.message);
+        return false;
+    }
+}
 
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с обработкой ошибок JSON
     async getUserWords(userId) {
@@ -385,57 +383,63 @@ async getNewWordsCount(userId) {
         return 0;
     }
 }
-    // ✅ ФУНКЦИЯ: Обновление карточки после повторения
-    async updateCardAfterReview(userId, english, fsrsData, rating) {
-        if (!this.initialized) {
-            return false;
-        }
-        
-        try {
-            // Находим строку для обновления
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:I',
-            });
-            
-            const rows = response.data.values || [];
-            let rowIndex = -1;
-            
-            for (let i = 0; i < rows.length; i++) {
-                if (rows[i][0] === userId.toString() && 
-                    rows[i][1].toLowerCase() === english.toLowerCase() && 
-                    (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
-                    rowIndex = i + 1;
-                    break;
-                }
-            }
-
-            if (rowIndex === -1) {
-                console.error('❌ Word not found for review update:', english);
-                return false;
-            }
-
-            // Обновляем интервал и дату следующего повторения
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: `Words!G${rowIndex}:I${rowIndex}`,
-                valueInputOption: 'RAW',
-                resource: {
-                    values: [[
-                        fsrsData.card.interval || 1,
-                        fsrsData.card.due.toISOString(),
-                        'active'
-                    ]]
-                }
-            });
-
-            console.log(`✅ Updated FSRS data for word "${english}": ${rating}, next review in ${fsrsData.card.interval} days`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error updating card after review:', error.message);
-            return false;
-        }
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обновление карточки после повторения
+async updateCardAfterReview(userId, english, fsrsData, rating) {
+    if (!this.initialized) {
+        return false;
     }
+    
+    try {
+        // Находим текущую карточку чтобы получить текущее количество повторений
+        const userWords = await this.getUserWords(userId);
+        const currentWord = userWords.find(w => w.english.toLowerCase() === english.toLowerCase());
+        const currentReps = currentWord ? (currentWord.reps || 0) : 0;
+        
+        // Находим строку для обновления
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:I',
+        });
+        
+        const rows = response.data.values || [];
+        let rowIndex = -1;
+        
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i][0] === userId.toString() && 
+                rows[i][1].toLowerCase() === english.toLowerCase() && 
+                rows[i][8] === 'active') {
+                rowIndex = i + 1;
+                break;
+            }
+        }
+
+        if (rowIndex === -1) {
+            console.error('❌ Word not found for review update:', english);
+            return false;
+        }
+
+        // Обновляем интервал, дату следующего повторения и увеличиваем счетчик повторений
+        await this.sheets.spreadsheets.values.update({
+            spreadsheetId: this.spreadsheetId,
+            range: `Words!G${rowIndex}:I${rowIndex}`,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[
+                    fsrsData.card.interval || 1,
+                    fsrsData.card.due.toISOString(),
+                    'active'
+                    // reps будет обновлен в отдельном вызове
+                ]]
+            }
+        });
+
+        console.log(`✅ Updated review for word "${english}": ${rating}, reps: ${currentReps + 1}`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error updating card after review:', error.message);
+        return false;
+    }
+}
 
     // ✅ ФУНКЦИЯ: Обновление интервала повторения
     async updateWordReview(userId, english, newInterval, nextReviewDate) {
@@ -674,5 +678,6 @@ async getNewWordsCount(userId) {
         }
     }
 }
+
 
 
