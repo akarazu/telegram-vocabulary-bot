@@ -1161,7 +1161,7 @@ async function completeNewWordsSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показ статистики с конкретными датами
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показ статистики
 async function showUserStats(chatId) {
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -1173,7 +1173,8 @@ async function showUserStats(chatId) {
         const activeWords = userWords.filter(word => word.status === 'active');
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
         
-        const unlearnedWords = await getUnlearnedNewWordsWithoutLimit(chatId);
+        // ✅ ИСПРАВЛЕНИЕ: Используем существующую функцию getAllUnlearnedWords
+        const unlearnedWords = await getAllUnlearnedWords(chatId);
         const newWordsCount = unlearnedWords.length;
         
         const learnedToday = await getLearnedToday(chatId);
@@ -1501,10 +1502,10 @@ bot.onText(/\/schedule/, async (msg) => {
     }
 });
 
-// ✅ ДОБАВЛЯЕМ команду для отладки
+// ✅ ИСПРАВЛЕННАЯ КОМАНДА ДЛЯ ОТЛАДКИ
 bot.onText(/\/debug_progress/, async (msg) => {
     const chatId = msg.chat.id;
-    const learnedToday = getLearnedToday(chatId);
+    const learnedToday = await getLearnedToday(chatId); // ✅ ДОБАВЛЯЕМ AWAIT
     const DAILY_LIMIT = 5;
     
     const userLearnedWords = learnedWords.get(chatId);
@@ -1600,10 +1601,10 @@ bot.onText(/\/new/, async (msg) => {
     }
 });
 
-// Команда для проверки лимита (отладка)
+// ✅ ИСПРАВЛЕННАЯ КОМАНДА ДЛЯ ПРОВЕРКИ ЛИМИТА
 bot.onText(/\/limit/, async (msg) => {
     const chatId = msg.chat.id;
-    const learnedToday = getLearnedToday(chatId);
+    const learnedToday = await getLearnedToday(chatId); // ✅ ДОБАВЛЯЕМ AWAIT
     const DAILY_LIMIT = 5;
     
     await bot.sendMessage(chatId, 
@@ -2219,6 +2220,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
