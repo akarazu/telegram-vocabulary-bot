@@ -1,4 +1,5 @@
-import { fsrs, generatorParameters, Rating, Card, Grade } from 'ts-fsrs';
+import pkg from 'ts-fsrs';
+const { fsrs, generatorParameters, createEmptyCard, Grade } = pkg;
 
 // ✅ РЕАЛЬНЫЙ FSRS Service с ts-fsrs
 export class FSRSService {
@@ -27,16 +28,7 @@ export class FSRSService {
 
         try {
             // Создаем карточку в формате ts-fsrs
-            const card = new Card();
-            card.due = cardData.due ? new Date(cardData.due) : new Date();
-            card.stability = cardData.stability || 0;
-            card.difficulty = cardData.difficulty || 0;
-            card.elapsed_days = cardData.elapsed_days || 0;
-            card.scheduled_days = cardData.scheduled_days || 0;
-            card.reps = cardData.reps || 0;
-            card.lapses = cardData.lapses || 0;
-            card.state = cardData.state || 0;
-            card.last_review = cardData.last_review ? new Date(cardData.last_review) : new Date();
+            const card = this.createCardFromData(cardData);
 
             // Конвертируем наш рейтинг в FSRS Grade
             const grade = this.convertRatingToGrade(rating);
@@ -65,6 +57,23 @@ export class FSRSService {
         }
     }
 
+    // Создание карточки из данных
+    createCardFromData(cardData) {
+        const card = createEmptyCard();
+        
+        if (cardData.due) card.due = new Date(cardData.due);
+        if (cardData.stability) card.stability = cardData.stability;
+        if (cardData.difficulty) card.difficulty = cardData.difficulty;
+        if (cardData.elapsed_days) card.elapsed_days = cardData.elapsed_days;
+        if (cardData.scheduled_days) card.scheduled_days = cardData.scheduled_days;
+        if (cardData.reps) card.reps = cardData.reps;
+        if (cardData.lapses) card.lapses = cardData.lapses;
+        if (cardData.state) card.state = cardData.state;
+        if (cardData.last_review) card.last_review = new Date(cardData.last_review);
+        
+        return card;
+    }
+
     // Конвертация наших рейтингов в FSRS Grade
     convertRatingToGrade(rating) {
         const ratingMap = {
@@ -86,7 +95,7 @@ export class FSRSService {
         
         if (this.scheduler) {
             // Используем ts-fsrs для создания новой карточки
-            const card = new Card();
+            const card = createEmptyCard();
             // Новая карточка становится доступной через короткий интервал
             const result = this.scheduler.repeat(card, now, Grade.Good);
             
