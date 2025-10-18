@@ -1161,7 +1161,7 @@ async function completeNewWordsSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ статистики с временем до повторения
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показ статистики с конкретными датами
 async function showUserStats(chatId) {
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -1173,11 +1173,9 @@ async function showUserStats(chatId) {
         const activeWords = userWords.filter(word => word.status === 'active');
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
         
-        // Получаем ВСЕ не изученные слова без учета лимита
-        const allUnlearnedWords = await getAllUnlearnedWords(chatId);
-        const newWordsCount = allUnlearnedWords.length;
+        const unlearnedWords = await getUnlearnedNewWordsWithoutLimit(chatId);
+        const newWordsCount = unlearnedWords.length;
         
-        // Информация о дневном прогрессе
         const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
@@ -1194,10 +1192,9 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
         
-        // ✅ ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ВРЕМЕНИ ДО ПОВТОРЕНИЯ
+        // ✅ УЛУЧШЕННАЯ ИНФОРМАЦИЯ О ВРЕМЕНИ ДО ПОВТОРЕНИЯ
         if (activeWords.length > 0) {
             const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             
             // Находим ближайшее повторение среди ВСЕХ слов (кроме новых)
             const wordsWithFutureReview = activeWords
@@ -1217,57 +1214,59 @@ async function showUserStats(chatId) {
             if (wordsWithFutureReview.length > 0) {
                 const nearestReview = wordsWithFutureReview[0];
                 
-                if (nearestReview.daysUntil === 0) {
-                    message += `\n⏰ **Ближайшее повторение:** сегодня!\n`;
-                } else if (nearestReview.daysUntil === 1) {
-                    message += `\n⏰ **Ближайшее повторение:** завтра\n`;
-                } else {
-                    message += `\n⏰ **Ближайшее повторение:** через ${nearestReview.daysUntil} дней\n`;
-                }
+                // ✅ КОНКРЕТНАЯ ДАТА вместо "завтра"
+                const formattedDate = formatConcreteDate(nearestReview.nextReview);
+                message += `\n⏰ **Ближайшее повторение:** ${formattedDate}\n`;
                 
-                // ✅ ДОБАВЛЯЕМ РАСПРЕДЕЛЕНИЕ ПОВТОРЕНИЙ ПО ДНЯМ
+                // ✅ РАСПРЕДЕЛЕНИЕ ПОВТОРЕНИЙ ПО КОНКРЕТНЫМ ДАТАМ
                 const reviewSchedule = {};
                 wordsWithFutureReview.forEach(item => {
-                    const dayKey = item.daysUntil === 0 ? 'Сегодня' : 
-                                  item.daysUntil === 1 ? 'Завтра' : 
-                                  `Через ${item.daysUntil} дней`;
-                    reviewSchedule[dayKey] = (reviewSchedule[dayKey] || 0) + 1;
+                    const dateKey = formatConcreteDate(item.nextReview);
+                    reviewSchedule[dateKey] = (reviewSchedule[dateKey] || 0) + 1;
                 });
 
                 if (Object.keys(reviewSchedule).length > 0) {
                     message += `\n📅 **Расписание повторений:**\n`;
-                    Object.keys(reviewSchedule).slice(0, 5).forEach(day => { // Показываем только ближайшие 5 дней
-                        message += `• ${day}: ${reviewSchedule[day]} слов\n`;
+                    
+                    // Группируем по датам и сортируем
+                    const sortedDates = Object.keys(reviewSchedule).sort((a, b) => {
+                        return new Date(a.split(' (')[0]) - new Date(b.split(' (')[0]);
                     });
                     
-                    if (Object.keys(reviewSchedule).length > 5) {
+                    sortedDates.slice(0, 5).forEach(date => { // Показываем только 5 ближайших дат
+                        message += `• ${date}: ${reviewSchedule[date]} слов\n`;
+                    });
+                    
+                    if (sortedDates.length > 5) {
                         const remainingWords = Object.values(reviewSchedule).slice(5).reduce((a, b) => a + b, 0);
-                        message += `• Далее: ${remainingWords} слов\n`;
+                        message += `• И еще ${remainingWords} слов в следующие дни\n`;
                     }
                 }
+            } else {
+                message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
             }
             
             // Статистика по интервалам
             const intervals = {
-                'Новые (интервал 1)': 0,
-                'Повторение (2-3 дня)': 0,
-                'Повторение (4-7 дней)': 0,
-                'Долгосрочные (8+ дней)': 0
+                'Новые': 0,
+                'Короткие (2-3д)': 0,
+                'Средние (4-7д)': 0,
+                'Долгие (8+д)': 0
             };
             
             activeWords.forEach(word => {
                 const interval = word.interval || 1;
-                if (interval === 1) intervals['Новые (интервал 1)']++;
-                else if (interval <= 3) intervals['Повторение (2-3 дня)']++;
-                else if (interval <= 7) intervals['Повторение (4-7 дней)']++;
-                else intervals['Долгосрочные (8+ дней)']++;
+                if (interval === 1) intervals['Новые']++;
+                else if (interval <= 3) intervals['Короткие (2-3д)']++;
+                else if (interval <= 7) intervals['Средние (4-7д)']++;
+                else intervals['Долгие (8+д)']++;
             });
             
-            message += `\n📈 **Распределение по интервалам:**\n`;
-            message += `• Новые слова: ${intervals['Новые (интервал 1)']}\n`;
-            message += `• Короткий интервал: ${intervals['Повторение (2-3 дня)']}\n`;
-            message += `• Средний интервал: ${intervals['Повторение (4-7 дней)']}\n`;
-            message += `• Долгосрочные: ${intervals['Долгосрочные (8+ дней)']}\n`;
+            message += `\n📈 **Интервалы повторения:**\n`;
+            message += `• Новые: ${intervals['Новые']} слов\n`;
+            message += `• Короткие: ${intervals['Короткие (2-3д)']} слов\n`;
+            message += `• Средние: ${intervals['Средние (4-7д)']} слов\n`;
+            message += `• Долгие: ${intervals['Долгие (8+д)']} слов\n`;
             
             // Статистика по изученным словам
             const learnedWordsCount = activeWords.filter(word => word.interval > 1).length;
@@ -1278,7 +1277,7 @@ async function showUserStats(chatId) {
             message += `\n🎓 **Общий прогресс:** ${learnedWordsCount}/${activeWords.length} (${progressPercentage}%)\n`;
         }
         
-        // ✅ ИНФОРМАЦИЯ О ПРОГРЕССЕ ИЗУЧЕНИЯ
+        // РЕКОМЕНДАЦИИ
         message += `\n💡 **Рекомендации:**\n`;
         
         if (reviewWordsCount > 0) {
@@ -1291,21 +1290,8 @@ async function showUserStats(chatId) {
             message += `• Новые слова доступны завтра (${newWordsCount} слов)\n`;
         }
         
-        // ✅ ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ПЛАНИРОВАНИИ
-        const totalWordsForReview = await sheetsService.getWordsForReview(chatId).then(words => words.length);
-        if (totalWordsForReview > 0) {
-            const avgInterval = activeWords
-                .filter(word => word.interval > 1)
-                .reduce((sum, word) => sum + (word.interval || 0), 0) / 
-                Math.max(1, activeWords.filter(word => word.interval > 1).length);
-                
-            message += `\n📆 **Планирование:**\n`;
-            message += `• Средний интервал: ${Math.round(avgInterval * 10) / 10} дней\n`;
-            message += `• Следующее новое слово: завтра\n`;
-        }
-        
         if (reviewWordsCount === 0 && newWordsCount === 0) {
-            message += `\n🎉 Отличная работа! Все слова изучены и повторены!\n`;
+            message += `🎉 Отличная работа! Все слова изучены!\n`;
             message += `• Добавьте новые слова через меню\n`;
         }
 
@@ -1319,6 +1305,38 @@ async function showUserStats(chatId) {
         );
     }
 }
+
+// ✅ НОВАЯ ФУНКЦИЯ: Форматирование конкретной даты
+function formatConcreteDate(date) {
+    const now = new Date();
+    const targetDate = new Date(date);
+    
+    // Разница в днях
+    const diffTime = targetDate - now;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    // Форматируем дату
+    const day = targetDate.getDate().toString().padStart(2, '0');
+    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
+    const year = targetDate.getFullYear();
+    
+    // День недели
+    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    const dayOfWeek = daysOfWeek[targetDate.getDay()];
+    
+    if (diffDays === 0) {
+        return `сегодня (${day}.${month}.${year})`;
+    } else if (diffDays === 1) {
+        return `завтра (${day}.${month}.${year})`;
+    } else if (diffDays === 2) {
+        return `послезавтра (${day}.${month}.${year})`;
+    } else if (diffDays <= 7) {
+        return `${day}.${month}.${year} (${dayOfWeek}, через ${diffDays} дн.)`;
+    } else {
+        return `${day}.${month}.${year} (${dayOfWeek})`;
+    }
+}
+
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -2201,6 +2219,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
