@@ -1,4 +1,5 @@
-import { FSRS, Rating, generatorParameters } from 'fsrs.js';
+import pkg from 'fsrs.js';
+const { FSRS, generatorParameters } = pkg;
 
 // ✅ РЕАЛЬНЫЙ FSRS Service с настоящей адаптацией
 export class FSRSService {
@@ -72,16 +73,16 @@ export class FSRSService {
     // Конвертация наших рейтингов в FSRS Rating
     convertRatingToFSRS(rating) {
         const ratingMap = {
-            'again': Rating.Again,
-            'review_again': Rating.Again,
-            'hard': Rating.Hard,
-            'review_hard': Rating.Hard,
-            'good': Rating.Good,
-            'review_good': Rating.Good,
-            'easy': Rating.Easy,
-            'review_easy': Rating.Easy
+            'again': 1, // Rating.Again
+            'review_again': 1,
+            'hard': 2,  // Rating.Hard
+            'review_hard': 2,
+            'good': 3,  // Rating.Good
+            'review_good': 3,
+            'easy': 4,  // Rating.Easy
+            'review_easy': 4
         };
-        return ratingMap[rating] || Rating.Good;
+        return ratingMap[rating] || 3; // По умолчанию Good
     }
 
     // Метод для создания новой карточки
@@ -90,7 +91,7 @@ export class FSRSService {
         
         if (this.fsrs) {
             // Используем FSRS для создания новой карточки
-            const card = this.fsrs.getEmptyCard();
+            const card = this.createEmptyCard();
             card.due = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 1 день
             return {
                 due: card.due,
@@ -119,6 +120,21 @@ export class FSRSService {
                 interval: 1
             };
         }
+    }
+
+    // Создание пустой карточки (аналог getEmptyCard)
+    createEmptyCard() {
+        return {
+            due: new Date(),
+            stability: 0,
+            difficulty: 0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: 0,
+            last_review: new Date()
+        };
     }
 
     // Fallback метод
