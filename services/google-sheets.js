@@ -254,7 +254,7 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения с лимитом 5 карточек в день
+    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение ВСЕХ слов для повторения (без лимита)
     async getWordsForReview(userId) {
         if (!this.initialized) {
             return [];
@@ -283,9 +283,8 @@ export class GoogleSheetsService {
                 return dateA - dateB; // Сначала самые старые
             });
 
-            // Лимит 5 карточек в день
-            const DAILY_LIMIT = 5;
-            return wordsForReview.slice(0, DAILY_LIMIT);
+            // БЕЗ ЛИМИТА для повторения - возвращаем все готовые слова
+            return wordsForReview;
             
         } catch (error) {
             console.error('❌ Error getting words for review:', error.message);
@@ -293,7 +292,48 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ НОВАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения (для нотификаций)
+    // ✅ НОВАЯ ФУНКЦИЯ: Получение новых слов для изучения (с лимитом 5 в день)
+    async getNewWordsForLearning(userId) {
+        if (!this.initialized) {
+            return [];
+        }
+        
+        try {
+            const userWords = await this.getUserWords(userId);
+            const now = new Date();
+            
+            // Фильтруем слова, которые еще не начинали учить (интервал = 1 день)
+            const newWords = userWords.filter(word => {
+                if (!word.nextReview || word.status !== 'active') return false;
+                try {
+                    const reviewDate = new Date(word.nextReview);
+                    // Новые слова - те, которые созданы сегодня и имеют интервал 1 день
+                    const isNewWord = word.interval === 1 && reviewDate > now;
+                    return isNewWord;
+                } catch (dateError) {
+                    console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
+                    return false;
+                }
+            });
+
+            // Сортируем по дате создания (сначала новые)
+            newWords.sort((a, b) => {
+                const dateA = new Date(a.createdDate);
+                const dateB = new Date(b.createdDate);
+                return dateB - dateA; // Сначала самые новые
+            });
+
+            // Лимит 5 новых слов в день
+            const DAILY_NEW_WORDS_LIMIT = 5;
+            return newWords.slice(0, DAILY_NEW_WORDS_LIMIT);
+            
+        } catch (error) {
+            console.error('❌ Error getting new words for learning:', error.message);
+            return [];
+        }
+    }
+
+    // ✅ ФУНКЦИЯ: Проверка есть ли слова для повторения (для нотификаций)
     async hasWordsForReview(userId) {
         if (!this.initialized) {
             return false;
@@ -308,7 +348,7 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ НОВАЯ ФУНКЦИЯ: Получение количества слов для повторения
+    // ✅ ФУНКЦИЯ: Получение количества слов для повторения
     async getReviewWordsCount(userId) {
         if (!this.initialized) {
             return 0;
@@ -319,6 +359,21 @@ export class GoogleSheetsService {
             return wordsForReview.length;
         } catch (error) {
             console.error('❌ Error getting review words count:', error.message);
+            return 0;
+        }
+    }
+
+    // ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
+    async getNewWordsCount(userId) {
+        if (!this.initialized) {
+            return 0;
+        }
+        
+        try {
+            const newWords = await this.getNewWordsForLearning(userId);
+            return newWords.length;
+        } catch (error) {
+            console.error('❌ Error getting new words count:', error.message);
             return 0;
         }
     }
