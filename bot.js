@@ -847,7 +847,7 @@ async function showNextNewWord(chatId) {
     await bot.sendMessage(chatId, message, getNewWordsKeyboard());
 }
 
-// ✅ ПЕРЕПИСАННАЯ ФУНКЦИЯ: Обработка изучения нового слова
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова с правильными интервалами
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -862,19 +862,26 @@ async function processNewWordLearning(chatId, action) {
             // ✅ Отмечаем для дневного лимита
             markWordAsLearnedToday(chatId, word.english);
             
-            // Обновляем данные FSRS
+            // ✅ ИСПРАВЛЕНИЕ: Устанавливаем следующее повторение на ЗАВТРА для быстрого запоминания
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            // Создаем карточку с начальными данными для быстрого запоминания
             const cardData = {
-                due: new Date(word.nextReview),
-                stability: 0,
-                difficulty: 0,
+                due: tomorrow,
+                stability: 0.1, // Низкая стабильность для частого повторения
+                difficulty: 5.0,
                 elapsed_days: 0,
-                scheduled_days: 0,
-                reps: 0,
+                scheduled_days: 1, // Первый интервал - 1 день
+                reps: 1,
                 lapses: 0,
-                state: 0
+                state: 1
             };
 
+            // Используем рейтинг "Good" для нового изученного слова
             const fsrsData = fsrsService.reviewCard(cardData, 'good');
+            
+            // Сохраняем в Google Sheets
             const success = await sheetsService.updateCardAfterReview(
                 chatId, 
                 word.english, 
@@ -884,7 +891,7 @@ async function processNewWordLearning(chatId, action) {
 
             if (success) {
                 userState.learnedCount++;
-                console.log(`📚 Слово "${word.english}" перешло в систему повторения`);
+                console.log(`📚 Слово "${word.english}" перешло в систему повторения (следующий показ: ${tomorrow.toDateString()})`);
             }
             
             // ✅ УДАЛЯЕМ слово из массива новых слов при отметке "Выучил"
@@ -903,8 +910,6 @@ async function processNewWordLearning(chatId, action) {
         // ✅ ИСПРАВЛЕННАЯ ЛОГИКА: Проверяем остались ли слова для изучения
         if (userState.newWords.length > 0) {
             // Если слова остались - показываем следующее
-            // currentWordIndex не увеличиваем, т.к. мы либо удалили текущее слово, 
-            // либо переместили его в конец массива
             await showNextNewWord(chatId);
         } else {
             // Если все слова изучены - завершаем сессию
@@ -1681,3 +1686,4 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
