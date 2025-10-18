@@ -655,6 +655,50 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
         }
     }
 
+    // ✅ ДОБАВИМ В GoogleSheetsService функцию для массового сброса прогресса
+async resetUserProgress(userId) {
+    if (!this.initialized) {
+        return false;
+    }
+    
+    try {
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:I',
+        });
+        
+        const rows = response.data.values || [];
+        let resetCount = 0;
+        
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (row.length >= 9 && row[0] === userId.toString() && row[8] === 'active') {
+                // Обновляем интервал и дату следующего повторения
+                const nextReview = new Date().toISOString();
+                const interval = 1;
+                
+                await this.sheets.spreadsheets.values.update({
+                    spreadsheetId: this.spreadsheetId,
+                    range: `Words!G${i + 1}:H${i + 1}`,
+                    valueInputOption: 'RAW',
+                    resource: {
+                        values: [[nextReview, interval]]
+                    }
+                });
+                
+                resetCount++;
+            }
+        }
+        
+        console.log(`✅ Reset progress for user ${userId}: ${resetCount} words`);
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Error resetting user progress:', error.message);
+        return false;
+    }
+}
+
     // ✅ НОВАЯ ФУНКЦИЯ: Получение всех активных пользователей (для нотификаций)
     async getAllActiveUsers() {
         if (!this.initialized) {
@@ -686,6 +730,7 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
         }
     }
 }
+
 
 
 
