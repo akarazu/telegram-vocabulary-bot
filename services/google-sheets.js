@@ -447,57 +447,57 @@ async updateCardAfterReview(userId, english, fsrsData, rating) {
     }
 }
 
-    // ✅ ФУНКЦИЯ: Обновление интервала повторения
-    async updateWordReview(userId, english, newInterval, nextReviewDate) {
-        if (!this.initialized) {
-            return false;
-        }
-        
-        try {
-            // Сначала находим строку для обновления
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:I',
-            });
-            
-            const rows = response.data.values || [];
-            let rowIndex = -1;
-            
-            for (let i = 0; i < rows.length; i++) {
-                if (rows[i][0] === userId.toString() && 
-                    rows[i][1].toLowerCase() === english.toLowerCase() && 
-                    (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
-                    rowIndex = i + 1;
-                    break;
-                }
-            }
-
-            if (rowIndex === -1) {
-                console.error('❌ Word not found for update:', english);
-                return false;
-            }
-
-            // Обновляем интервал и дату следующего повторения
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: `Words!H${rowIndex}:I${rowIndex}`,
-                valueInputOption: 'RAW',
-                resource: {
-                    values: [[
-                        newInterval,
-                        nextReviewDate.toISOString()
-                    ]]
-                }
-            });
-
-            console.log(`✅ Updated review for word "${english}": interval ${newInterval} days`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error updating word review:', error.message);
-            return false;
-        }
+// ✅ УБЕДИТЕСЬ ЧТО ЭТА ФУНКЦИЯ РАБОТАЕТ В GoogleSheetsService:
+async updateWordReview(userId, english, newInterval, nextReviewDate) {
+    if (!this.initialized) {
+        return false;
     }
+    
+    try {
+        // Сначала находим строку для обновления
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:I',
+        });
+        
+        const rows = response.data.values || [];
+        let rowIndex = -1;
+        
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i][0] === userId.toString() && 
+                rows[i][1].toLowerCase() === english.toLowerCase() && 
+                (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
+                rowIndex = i + 1;
+                break;
+            }
+        }
 
+        if (rowIndex === -1) {
+            console.error('❌ Word not found for update:', english);
+            return false;
+        }
+
+        // Обновляем интервал и дату следующего повторения
+        await this.sheets.spreadsheets.values.update({
+            spreadsheetId: this.spreadsheetId,
+            range: `Words!H${rowIndex}:I${rowIndex}`, // Столбцы H (Interval) и I (NextReview)
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[
+                    newInterval,
+                    nextReviewDate.toISOString()
+                ]]
+            }
+        });
+
+        console.log(`✅ Updated review for word "${english}": interval ${newInterval} days`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error updating word review:', error.message);
+        return false;
+    }
+}
+    
     // ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
     async addMeaningToWord(userId, english, newMeaning) {
         if (!this.initialized) {
@@ -684,6 +684,7 @@ async updateCardAfterReview(userId, english, fsrsData, rating) {
         }
     }
 }
+
 
 
 
