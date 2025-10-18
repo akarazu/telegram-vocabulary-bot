@@ -154,6 +154,44 @@ async function getUnlearnedNewWords(chatId) {
     }
 }
 
+// ✅ ДОБАВЛЯЕМ ФУНКЦИЮ: Получение ВСЕХ не изученных слов (без учета лимита)
+async function getAllUnlearnedWords(chatId) {
+    if (!sheetsService.initialized) {
+        return [];
+    }
+    
+    try {
+        const userWords = await sheetsService.getUserWords(chatId);
+        
+        console.log(`🔍 Поиск ВСЕХ не изученных слов для ${chatId}`);
+
+        // Фильтруем слова которые ЕЩЕ НЕ ИЗУЧЕНЫ
+        const unlearnedWords = userWords.filter(word => {
+            if (!word.nextReview || word.status !== 'active') return false;
+            
+            try {
+                const isNewWord = word.interval === 1;
+                const isNotLearned = !isWordLearned(chatId, word.english);
+                return isNewWord && isNotLearned;
+            } catch (error) {
+                console.error(`❌ Ошибка проверки слова "${word.english}"`);
+                return false;
+            }
+        });
+
+        console.log(`📊 Найдено всех не изученных слов: ${unlearnedWords.length}`);
+        
+        // Сортируем по дате создания (сначала новые)
+        unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+
+        return unlearnedWords;
+        
+    } catch (error) {
+        console.error('❌ Error getting all unlearned words:', error);
+        return [];
+    }
+}
+
 
 // Главное меню
 function getMainMenu() {
@@ -2094,6 +2132,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
