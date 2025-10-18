@@ -447,7 +447,7 @@ async updateCardAfterReview(userId, english, fsrsData, rating) {
     }
 }
 
-// ✅ УБЕДИТЕСЬ ЧТО ЭТА ФУНКЦИЯ РАБОТАЕТ В GoogleSheetsService:
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление интервала повторения
 async updateWordReview(userId, english, newInterval, nextReviewDate) {
     if (!this.initialized) {
         return false;
@@ -477,20 +477,20 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
             return false;
         }
 
-        // Обновляем интервал и дату следующего повторения
+        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбец G (NextReview) и H (Interval)
         await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
-            range: `Words!H${rowIndex}:I${rowIndex}`, // Столбцы H (Interval) и I (NextReview)
+            range: `Words!G${rowIndex}:H${rowIndex}`, // G=NextReview, H=Interval
             valueInputOption: 'RAW',
             resource: {
                 values: [[
-                    newInterval,
-                    nextReviewDate.toISOString()
+                    nextReviewDate.toISOString(), // Столбец G - NextReview
+                    newInterval                   // Столбец H - Interval
                 ]]
             }
         });
 
-        console.log(`✅ Updated review for word "${english}": interval ${newInterval} days`);
+        console.log(`✅ Updated review for word "${english}": interval ${newInterval} days, next review: ${nextReviewDate.toISOString()}`);
         return true;
     } catch (error) {
         console.error('❌ Error updating word review:', error.message);
@@ -684,6 +684,7 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
         }
     }
 }
+
 
 
 
