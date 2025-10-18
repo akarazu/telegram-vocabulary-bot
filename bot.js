@@ -578,31 +578,24 @@ async function completeReviewSession(chatId, userState) {
 
     let message = '🎉 **Сессия повторения завершена!**\n\n';
     message += `📊 Результаты:\n`;
-    message += `• Всего слов: ${totalWords}\n`;
+    message += `• Всего слов для повторения: ${totalWords}\n`;
     message += `• Повторено: ${reviewedCount}\n`;
-    message += `• Пропущено: ${totalWords - reviewedCount}\n\n`;
+    message += `• Осталось: ${totalWords - reviewedCount}\n\n`;
     
     if (reviewedCount === totalWords && totalWords > 0) {
-        message += `💪 Отличная работа! Вы повторили все слова на сегодня!\n\n`;
-        message += `🔄 Следующие слова будут доступны завтра.`;
+        message += `💪 Отличная работа! Вы повторили все слова!\n\n`;
     } else if (totalWords > 0) {
-        message += `💡 Вы можете продолжить позже через меню.`;
+        message += `💡 Вы можете продолжить повторение позже.\n\n`;
     }
     
-    message += `\n\n📅 Следующую сессию можно начать командой /review или через меню`;
-
-    await bot.sendMessage(chatId, message, getMainMenu());
+    // Проверяем новые слова для изучения
+    const newWordsCount = await sheetsService.getNewWordsCount(chatId);
+    if (newWordsCount > 0) {
+        message += `🆕 Доступно новых слов для изучения: ${newWordsCount}\n`;
+        message += `Можете добавить новые слова через меню!`;
+    }
     
-    // Проверяем остались ли еще слова для повторения
-    setTimeout(async () => {
-        const remainingWords = await sheetsService.getReviewWordsCount(chatId);
-        if (remainingWords > 0) {
-            await bot.sendMessage(chatId, 
-                `ℹ️ Осталось слов для повторения: ${remainingWords}\n` +
-                `Можете продолжить когда будет удобно!`
-            );
-        }
-    }, 2000);
+    await bot.sendMessage(chatId, message, getMainMenu());
 }
 
 // ✅ ФУНКЦИЯ: Показ статистики пользователя
@@ -615,38 +608,40 @@ async function showUserStats(chatId) {
     try {
         const userWords = await sheetsService.getUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
-        const wordsForReview = await sheetsService.getWordsForReview(chatId);
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
+        const newWordsCount = await sheetsService.getNewWordsCount(chatId);
         
         let message = '📊 **Ваша статистика:**\n\n';
         message += `📚 Всего слов: ${activeWords.length}\n`;
         message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
+        message += `🆕 Новых слов для изучения: ${newWordsCount}\n`;
         
         if (activeWords.length > 0) {
             // Считаем слова по интервалам повторения
             const intervals = {
-                '1-2 дня': 0,
-                '3-7 дней': 0,
+                'Новые (1 день)': 0,
+                '2-7 дней': 0,
                 '1-4 недели': 0,
                 '1+ месяц': 0
             };
             
             activeWords.forEach(word => {
-                if (word.interval <= 2) intervals['1-2 дня']++;
-                else if (word.interval <= 7) intervals['3-7 дней']++;
+                if (word.interval === 1) intervals['Новые (1 день)']++;
+                else if (word.interval <= 7) intervals['2-7 дней']++;
                 else if (word.interval <= 30) intervals['1-4 недели']++;
                 else intervals['1+ месяц']++;
             });
             
             message += `\n📅 **Интервалы повторения:**\n`;
-            message += `• 1-2 дня: ${intervals['1-2 дня']} слов\n`;
-            message += `• 3-7 дней: ${intervals['3-7 дней']} слов\n`;
+            message += `• Новые: ${intervals['Новые (1 день)']} слов\n`;
+            message += `• 2-7 дней: ${intervals['2-7 дней']} слов\n`;
             message += `• 1-4 недели: ${intervals['1-4 недели']} слов\n`;
             message += `• 1+ месяц: ${intervals['1+ месяц']} слов\n`;
         }
         
         message += `\n💡 **Система настроена на быстрое запоминание:**\n`;
-        message += `• Лимит: 5 слов в день\n`;
+        message += `• Повторение: БЕЗ ЛИМИТА (все готовые слова)\n`;
+        message += `• Новые слова: 5 в день\n`;
         message += `• Частые повторения\n`;
         message += `• Оптимальные интервалы\n`;
         
@@ -730,6 +725,22 @@ bot.onText(/\/check/, async (msg) => {
         await bot.sendMessage(chatId, 
             `📊 Слов для повторения: ${count}\n\n` +
             (count > 0 ? '💪 Начните повторение через меню!' : '🎉 На сегодня слов для повторения нет!')
+        );
+    } else {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+    }
+});
+
+// ✅ КОМАНДА ДЛЯ ПРОВЕРКИ НОВЫХ СЛОВ (добавьте этот блок)
+bot.onText(/\/new/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (sheetsService.initialized) {
+        const count = await sheetsService.getNewWordsCount(chatId);
+        await bot.sendMessage(chatId, 
+            `🆕 Новых слов для изучения: ${count}\n\n` +
+            (count > 0 ? 
+                '💡 Добавляйте новые слова через меню "➕ Добавить новое слово"' : 
+                '🎉 Вы изучили все новые слова на сегодня!')
         );
     } else {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -1243,3 +1254,4 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с лимитом 5 карточек, быстрым запоминанием и умными нотификациями!');
+
