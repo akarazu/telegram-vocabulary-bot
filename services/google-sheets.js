@@ -292,46 +292,55 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ НОВАЯ ФУНКЦИЯ: Получение новых слов для изучения (с лимитом 5 в день)
-    async getNewWordsForLearning(userId) {
-        if (!this.initialized) {
-            return [];
-        }
-        
-        try {
-            const userWords = await this.getUserWords(userId);
-            const now = new Date();
-            
-            // Фильтруем слова, которые еще не начинали учить (интервал = 1 день)
-            const newWords = userWords.filter(word => {
-                if (!word.nextReview || word.status !== 'active') return false;
-                try {
-                    const reviewDate = new Date(word.nextReview);
-                    // Новые слова - те, которые созданы сегодня и имеют интервал 1 день
-                    const isNewWord = word.interval === 1 && reviewDate > now;
-                    return isNewWord;
-                } catch (dateError) {
-                    console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
-                    return false;
-                }
-            });
-
-            // Сортируем по дате создания (сначала новые)
-            newWords.sort((a, b) => {
-                const dateA = new Date(a.createdDate);
-                const dateB = new Date(b.createdDate);
-                return dateB - dateA; // Сначала самые новые
-            });
-
-            // Лимит 5 новых слов в день
-            const DAILY_NEW_WORDS_LIMIT = 5;
-            return newWords.slice(0, DAILY_NEW_WORDS_LIMIT);
-            
-        } catch (error) {
-            console.error('❌ Error getting new words for learning:', error.message);
-            return [];
-        }
+ // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение новых слов для изучения (с лимитом 5 в день)
+async getNewWordsForLearning(userId) {
+    if (!this.initialized) {
+        return [];
     }
+    
+    try {
+        const userWords = await this.getUserWords(userId);
+        const now = new Date();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Начало текущего дня
+        
+        // Фильтруем слова, которые созданы сегодня и еще не изучались
+        const newWords = userWords.filter(word => {
+            if (!word.nextReview || word.status !== 'active') return false;
+            
+            try {
+                const createdDate = new Date(word.createdDate);
+                const reviewDate = new Date(word.nextReview);
+                
+                // Новые слова - те, которые созданы сегодня И имеют интервал 1 день
+                // И дата следующего повторения в будущем (еще не изучались)
+                const isCreatedToday = createdDate >= today;
+                const isNewWord = word.interval === 1;
+                const isNotReviewedYet = reviewDate > now;
+                
+                return isCreatedToday && isNewWord && isNotReviewedYet;
+            } catch (dateError) {
+                console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
+                return false;
+            }
+        });
+
+        // Сортируем по дате создания (сначала новые)
+        newWords.sort((a, b) => {
+            const dateA = new Date(a.createdDate);
+            const dateB = new Date(b.createdDate);
+            return dateB - dateA; // Сначала самые новые
+        });
+
+        // Лимит 5 новых слов в день
+        const DAILY_NEW_WORDS_LIMIT = 5;
+        return newWords.slice(0, DAILY_NEW_WORDS_LIMIT);
+        
+    } catch (error) {
+        console.error('❌ Error getting new words for learning:', error.message);
+        return [];
+    }
+}
 
     // ✅ ФУНКЦИЯ: Проверка есть ли слова для повторения (для нотификаций)
     async hasWordsForReview(userId) {
@@ -363,21 +372,20 @@ export class GoogleSheetsService {
         }
     }
 
-    // ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
-    async getNewWordsCount(userId) {
-        if (!this.initialized) {
-            return 0;
-        }
-        
-        try {
-            const newWords = await this.getNewWordsForLearning(userId);
-            return newWords.length;
-        } catch (error) {
-            console.error('❌ Error getting new words count:', error.message);
-            return 0;
-        }
+  // ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
+async getNewWordsCount(userId) {
+    if (!this.initialized) {
+        return 0;
     }
-
+    
+    try {
+        const newWords = await this.getNewWordsForLearning(userId);
+        return newWords.length;
+    } catch (error) {
+        console.error('❌ Error getting new words count:', error.message);
+        return 0;
+    }
+}
     // ✅ ФУНКЦИЯ: Обновление карточки после повторения
     async updateCardAfterReview(userId, english, fsrsData, rating) {
         if (!this.initialized) {
@@ -667,3 +675,4 @@ export class GoogleSheetsService {
         }
     }
 }
+
