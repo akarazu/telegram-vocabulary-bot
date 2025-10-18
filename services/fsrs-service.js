@@ -1,105 +1,57 @@
-import pkg from 'fsrs.js';
-const { FSRS, createEmptyCard, Rating } = pkg;
-
+// ✅ ОБНОВЛЯЕМ FSRS Service для более агрессивного запоминания
 export class FSRSService {
     constructor() {
         try {
-            // Используем стандартные параметры FSRS
-            // Если нужно кастомизировать, можно передать параметры вручную
-            this.fsrs = new FSRS();
-            console.log('✅ FSRS service initialized with default parameters');
+            // Используем кастомизированные параметры для быстрого запоминания
+            const parameters = {
+                request_retention: 0.9, // Высокий процент удержания
+                maximum_interval: 36500,
+                w: [
+                    0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 
+                    1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 
+                    2.61, 0.0, 0.0, 0.0
+                ]
+            };
+            this.fsrs = new FSRS(parameters);
+            console.log('✅ FSRS service initialized with fast learning parameters');
         } catch (error) {
             console.error('❌ Error initializing FSRS:', error);
-            // Fallback: создаем базовый экземпляр
             this.fsrs = { 
                 repeat: (card, date) => this.fallbackRepeat(card, date)
             };
         }
     }
 
-    // Fallback метод если FSRS не инициализирован
+    // Fallback метод с оптимизированными интервалами для быстрого запоминания
     fallbackRepeat(card, date) {
         const now = new Date();
+        // Более агрессивные интервалы для быстрого запоминания
         const defaultIntervals = {
-            [Rating.Again]: { card: { due: new Date(now.getTime() + 24 * 60 * 60 * 1000), interval: 1 } },
-            [Rating.Hard]: { card: { due: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), interval: 3 } },
-            [Rating.Good]: { card: { due: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000), interval: 7 } },
-            [Rating.Easy]: { card: { due: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000), interval: 14 } }
+            [Rating.Again]: { 
+                card: { 
+                    due: new Date(now.getTime() + 1 * 60 * 60 * 1000), // 1 час
+                    interval: 0.04 
+                } 
+            },
+            [Rating.Hard]: { 
+                card: { 
+                    due: new Date(now.getTime() + 1 * 24 * 60 * 60 * 1000), // 1 день
+                    interval: 1 
+                } 
+            },
+            [Rating.Good]: { 
+                card: { 
+                    due: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), // 3 дня
+                    interval: 3 
+                } 
+            },
+            [Rating.Easy]: { 
+                card: { 
+                    due: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000), // 7 дней
+                    interval: 7 
+                } 
+            }
         };
         return defaultIntervals;
-    }
-
-    createNewCard() {
-        return createEmptyCard();
-    }
-
-    reviewCard(card, rating) {
-        try {
-            const schedule = this.fsrs.repeat(card, new Date());
-            
-            let scheduledCard;
-            switch(rating.toLowerCase()) {
-                case 'again':
-                    scheduledCard = schedule[Rating.Again];
-                    break;
-                case 'hard':
-                    scheduledCard = schedule[Rating.Hard];
-                    break;
-                case 'good':
-                    scheduledCard = schedule[Rating.Good];
-                    break;
-                case 'easy':
-                    scheduledCard = schedule[Rating.Easy];
-                    break;
-                default:
-                    scheduledCard = schedule[Rating.Good];
-            }
-
-            return {
-                card: scheduledCard.card,
-                reviewLog: scheduledCard.reviewLog
-            };
-        } catch (error) {
-            console.error('❌ FSRS review error:', error);
-            // Fallback: создаем новую карточку при ошибке
-            const fallbackCard = createEmptyCard();
-            const nextReview = new Date();
-            
-            // Fallback интервалы для быстрого запоминания
-            switch(rating.toLowerCase()) {
-                case 'again':
-                    nextReview.setDate(nextReview.getDate() + 1);
-                    fallbackCard.interval = 1;
-                    break;
-                case 'hard':
-                    nextReview.setDate(nextReview.getDate() + 2);
-                    fallbackCard.interval = 2;
-                    break;
-                case 'good':
-                    nextReview.setDate(nextReview.getDate() + 4);
-                    fallbackCard.interval = 4;
-                    break;
-                case 'easy':
-                    nextReview.setDate(nextReview.getDate() + 7);
-                    fallbackCard.interval = 7;
-                    break;
-                default:
-                    nextReview.setDate(nextReview.getDate() + 4);
-                    fallbackCard.interval = 4;
-            }
-            
-            fallbackCard.due = nextReview;
-            
-            return {
-                card: fallbackCard,
-                reviewLog: null
-            };
-        }
-    }
-
-    getIntervalDays(dueDate) {
-        const now = new Date();
-        const due = new Date(dueDate);
-        return Math.ceil((due - now) / (1000 * 60 * 60 * 24));
     }
 }
