@@ -841,7 +841,7 @@ async function showNextNewWord(chatId) {
     await bot.sendMessage(chatId, message, getNewWordsKeyboard());
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -886,8 +886,10 @@ async function processNewWordLearning(chatId, action) {
             console.log(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
         }
         
+        // ✅ ИСПРАВЛЕНИЕ: Увеличиваем индекс после обработки ВСЕХ действий
         userState.currentWordIndex++;
         
+        // ✅ ИСПРАВЛЕНИЕ: Проверяем завершение сессии после увеличения индекса
         if (userState.currentWordIndex < userState.newWords.length) {
             await showNextNewWord(chatId);
         } else {
@@ -1662,3 +1664,4 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
