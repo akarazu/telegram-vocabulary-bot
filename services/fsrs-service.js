@@ -1,14 +1,6 @@
 // ✅ УПРОЩЕННЫЙ FSRS Service для Railway деплоя
 // Используем собственную реализацию алгоритма повторений
 
-// Рейтинги для системы повторений
-const Rating = {
-    Again: 'again',
-    Hard: 'hard', 
-    Good: 'good',
-    Easy: 'easy'
-};
-
 export class FSRSService {
     constructor() {
         try {
@@ -58,7 +50,7 @@ export class FSRSService {
             case 'hard':
             case 'review_hard':
                 // При "Трудно" - небольшой интервал
-                interval = currentInterval * 0.8;
+                interval = Math.max(0.5, currentInterval * 0.8);
                 stability = currentStability * 1.2;
                 difficulty = Math.min(10, currentDifficulty + 0.2);
                 due = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
@@ -67,7 +59,7 @@ export class FSRSService {
             case 'good':
             case 'review_good':
                 // При "Хорошо" - стандартный прогресс
-                interval = currentInterval * 2.5;
+                interval = Math.max(1, currentInterval * 2.5);
                 stability = currentStability * 2.0;
                 difficulty = currentDifficulty;
                 due = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
@@ -76,7 +68,7 @@ export class FSRSService {
             case 'easy':
             case 'review_easy':
                 // При "Легко" - большой интервал
-                interval = currentInterval * 4.0;
+                interval = Math.max(2, currentInterval * 4.0);
                 stability = currentStability * 3.0;
                 difficulty = Math.max(1, currentDifficulty - 0.3);
                 due = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
@@ -100,7 +92,7 @@ export class FSRSService {
             elapsed_days: interval,
             scheduled_days: interval,
             reps: reps,
-            lapses: rating === 'again' ? lapses + 1 : lapses,
+            lapses: rating === 'again' || rating === 'review_again' ? lapses + 1 : lapses,
             state: 1, // active
             last_review: now,
             interval: interval
@@ -145,7 +137,7 @@ export class FSRSService {
             elapsed_days: interval,
             scheduled_days: interval,
             reps: (cardData.reps || 0) + 1,
-            lapses: rating === 'again' ? (cardData.lapses || 0) + 1 : (cardData.lapses || 0),
+            lapses: rating === 'again' || rating === 'review_again' ? (cardData.lapses || 0) + 1 : (cardData.lapses || 0),
             state: 1,
             last_review: now,
             interval: interval
