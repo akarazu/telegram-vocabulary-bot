@@ -41,7 +41,7 @@ const dailyLearnedWords = new Map();
 // ✅ ОБНОВЛЕНО: Хранилище для слов, которые УЖЕ ИЗУЧЕНЫ (перешли в повторение)
 const learnedWords = new Map();
 
-// ✅ ФУНКЦИЯ: Отметка слова как изученного (перешедшего в повторение)
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Отметка слова как изученного
 function markWordAsLearned(chatId, englishWord) {
     if (!learnedWords.has(chatId)) {
         learnedWords.set(chatId, new Set());
@@ -49,13 +49,17 @@ function markWordAsLearned(chatId, englishWord) {
     
     const userLearnedWords = learnedWords.get(chatId);
     userLearnedWords.add(englishWord.toLowerCase());
-    console.log(`🎓 Слово "${englishWord}" отмечено как ИЗУЧЕННОЕ для ${chatId}`);
+    console.log(`🎓 Слово "${englishWord}" отмечено как ИЗУЧЕННОЕ для ${chatId}, всего: ${userLearnedWords.size}`);
 }
 
-// ✅ ФУНКЦИЯ: Проверка изучено ли слово
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Проверка изучено ли слово
 function isWordLearned(chatId, englishWord) {
+    if (!learnedWords.has(chatId)) {
+        learnedWords.set(chatId, new Set());
+        return false;
+    }
     const userLearnedWords = learnedWords.get(chatId);
-    return userLearnedWords ? userLearnedWords.has(englishWord.toLowerCase()) : false;
+    return userLearnedWords.has(englishWord.toLowerCase());
 }
 
 // ✅ ФУНКЦИЯ: Сброс дневного лимита
@@ -73,15 +77,16 @@ function resetDailyLimit() {
 // Запускаем ежечасную проверку
 setInterval(resetDailyLimit, 60 * 60 * 1000);
 
-// ✅ ФУНКЦИЯ: Получение количества изученных слов сегодня
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Получение количества изученных слов сегодня
 function getLearnedToday(chatId) {
     if (!dailyLearnedWords.has(chatId)) {
         dailyLearnedWords.set(chatId, new Set());
+        return 0;
     }
     return dailyLearnedWords.get(chatId).size;
 }
 
-// ✅ ФУНКЦИЯ: Отметка слова как изученного сегодня
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Отметка слова как изученного сегодня
 function markWordAsLearnedToday(chatId, englishWord) {
     if (!dailyLearnedWords.has(chatId)) {
         dailyLearnedWords.set(chatId, new Set());
@@ -89,7 +94,7 @@ function markWordAsLearnedToday(chatId, englishWord) {
     
     const userLearnedWords = dailyLearnedWords.get(chatId);
     userLearnedWords.add(englishWord.toLowerCase());
-    console.log(`📝 Слово "${englishWord}" отмечено как изученное сегодня для ${chatId}`);
+    console.log(`📝 Слово "${englishWord}" отмечено как изученное сегодня для ${chatId}, всего: ${userLearnedWords.size}`);
 }
 
 // ✅ ФУНКЦИЯ: Проверка достигнут ли лимит
@@ -99,7 +104,7 @@ function isDailyLimitReached(chatId) {
     return learnedToday >= DAILY_LIMIT;
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение НЕ ИЗУЧЕННЫХ слов
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Получение НЕ ИЗУЧЕННЫХ слов
 async function getUnlearnedNewWords(chatId) {
     if (!sheetsService.initialized) {
         return [];
@@ -119,6 +124,10 @@ async function getUnlearnedNewWords(chatId) {
             try {
                 const isFirstInterval = word.interval === 1;
                 const isNotLearned = !isWordLearned(chatId, word.english);
+                
+                if (isFirstInterval && isNotLearned) {
+                    console.log(`✅ Слово "${word.english}" - новое и не изучено`);
+                }
                 
                 return isFirstInterval && isNotLearned;
             } catch (error) {
@@ -811,7 +820,7 @@ async function completeReviewSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Начало сессии изучения новых слов
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Начало сессии изучения новых слов
 async function startNewWordsSession(chatId) {
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -822,10 +831,12 @@ async function startNewWordsSession(chatId) {
         const learnedToday = getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         
+        console.log(`🔍 Старт сессии изучения для ${chatId}, изучено сегодня: ${learnedToday}/${DAILY_LIMIT}`);
+
         // Проверяем достигнут ли дневной лимит
         if (learnedToday >= DAILY_LIMIT) {
             await bot.sendMessage(chatId, 
-                `🎉 Вы достигнули дневного лимита!\n\n` +
+                `🎉 Вы достигли дневного лимита!\n\n` +
                 `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
                 '💡 Возвращайтесь завтра для изучения новых слов!\n' +
                 '📚 Можете повторить уже изученные слова\n\n' +
@@ -1115,7 +1126,7 @@ bot.onText(/\/reset/, async (msg) => {
     await showMainMenu(chatId);
 });
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Сброс прогресса
+// ✅ ИСПРАВЛЕННАЯ КОМАНДА ДЛЯ СБРОСА ПРОГРЕССА
 bot.onText(/\/reset_progress/, async (msg) => {
     const chatId = msg.chat.id;
     
@@ -1137,8 +1148,8 @@ bot.onText(/\/reset_progress/, async (msg) => {
     );
 });
 
-// ✅ ДОБАВЛЯЕМ команду для отладки лимита
-bot.onText(/\/debug_limit/, async (msg) => {
+// ✅ ДОБАВЛЯЕМ команду для отладки
+bot.onText(/\/debug_progress/, async (msg) => {
     const chatId = msg.chat.id;
     const learnedToday = getLearnedToday(chatId);
     const DAILY_LIMIT = 5;
@@ -1149,19 +1160,19 @@ bot.onText(/\/debug_limit/, async (msg) => {
     const dailyWords = dailyLearnedWords.get(chatId);
     const dailyCount = dailyWords ? dailyWords.size : 0;
     
+    const userState = userStates.get(chatId);
+    
     await bot.sendMessage(chatId, 
         `🐛 **Отладочная информация:**\n\n` +
         `📊 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n` +
         `🎓 Всего изучено слов: ${learnedCount}\n` +
         `📝 Daily learned words: ${dailyCount}\n` +
-        `🔄 Состояние: ${userStates.get(chatId)?.state || 'нет'}\n\n` +
-        `💡 Команды:\n` +
-        `/reset_progress - сбросить прогресс\n` +
-        `/new - проверить новые слова\n` +
-        `/limit - проверить лимит`
+        `🔄 Состояние: ${userState?.state || 'нет'}\n` +
+        `📋 User states size: ${userStates.size}\n` +
+        `📚 Daily learned size: ${dailyLearnedWords.size}\n` +
+        `🎓 Learned words size: ${learnedWords.size}`
     );
 });
-
 
 // Команда для повторения слов
 bot.onText(/\/review/, async (msg) => {
@@ -1818,4 +1829,5 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
