@@ -252,44 +252,50 @@ async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
         }
     }
 
-    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение ВСЕХ слов для повторения (без лимита)
-    async getWordsForReview(userId) {
-        if (!this.initialized) {
-            return [];
-        }
-        
-        try {
-            const userWords = await this.getUserWords(userId);
-            const now = new Date();
-            
-            // Фильтруем слова, готовые к повторению
-            const wordsForReview = userWords.filter(word => {
-                if (!word.nextReview || word.status !== 'active') return false;
-                try {
-                    const reviewDate = new Date(word.nextReview);
-                    return reviewDate <= now;
-                } catch (dateError) {
-                    console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
-                    return false;
-                }
-            });
-
-            // Сортируем по приоритету (сначала просроченные, потом по дате)
-            wordsForReview.sort((a, b) => {
-                const dateA = new Date(a.nextReview);
-                const dateB = new Date(b.nextReview);
-                return dateA - dateB; // Сначала самые старые
-            });
-
-            // БЕЗ ЛИМИТА для повторения - возвращаем все готовые слова
-            return wordsForReview;
-            
-        } catch (error) {
-            console.error('❌ Error getting words for review:', error.message);
-            return [];
-        }
+// ✅ ДОБАВЛЯЕМ в GoogleSheetsService новую функцию:
+async getWordsForReview(userId) {
+    if (!this.initialized) {
+        return [];
     }
+    
+    try {
+        const userWords = await this.getUserWords(userId);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        console.log(`🔍 Поиск слов для повторения для пользователя ${userId}`);
 
+        // Фильтруем слова, готовые к повторению (исключая новые слова с интервалом 1)
+        const wordsForReview = userWords.filter(word => {
+            if (!word.nextReview || word.status !== 'active') return false;
+            
+            try {
+                const nextReviewDate = new Date(word.nextReview);
+                const reviewDate = new Date(nextReviewDate.getFullYear(), nextReviewDate.getMonth(), nextReviewDate.getDate());
+                
+                const isDue = reviewDate <= today;
+                const isNotNew = word.interval > 1; // Исключаем новые слова
+                
+                return isDue && isNotNew;
+            } catch (dateError) {
+                console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
+                return false;
+            }
+        });
+
+        console.log(`📊 Найдено слов для повторения: ${wordsForReview.length}`);
+        
+        // Сортируем по дате следующего повторения
+        wordsForReview.sort((a, b) => new Date(a.nextReview) - new Date(b.nextReview));
+
+        return wordsForReview;
+        
+    } catch (error) {
+        console.error('❌ Error getting words for review:', error.message);
+        return [];
+    }
+}
+    
 // ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Получение новых слов с проверкой повторений
 async getNewWordsForLearning(userId) {
     if (!this.initialized) {
@@ -678,6 +684,7 @@ async updateCardAfterReview(userId, english, fsrsData, rating) {
         }
     }
 }
+
 
 
 
