@@ -1240,6 +1240,43 @@ bot.onText(/\/limit/, async (msg) => {
     );
 });
 
+// ✅ КОМАНДА ДЛЯ ПРИНУДИТЕЛЬНОГО ОБНОВЛЕНИЯ ИНТЕРВАЛОВ
+bot.onText(/\/fix_intervals/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    if (!sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        return;
+    }
+
+    try {
+        const userWords = await sheetsService.getUserWords(chatId);
+        let fixedCount = 0;
+        
+        for (const word of userWords) {
+            // Если слово в learnedWords но интервал = 1, исправляем
+            if (isWordLearned(chatId, word.english) && word.interval === 1) {
+                const success = await sheetsService.updateWordReview(
+                    chatId,
+                    word.english,
+                    2, // Исправляем интервал
+                    new Date(Date.now() + 24 * 60 * 60 * 1000)
+                );
+                if (success) fixedCount++;
+            }
+        }
+        
+        await bot.sendMessage(chatId, 
+            `🔧 **Исправлено интервалов:** ${fixedCount}\n\n` +
+            `💡 Теперь изученные слова не должны показываться как новые.`
+        );
+        
+    } catch (error) {
+        console.error('❌ Error fixing intervals:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при исправлении интервалов.');
+    }
+});
+
 // Обработка сообщений
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -1807,6 +1844,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
