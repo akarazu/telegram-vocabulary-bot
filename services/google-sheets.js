@@ -431,7 +431,7 @@ async getWordsForReview(chatId) {
     }
 
     // ✅ НОВАЯ ФУНКЦИЯ: Массовое обновление слов (для батчинга)
- async batchUpdateWords(chatId, wordUpdates) {
+async batchUpdateWords(chatId, wordUpdates) {
     if (!this.initialized) {
         return false;
     }
@@ -439,16 +439,14 @@ async getWordsForReview(chatId) {
     try {
         console.log(`🔄 Batch updating ${wordUpdates.length} words for user ${chatId}`);
         
-        // Получаем все строки для поиска
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:K', // ✅ ОБНОВЛЕН ДИАПАЗОН
+            range: 'Words!A:K',
         });
         
         const rows = response.data.values || [];
         const updates = [];
         
-        // Находим строки для обновления
         for (const [english, data] of wordUpdates) {
             let rowIndex = -1;
             
@@ -462,33 +460,30 @@ async getWordsForReview(chatId) {
             }
 
             if (rowIndex !== -1) {
-                // ✅ ОБНОВЛЯЕМ FirstLearnedDate ТОЛЬКО ПРИ ПЕРВОМ ИЗУЧЕНИИ
                 const currentRow = rows[rowIndex - 1];
-                const currentFirstLearnedDate = currentRow[10] || '';
+                const currentFirstLearnedDate = currentRow[10] || ''; // ✅ СТОЛБЕЦ K - индекс 10
                 
                 let firstLearnedDate = currentFirstLearnedDate;
                 if ((!currentFirstLearnedDate || currentFirstLearnedDate === '') && 
                     data.interval > 1) {
-                    // Заполняем FirstLearnedDate только при первом изучении
                     firstLearnedDate = data.lastReview ? data.lastReview.toISOString() : new Date().toISOString();
                     console.log(`🎯 Установлен FirstLearnedDate для "${english}": ${firstLearnedDate}`);
                 }
 
                 updates.push({
-                    range: `Words!G${rowIndex}:K${rowIndex}`, // ✅ ОБНОВЛЕН ДИАПАЗОН ДО K
+                    range: `Words!G${rowIndex}:K${rowIndex}`, // ✅ G-K (LastReview до FirstLearnedDate)
                     values: [[
                         data.lastReview ? data.lastReview.toISOString() : new Date().toISOString(),
                         data.nextReview.toISOString(),
                         data.interval.toString(),
                         'active',
-                        firstLearnedDate // ✅ ДОБАВЛЯЕМ FirstLearnedDate
+                        firstLearnedDate // ✅ СТОЛБЕЦ K
                     ]]
                 });
             }
         }
         
         if (updates.length > 0) {
-            // Выполняем все обновления одним запросом
             await this.sheets.spreadsheets.values.batchUpdate({
                 spreadsheetId: this.spreadsheetId,
                 resource: {
@@ -497,7 +492,6 @@ async getWordsForReview(chatId) {
                 }
             });
             
-            // Инвалидируем кеш
             this.cache.delete(`words_${chatId}`);
             this.cache.delete(`review_${chatId}`);
             
@@ -1118,6 +1112,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
