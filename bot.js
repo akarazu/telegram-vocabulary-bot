@@ -77,7 +77,7 @@ function resetDailyLimit() {
 // Запускаем ежечасную проверку
 setInterval(resetDailyLimit, 60 * 60 * 1000);
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение количества изученных слов сегодня
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение количества изученных слов сегодня
 async function getLearnedToday(chatId) {
     try {
         const userWords = await sheetsService.getUserWords(chatId);
@@ -85,25 +85,25 @@ async function getLearnedToday(chatId) {
         today.setHours(0, 0, 0, 0);
         
         const learnedToday = userWords.filter(word => {
-            if (word.interval <= 1) return false; // Только слова с интервалом >1
+            if (word.interval <= 1) return false;
             
             try {
-                // ✅ ПРИОРИТЕТ: используем lastReview если есть, иначе createdDate
+                // ✅ ИСПОЛЬЗУЕМ LastReview для определения даты изучения
                 let reviewDate;
-                if (word.lastReview) {
+                if (word.lastReview && word.lastReview.trim() !== '') {
                     reviewDate = new Date(word.lastReview);
                 } else {
-                    // Если lastReview нет, используем createdDate
-                    reviewDate = new Date(word.createdDate);
+                    // Если LastReview нет, используем NextReview минус интервал
+                    const nextReview = new Date(word.nextReview);
+                    reviewDate = new Date(nextReview);
+                    reviewDate.setDate(reviewDate.getDate() - (word.interval || 1));
                 }
                 
-                // Приводим к началу дня для сравнения
                 const reviewDay = new Date(reviewDate.getFullYear(), reviewDate.getMonth(), reviewDate.getDate());
-                
                 const isLearnedToday = reviewDay.getTime() === today.getTime();
                 
                 if (isLearnedToday) {
-                    console.log(`✅ Слово "${word.english}" изучено сегодня: интервал=${word.interval}, дата изучения=${reviewDate}`);
+                    console.log(`✅ Слово "${word.english}" изучено сегодня: интервал=${word.interval}, LastReview=${word.lastReview || 'нет'}, расчетная дата=${reviewDate}`);
                 }
                 
                 return isLearnedToday;
@@ -113,7 +113,7 @@ async function getLearnedToday(chatId) {
             }
         }).length;
 
-        console.log(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday} (из Google Sheets)`);
+        console.log(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday}`);
         return learnedToday;
         
     } catch (error) {
@@ -1486,6 +1486,51 @@ bot.onText(/\/start/, async (msg) => {
     );
 });
 
+// ✅ КОМАНДА: Миграция существующих данных под новую структуру
+bot.onText(/\/migrate_structure/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    try {
+        await bot.sendMessage(chatId, '🔄 Миграция структуры данных...');
+        
+        // Получаем все слова пользователя
+        const userWords = await sheetsService.getUserWords(chatId);
+        let migratedCount = 0;
+        
+        for (const word of userWords) {
+            if (word.interval > 1 && (!word.lastReview || word.lastReview.trim() === '')) {
+                // Вычисляем LastReview: NextReview - Interval дней
+                const nextReview = new Date(word.nextReview);
+                const lastReview = new Date(nextReview);
+                lastReview.setDate(lastReview.getDate() - word.interval);
+                
+                const success = await sheetsService.updateWordReview(
+                    chatId,
+                    word.english,
+                    word.interval,
+                    nextReview,
+                    lastReview
+                );
+                
+                if (success) {
+                    migratedCount++;
+                    console.log(`✅ Мигрировано слово "${word.english}": LastReview = ${lastReview}`);
+                }
+            }
+        }
+        
+        await bot.sendMessage(chatId, 
+            `✅ Миграция завершена!\n\n` +
+            `📊 Обработано слов: ${migratedCount}\n` +
+            `💡 Теперь статистика должна отображаться корректно.`
+        );
+        
+    } catch (error) {
+        console.error('❌ Error during migration:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при миграции данных');
+    }
+});
+
 bot.onText(/\/debug_stats/, async (msg) => {
     const chatId = msg.chat.id;
     const detailedCount = await debugLearnedToday(chatId);
@@ -2375,6 +2420,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
