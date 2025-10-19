@@ -1030,8 +1030,9 @@ async getWordsForReview(chatId) {
         }, 5 * 60 * 1000); // Каждые 5 минут
     }
 
-    async migrateFirstLearnedDates(userId) {
+async migrateFirstLearnedDates(userId) {
     if (!this.initialized) {
+        console.error('❌ Google Sheets not initialized');
         return false;
     }
     
@@ -1043,32 +1044,56 @@ async getWordsForReview(chatId) {
             range: 'Words!A:K',
         });
         
+        console.log(`📊 Total rows in sheet: ${response.data.values ? response.data.values.length : 0}`);
+        
         const rows = response.data.values || [];
         const updates = [];
         let migratedCount = 0;
+        let skippedCount = 0;
         
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
-            if (row.length >= 9 && row[0] === userId.toString() && 
+            console.log(`🔍 Processing row ${i}:`, row ? `[${row[0]}, ${row[1]}, ...]` : 'empty row');
+            
+            if (!row || row.length < 9) {
+                console.log(`⏭️ Skipping row ${i}: insufficient columns`);
+                skippedCount++;
+                continue;
+            }
+            
+            if (row[0] === userId.toString() && 
                 (row[9] === 'active' || !row[9] || row.length < 10)) {
                 
                 const interval = parseInt(row[8]) || 1;
                 const lastReview = row[6] || '';
                 const currentFirstLearnedDate = row[10] || '';
                 
+                console.log(`📝 Word "${row[1]}": interval=${interval}, lastReview=${lastReview}, currentFirstLearnedDate=${currentFirstLearnedDate}`);
+                
                 // ✅ ЗАПОЛНЯЕМ FirstLearnedDate ДЛЯ ИЗУЧЕННЫХ СЛОВ
                 if (interval > 1 && (!currentFirstLearnedDate || currentFirstLearnedDate === '') && lastReview) {
+                    console.log(`🔄 Will migrate: ${row[1]}`);
                     updates.push({
                         range: `Words!K${i + 1}`,
-                        values: [[lastReview]] // Используем LastReview как FirstLearnedDate
+                        values: [[lastReview]]
                     });
                     migratedCount++;
+                } else {
+                    console.log(`⏭️ Skipping: interval=${interval}, hasFirstLearned=${!!currentFirstLearnedDate}, hasLastReview=${!!lastReview}`);
+                    skippedCount++;
                 }
+            } else {
+                console.log(`⏭️ Skipping: wrong user or inactive, user=${row[0]}, status=${row[9]}`);
+                skippedCount++;
             }
         }
         
+        console.log(`📊 Migration summary: ${migratedCount} to update, ${skippedCount} skipped`);
+        
         if (updates.length > 0) {
-            await this.sheets.spreadsheets.values.batchUpdate({
+            console.log(`🔄 Executing ${updates.length} updates...`);
+            
+            const result = await this.sheets.spreadsheets.values.batchUpdate({
                 spreadsheetId: this.spreadsheetId,
                 resource: {
                     valueInputOption: 'RAW',
@@ -1076,26 +1101,32 @@ async getWordsForReview(chatId) {
                 }
             });
             
+            console.log('✅ Batch update successful:', result.status);
+            
             // Инвалидируем кеш
             this.cache.delete(`words_${userId}`);
             
             console.log(`✅ FirstLearnedDate migration completed: ${migratedCount} words updated`);
+            return true;
         } else {
             console.log('✅ No words need FirstLearnedDate migration');
+            return true;
         }
         
-        return true;
-        
     } catch (error) {
-        console.error('❌ Error migrating FirstLearnedDates:', error.message);
+        console.error('❌ Error migrating FirstLearnedDates:', error);
+        console.error('❌ Error details:', error.message);
+        console.error('❌ Error stack:', error.stack);
         return false;
     }
 }
+    
 }
 
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
