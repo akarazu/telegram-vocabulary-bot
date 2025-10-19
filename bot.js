@@ -1637,46 +1637,46 @@ function formatConcreteDate(date) {
     }
 }
 
-// ✅ ДОБАВЛЯЕМ ФУНКЦИЮ: Получение ВСЕХ не изученных слов (без учета лимита)
-async function getAllUnlearnedWords(chatId) {
-    if (!servicesInitialized || !sheetsService.initialized) {
-        return [];
-    }
+// // ✅ ДОБАВЛЯЕМ ФУНКЦИЮ: Получение ВСЕХ не изученных слов (без учета лимита)
+// async function getAllUnlearnedWords(chatId) {
+//     if (!servicesInitialized || !sheetsService.initialized) {
+//         return [];
+//     }
     
-    try {
-        const userWords = await getCachedUserWords(chatId);
+//     try {
+//         const userWords = await getCachedUserWords(chatId);
         
-        optimizedLog(`🔍 Поиск ВСЕХ не изученных слов для ${chatId}`);
+//         optimizedLog(`🔍 Поиск ВСЕХ не изученных слов для ${chatId}`);
 
-        const unlearnedWords = userWords.filter(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
+//         const unlearnedWords = userWords.filter(word => {
+//             if (!word.nextReview || word.status !== 'active') return false;
             
-            try {
-                // ✅ Слово считается не изученным если:
-                // 1. Интервал = 1 (новое слово)
-                // 2. ИЛИ FirstLearnedDate отсутствует (никогда не изучалось)
-                const isNewWord = word.interval === 1 || !word.firstLearnedDate || word.firstLearnedDate.trim() === '';
-                const isNotLearned = !isWordLearned(chatId, word.english);
+//             try {
+//                 // ✅ Слово считается не изученным если:
+//                 // 1. Интервал = 1 (новое слово)
+//                 // 2. ИЛИ FirstLearnedDate отсутствует (никогда не изучалось)
+//                 const isNewWord = word.interval === 1 || !word.firstLearnedDate || word.firstLearnedDate.trim() === '';
+//                 const isNotLearned = !isWordLearned(chatId, word.english);
                 
-                return isNewWord && isNotLearned;
-            } catch (error) {
-                optimizedLog(`❌ Ошибка проверки слова "${word.english}"`);
-                return false;
-            }
-        });
+//                 return isNewWord && isNotLearned;
+//             } catch (error) {
+//                 optimizedLog(`❌ Ошибка проверки слова "${word.english}"`);
+//                 return false;
+//             }
+//         });
 
-        optimizedLog(`📊 Найдено всех не изученных слов: ${unlearnedWords.length}`);
+//         optimizedLog(`📊 Найдено всех не изученных слов: ${unlearnedWords.length}`);
         
-        // Сортируем по дате создания (новые слова в начале)
-        unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+//         // Сортируем по дате создания (новые слова в начале)
+//         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
 
-        return unlearnedWords;
+//         return unlearnedWords;
         
-    } catch (error) {
-        optimizedLog('❌ Error getting all unlearned words:', error);
-        return [];
-    }
-}
+//     } catch (error) {
+//         optimizedLog('❌ Error getting all unlearned words:', error);
+//         return [];
+//     }
+// }
 
 // ✅ ВОССТАНОВЛЕНО: Критически важная команда сброса прогресса
 bot.onText(/\/reset_progress/, async (msg) => {
@@ -2470,6 +2470,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
