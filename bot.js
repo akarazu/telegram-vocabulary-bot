@@ -1584,6 +1584,7 @@ bot.onText(/\/new/, async (msg) => {
 });
 
 // Обработка сообщений
+// Обработка сообщений
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -1718,40 +1719,40 @@ bot.on('message', async (msg) => {
             userStates.delete(chatId);
         }
     } 
-        else if (userState?.state === 'waiting_custom_translation') {
-    const customTranslation = text.trim();
-    if (!customTranslation) {
-        await showMainMenu(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
-        return;
+    else if (userState?.state === 'waiting_custom_translation') {
+        const customTranslation = text.trim();
+        if (!customTranslation) {
+            await showMainMenu(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+            return;
+        }
+
+        // Сохраняем введенный перевод и переходим к вводу примера
+        userStates.set(chatId, {
+            ...userState,
+            state: 'waiting_custom_example',
+            customTranslation: customTranslation
+        });
+
+        await bot.sendMessage(chatId,
+            `✅ Вы ввели перевод: "${customTranslation}"\n\n` +
+            '📝 Теперь вы можете добавить пример использования (необязательно):\n\n' +
+            '💡 Просто отправьте пример предложения с этим словом\n' +
+            '⏭️ Или нажмите "Пропустить" чтобы перейти к выбору переводов',
+            getExampleInputKeyboard()
+        );
     }
+    else if (userState?.state === 'waiting_custom_example') {
+        if (text === '⏭️ Пропустить' || text === '➕ Добавить новое слово') {
+            // Пропускаем ввод примера
+            await processCustomTranslationWithoutExample(chatId, userState);
+            return;
+        }
 
-    // Сохраняем введенный перевод и переходим к вводу примера
-    userStates.set(chatId, {
-        ...userState,
-        state: 'waiting_custom_example',
-        customTranslation: customTranslation
-    });
-
-    await bot.sendMessage(chatId,
-        `✅ Вы ввели перевод: "${customTranslation}"\n\n` +
-        '📝 Теперь вы можете добавить пример использования (необязательно):\n\n' +
-        '💡 Просто отправьте пример предложения с этим словом\n' +
-        '⏭️ Или нажмите "Пропустить" чтобы перейти к выбору переводов',
-        getExampleInputKeyboard()
-    );
-}
-else if (userState?.state === 'waiting_custom_example') {
-    if (text === '⏭️ Пропустить' || text === '➕ Добавить новое слово') {
-        // Пропускаем ввод примера
-        await processCustomTranslationWithoutExample(chatId, userState);
-        return;
+        const example = text.trim();
+        await processCustomTranslationWithExample(chatId, userState, example);
     }
-
-    const example = text.trim();
-    await processCustomTranslationWithExample(chatId, userState, example);
-}
-    // Остальная логика обработки сообщений...
-    else if {
+    // Обработка других состояний
+    else {
         await showMainMenu(chatId, 'Выберите действие из меню:');
     }
 });
@@ -2140,4 +2141,5 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
