@@ -449,8 +449,7 @@ async updateCardAfterReview(userId, english, fsrsData, rating) {
     }
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление интервала повторения
-async updateWordReview(userId, english, newInterval, nextReviewDate) {
+async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
     if (!this.initialized) {
         return false;
     }
@@ -479,20 +478,23 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
             return false;
         }
 
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбец G (NextReview) и H (Interval)
+        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбцы F (LastReview), G (NextReview) и H (Interval)
+        const updateData = [
+            lastReview ? lastReview.toISOString() : new Date().toISOString(), // Столбец F - LastReview (текущая дата)
+            nextReviewDate.toISOString(), // Столбец G - NextReview
+            newInterval                   // Столбец H - Interval
+        ];
+
         await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
-            range: `Words!G${rowIndex}:H${rowIndex}`, // G=NextReview, H=Interval
+            range: `Words!F${rowIndex}:H${rowIndex}`, // F=LastReview, G=NextReview, H=Interval
             valueInputOption: 'RAW',
             resource: {
-                values: [[
-                    nextReviewDate.toISOString(), // Столбец G - NextReview
-                    newInterval                   // Столбец H - Interval
-                ]]
+                values: [updateData]
             }
         });
 
-        console.log(`✅ Updated review for word "${english}": interval ${newInterval} days, next review: ${nextReviewDate.toISOString()}`);
+        console.log(`✅ Updated review for word "${english}": interval ${newInterval} days, last review: ${updateData[0]}, next review: ${updateData[1]}`);
         return true;
     } catch (error) {
         console.error('❌ Error updating word review:', error.message);
@@ -500,7 +502,7 @@ async updateWordReview(userId, english, newInterval, nextReviewDate) {
     }
 }
     
-    // ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
+// ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
     async addMeaningToWord(userId, english, newMeaning) {
         if (!this.initialized) {
             return false;
@@ -730,6 +732,7 @@ async resetUserProgress(userId) {
         }
     }
 }
+
 
 
 
