@@ -641,7 +641,7 @@ async function hasWordsForReview(userId) {
     }
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Проверка и отправка нотификаций
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка и отправка нотификаций
 async function checkAndSendNotifications() {
     console.log('🔔 Checking notifications for all users...');
     
@@ -651,13 +651,57 @@ async function checkAndSendNotifications() {
     }
     
     try {
-        // Получаем всех пользователей, у которых есть слова
-        // Это упрощенная логика - в реальном приложении нужно хранить список пользователей
-        const today = new Date().toDateString();
+        // Получаем всех активных пользователей
+        const activeUsers = await sheetsService.getAllActiveUsers();
+        console.log(`📋 Found ${activeUsers.length} active users`);
         
-        // В реальном приложении здесь должен быть цикл по всем пользователям
-        // Для демонстрации просто логируем
-        console.log('📢 Notification check completed');
+        let sentCount = 0;
+        let skippedCount = 0;
+        
+        for (const userId of activeUsers) {
+            try {
+                // Проверяем, не отключены ли нотификации на сегодня
+                const userScheduler = notificationScheduler.get(userId);
+                if (userScheduler?.disabled) {
+                    console.log(`⏸️ Notifications disabled for today for user ${userId}`);
+                    skippedCount++;
+                    continue;
+                }
+                
+                // Проверяем, отправляли ли уже сегодня нотификацию
+                const today = new Date().toDateString();
+                if (userScheduler?.date === today && userScheduler?.sent) {
+                    console.log(`✅ Notification already sent today for user ${userId}`);
+                    skippedCount++;
+                    continue;
+                }
+                
+                // Отправляем нотификацию
+                const sent = await sendReviewNotification(userId);
+                
+                if (sent) {
+                    // Сохраняем статус отправки
+                    notificationScheduler.set(userId, {
+                        date: today,
+                        sent: true,
+                        disabled: false
+                    });
+                    sentCount++;
+                    console.log(`✅ Notification sent to user ${userId}`);
+                    
+                    // Задержка между отправками чтобы не превысить лимиты Telegram
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } else {
+                    skippedCount++;
+                }
+                
+            } catch (userError) {
+                console.error(`❌ Error processing user ${userId}:`, userError);
+            }
+        }
+        
+        console.log(`📢 Notification check completed: ${sentCount} sent, ${skippedCount} skipped`);
+        
     } catch (error) {
         console.error('❌ Error in notification check:', error);
     }
@@ -667,21 +711,27 @@ async function checkAndSendNotifications() {
 function startDailyNotifications() {
     console.log('🕒 Starting improved daily notification scheduler...');
     
-    // Первая проверка через 1 минуту после старта
-    setTimeout(() => {
-        checkAndSendNotifications();
-    }, 60 * 1000);
+    // ✅ Функция для отправки нотификаций с обработкой ошибок
+    const sendNotificationsSafely = async () => {
+        try {
+            await checkAndSendNotifications();
+        } catch (error) {
+            console.error('❌ Error in scheduled notification:', error);
+        }
+    };
     
-    // Затем проверяем каждые 30 минут
-    setInterval(() => {
-        checkAndSendNotifications();
-    }, 30 * 60 * 1000);
+    // Первая проверка через 30 секунд после старта (для тестирования)
+    setTimeout(sendNotificationsSafely, 30 * 1000);
     
-    // Дополнительная проверка утром в 9:00
+    // ✅ Основной планировщик: проверяем каждые 30 минут
+    setInterval(sendNotificationsSafely, 30 * 60 * 1000);
+    
+    // ✅ Утренняя нотификация в 9:00
     scheduleMorningNotification();
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Отправка нотификаций о повторении
+
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Отправка нотификаций о повторении
 async function sendReviewNotification(chatId) {
     try {
         const hasWords = await hasWordsForReview(chatId);
@@ -737,33 +787,42 @@ async function sendReviewNotification(chatId) {
             
             await bot.sendMessage(chatId, message, keyboard);
             
-            console.log(`✅ Sent comprehensive notification to ${chatId}`);
+            console.log(`✅ Sent notification to ${chatId}: ${wordsCount} words for review, ${newWords} new words`);
             return true;
+        } else {
+            console.log(`ℹ️ No words for review for ${chatId}, skipping notification`);
+            return false;
         }
-        return false;
     } catch (error) {
         console.error('❌ Error sending review notification:', error);
         return false;
     }
 }
 
-// ✅ НОВАЯ ФУНКЦИЯ: Утренняя нотификация
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Утренняя нотификация
 function scheduleMorningNotification() {
     const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0); // 9:00 утра
+    const nextMorning = new Date();
     
-    const timeUntilMorning = tomorrow.getTime() - now.getTime();
+    // Устанавливаем на 9:00 утра
+    nextMorning.setHours(9, 0, 0, 0);
+    
+    // Если уже прошло 9:00 сегодня, планируем на завтра
+    if (now >= nextMorning) {
+        nextMorning.setDate(nextMorning.getDate() + 1);
+    }
+    
+    const timeUntilMorning = nextMorning.getTime() - now.getTime();
+    
+    console.log(`⏰ Morning notification scheduled for ${nextMorning.toLocaleString()}`);
     
     setTimeout(() => {
         console.log('🌅 Sending morning notifications...');
         checkAndSendNotifications();
+        
         // Повторяем каждый день
         scheduleMorningNotification();
     }, timeUntilMorning);
-    
-    console.log(`⏰ Morning notification scheduled for ${tomorrow.toLocaleString()}`);
 }
 
 // ✅ ФУНКЦИЯ: Начало сессии повторения
@@ -1438,6 +1497,65 @@ bot.onText(/\/start/, async (msg) => {
         '2. 🆕 Изучить новые слова (5 в день)\n' +
         '3. 📚 Повторить изученные слова\n\n' +
         'Используйте меню для навигации:'
+    );
+});
+
+// ✅ КОМАНДА: Принудительная отправка нотификации
+bot.onText(/\/test_notification/, async (msg) => {
+    const chatId = msg.chat.id;
+    console.log(`🧪 Test notification requested by ${chatId}`);
+    
+    const sent = await sendReviewNotification(chatId);
+    if (sent) {
+        await bot.sendMessage(chatId, '✅ Тестовая нотификация отправлена!');
+    } else {
+        await bot.sendMessage(chatId, 'ℹ️ Нет слов для повторения или новых слов.');
+    }
+});
+
+// ✅ КОМАНДА: Статус нотификаций
+bot.onText(/\/notification_status/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    const userScheduler = notificationScheduler.get(chatId);
+    const hasWords = await hasWordsForReview(chatId);
+    const wordsCount = await sheetsService.getReviewWordsCount(chatId);
+    const newWordsCount = await sheetsService.getNewWordsCount(chatId);
+    
+    let message = '🔔 **Статус нотификаций:**\n\n';
+    message += `• Слова для повторения: ${wordsCount}\n`;
+    message += `• Новые слова: ${newWordsCount}\n`;
+    message += `• Есть слова для уведомления: ${hasWords ? '✅ Да' : '❌ Нет'}\n`;
+    
+    if (userScheduler) {
+        message += `• Отправлено сегодня: ${userScheduler.sent ? '✅ Да' : '❌ Нет'}\n`;
+        message += `• Отключено на сегодня: ${userScheduler.disabled ? '✅ Да' : '❌ Нет'}\n`;
+    } else {
+        message += `• Статус: Нет данных о нотификациях\n`;
+    }
+    
+    message += `\n💡 Следующая проверка: каждые 30 минут\n`;
+    message += `🌅 Утренняя нотификация: 9:00`;
+    
+    await bot.sendMessage(chatId, message);
+});
+
+// ✅ КОМАНДА: Включить нотификации
+bot.onText(/\/enable_notifications/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    notificationScheduler.set(chatId, {
+        date: new Date().toDateString(),
+        sent: false,
+        disabled: false
+    });
+    
+    await bot.sendMessage(chatId, 
+        '✅ **Нотификации включены!**\n\n' +
+        'Вы будете получать уведомления:\n' +
+        '• Каждые 30 минут (если есть слова)\n' +
+        '• Каждое утро в 9:00\n\n' +
+        'Используйте /notification_status для проверки статуса.'
     );
 });
 
@@ -2475,6 +2593,13 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
+// Проверяем работу нотификаций через 1 минуту после старта
+setTimeout(() => {
+    console.log('🔍 Проверка работы нотификационной системы...');
+    checkAndSendNotifications();
+}, 60 * 1000);
+
 
 
 
