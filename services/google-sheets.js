@@ -229,7 +229,7 @@ export class GoogleSheetsService {
 }
 
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с новой структурой
-   async getUserWords(userId) {
+ async getUserWords(userId) {
     if (!this.initialized) {
         return [];
     }
@@ -239,7 +239,7 @@ export class GoogleSheetsService {
         try {
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:K', // ✅ ОБНОВЛЕН ДИАПАЗОН ДО K
+                range: 'Words!A:K',
             });
 
             const rows = response.data.values || [];
@@ -252,7 +252,11 @@ export class GoogleSheetsService {
             );
 
             return userWords.map(row => {
-                // ✅ ОБНОВЛЕННОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
+                // ✅ ПРАВИЛЬНЫЕ ИНДЕКСЫ СТОЛБЦОВ:
+                // A=0: UserID, B=1: English, C=2: Transcription, D=3: AudioURL
+                // E=4: MeaningsJSON, F=5: CreatedDate, G=6: LastReview
+                // H=7: NextReview, I=8: Interval, J=9: Status, K=10: FirstLearnedDate
+                
                 const userId = row[0] || '';
                 const english = row[1] || '';
                 const transcription = row[2] || '';
@@ -263,7 +267,7 @@ export class GoogleSheetsService {
                 const nextReview = row[7] || new Date().toISOString();
                 const interval = parseInt(row[8]) || 1;
                 const status = row[9] || 'active';
-                const firstLearnedDate = row[10] || ''; // ✅ НОВЫЙ СТОЛБЕЦ K - FirstLearnedDate
+                const firstLearnedDate = row[10] || ''; // ✅ СТОЛБЕЦ K - индекс 10
 
                 let meanings = [];
                 
@@ -302,7 +306,7 @@ export class GoogleSheetsService {
                     nextReview,
                     interval,
                     status,
-                    firstLearnedDate // ✅ ДОБАВЛЯЕМ НОВОЕ ПОЛЕ
+                    firstLearnedDate // ✅ ПРАВИЛЬНОЕ ПОЛЕ
                 };
             });
         } catch (error) {
@@ -1049,15 +1053,12 @@ async migrateFirstLearnedDates(userId) {
         const rows = response.data.values || [];
         const updates = [];
         let migratedCount = 0;
-        let skippedCount = 0;
         
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
-            console.log(`🔍 Processing row ${i}:`, row ? `[${row[0]}, ${row[1]}, ...]` : 'empty row');
             
-            if (!row || row.length < 9) {
-                console.log(`⏭️ Skipping row ${i}: insufficient columns`);
-                skippedCount++;
+            if (!row || row.length < 11) { // ✅ ИЗМЕНИЛИ НА 11 (A-K)
+                console.log(`⏭️ Skipping row ${i}: insufficient columns (has ${row ? row.length : 0}, need 11)`);
                 continue;
             }
             
@@ -1066,42 +1067,34 @@ async migrateFirstLearnedDates(userId) {
                 
                 const interval = parseInt(row[8]) || 1;
                 const lastReview = row[6] || '';
-                const currentFirstLearnedDate = row[10] || '';
+                const currentFirstLearnedDate = row[10] || ''; // ✅ СТОЛБЕЦ K - индекс 10
                 
                 console.log(`📝 Word "${row[1]}": interval=${interval}, lastReview=${lastReview}, currentFirstLearnedDate=${currentFirstLearnedDate}`);
                 
                 // ✅ ЗАПОЛНЯЕМ FirstLearnedDate ДЛЯ ИЗУЧЕННЫХ СЛОВ
                 if (interval > 1 && (!currentFirstLearnedDate || currentFirstLearnedDate === '') && lastReview) {
-                    console.log(`🔄 Will migrate: ${row[1]}`);
+                    console.log(`🔄 Migrating: ${row[1]}`);
                     updates.push({
-                        range: `Words!K${i + 1}`,
+                        range: `Words!K${i + 1}`, // ✅ СТОЛБЕЦ K
                         values: [[lastReview]]
                     });
                     migratedCount++;
-                } else {
-                    console.log(`⏭️ Skipping: interval=${interval}, hasFirstLearned=${!!currentFirstLearnedDate}, hasLastReview=${!!lastReview}`);
-                    skippedCount++;
                 }
-            } else {
-                console.log(`⏭️ Skipping: wrong user or inactive, user=${row[0]}, status=${row[9]}`);
-                skippedCount++;
             }
         }
         
-        console.log(`📊 Migration summary: ${migratedCount} to update, ${skippedCount} skipped`);
+        console.log(`📊 Migration summary: ${migratedCount} words to update`);
         
         if (updates.length > 0) {
             console.log(`🔄 Executing ${updates.length} updates...`);
             
-            const result = await this.sheets.spreadsheets.values.batchUpdate({
+            await this.sheets.spreadsheets.values.batchUpdate({
                 spreadsheetId: this.spreadsheetId,
                 resource: {
                     valueInputOption: 'RAW',
                     data: updates
                 }
             });
-            
-            console.log('✅ Batch update successful:', result.status);
             
             // Инвалидируем кеш
             this.cache.delete(`words_${userId}`);
@@ -1116,7 +1109,6 @@ async migrateFirstLearnedDates(userId) {
     } catch (error) {
         console.error('❌ Error migrating FirstLearnedDates:', error);
         console.error('❌ Error details:', error.message);
-        console.error('❌ Error stack:', error.stack);
         return false;
     }
 }
@@ -1126,6 +1118,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
