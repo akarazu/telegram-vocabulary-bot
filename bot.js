@@ -266,6 +266,24 @@ function resetDailyLimit() {
     }
 }
 
+// ✅ ДОБАВЛЯЕМ: Функция проверки с учетом часового пояса
+function isReviewDue(nextReviewDate) {
+    if (!nextReviewDate) return false;
+    
+    try {
+        const reviewDate = new Date(nextReviewDate);
+        const now = new Date();
+        
+        // ✅ ИСПРАВЛЕНИЕ: Добавляем запас +3 часа для московского времени
+        const timezoneOffset = 3 * 60 * 60 * 1000; // +3 часа в миллисекундах
+        const adjustedNow = new Date(now.getTime() + timezoneOffset);
+        
+        return reviewDate <= adjustedNow;
+    } catch (error) {
+        return false;
+    }
+}
+
 // Оптимизация: один интервал вместо нескольких
 let lastLimitReset = 0;
 let lastCacheCleanup = 0;
@@ -703,18 +721,10 @@ async function hasWordsForReview(userId) {
     
     try {
         const userWords = await getCachedUserWords(userId);
-        const now = new Date();
         
         const hasReviewWords = userWords.some(word => {
             if (!word.nextReview || word.status !== 'active') return false;
-            
-            try {
-                const nextReviewDate = new Date(word.nextReview);
-                return nextReviewDate <= now;
-            } catch (error) {
-                optimizedLog(`❌ Error checking word "${word.english}"`);
-                return false;
-            }
+            return isReviewDue(word.nextReview);
         });
 
         optimizedLog(`🔍 Check review words for ${userId}: ${hasReviewWords}`);
@@ -2429,6 +2439,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
