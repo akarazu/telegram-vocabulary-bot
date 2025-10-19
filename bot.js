@@ -1134,26 +1134,28 @@ async function processReviewRating(chatId, rating) {
     const word = userState.reviewWords[userState.currentReviewIndex];
     
     try {
+        // ✅ ПРОСТЫЕ ДАННЫЕ ДЛЯ FSRS
         const cardData = {
-            due: new Date(word.nextReview),
-            stability: word.stability || 0,
-            difficulty: word.difficulty || 0,
+            due: word.nextReview ? new Date(word.nextReview) : new Date(),
+            stability: word.stability || 0.1,
+            difficulty: word.difficulty || 5.0,
             elapsed_days: word.elapsed_days || 0,
-            scheduled_days: word.scheduled_days || 0,
+            scheduled_days: word.scheduled_days || 1,
             reps: word.reps || 0,
             lapses: word.lapses || 0,
-            state: word.state || 0,
-            last_review: word.lastReview ? new Date(word.lastReview) : undefined // ✅ ИСПРАВЛЕНО: lastReview вместо last_review
+            state: word.state || 1,
+            last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
+        // ✅ ВСЕГДА РАБОТАЮЩИЙ FSRS (даже через fallback)
         const fsrsData = fsrsService.reviewCard(cardData, rating);
 
-        // Оптимизация: используем батчинг для сохранения
+        // ✅ ПРОСТОЕ СОХРАНЕНИЕ
         const success = await batchSheetsService.updateWordReviewBatch(
             chatId,
             word.english,
-            fsrsData.card.interval || word.interval,
-            fsrsData.card.due || word.nextReview,
+            fsrsData.interval,
+            fsrsData.due,
             new Date()
         );
 
@@ -1162,18 +1164,21 @@ async function processReviewRating(chatId, rating) {
             userState.currentReviewIndex++;
             userState.lastActivity = Date.now();
             
+            // Циклический переход по словам
             if (userState.currentReviewIndex >= userState.reviewWords.length) {
                 userState.currentReviewIndex = 0;
             }
             
             await showNextReviewWord(chatId);
         } else {
-            await bot.sendMessage(chatId, '❌ Ошибка при сохранении результата.');
+            await bot.sendMessage(chatId, '❌ Ошибка при сохранении.');
         }
 
     } catch (error) {
         optimizedLog('❌ Error processing review rating:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при обработке оценки.');
+        // ✅ ДАЖЕ ПРИ ОШИБКЕ ПРОДОЛЖАЕМ
+        userState.currentReviewIndex++;
+        await showNextReviewWord(chatId);
     }
 }
 
@@ -2439,6 +2444,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
