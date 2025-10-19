@@ -2310,11 +2310,20 @@ bot.on('callback_query', async (callbackQuery) => {
         const rating = data.replace('review_', '');
         await processReviewRating(chatId, rating);
     }
-    else if (data === 'skip_review') {
+else if (data === 'skip_review') {
     if (userState?.state === 'review_session') {
+        // ✅ УВЕЛИЧИВАЕМ ИНДЕКС
         userState.currentReviewIndex++;
         console.log(`⏭️ Пропущено слово в повторении. Новый индекс: ${userState.currentReviewIndex}`);
-        await showNextReviewWord(chatId);
+        
+        // ✅ ПРОВЕРЯЕМ НЕ ВЫШЕЛ ЛИ ИНДЕКС ЗА ГРАНИЦЫ МАССИВА
+        if (userState.currentReviewIndex >= userState.reviewWords.length) {
+            console.log('🎯 Сессия повторения завершена (после пропуска последнего слова)');
+            await completeReviewSession(chatId, userState);
+        } else {
+            // ✅ ЕСЛИ ЕСТЬ ЕЩЕ СЛОВА - ПОКАЗЫВАЕМ СЛЕДУЮЩЕЕ
+            await showNextReviewWord(chatId);
+        }
     }
 }
     else if (data === 'end_review') {
@@ -2428,6 +2437,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
