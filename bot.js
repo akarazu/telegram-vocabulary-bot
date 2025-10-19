@@ -327,32 +327,16 @@ setInterval(() => {
 async function getLearnedToday(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = new Date().toDateString();
         
+        // ✅ ПРОСТО СЧИТАЕМ СЛОВА С lastReview СЕГОДНЯ
         const learnedToday = userWords.filter(word => {
-            if (word.interval <= 1) return false;
+            if (word.status !== 'active' || !word.lastReview) return false;
             
             try {
-                let reviewDate;
-                if (word.lastReview && word.lastReview.trim() !== '') {
-                    reviewDate = new Date(word.lastReview);
-                } else {
-                    const nextReview = new Date(word.nextReview);
-                    reviewDate = new Date(nextReview);
-                    reviewDate.setDate(reviewDate.getDate() - (word.interval || 1));
-                }
-                
-                const reviewDay = new Date(reviewDate.getFullYear(), reviewDate.getMonth(), reviewDate.getDate());
-                const isLearnedToday = reviewDay.getTime() === today.getTime();
-                
-                if (isLearnedToday) {
-                    optimizedLog(`✅ Слово "${word.english}" изучено сегодня: интервал=${word.interval}, LastReview=${word.lastReview || 'нет'}, расчетная дата=${reviewDate}`);
-                }
-                
-                return isLearnedToday;
+                const lastReviewDate = new Date(word.lastReview);
+                return lastReviewDate.toDateString() === today;
             } catch (error) {
-                optimizedLog(`❌ Ошибка проверки слова "${word.english}":`, error);
                 return false;
             }
         }).length;
@@ -2440,6 +2424,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
