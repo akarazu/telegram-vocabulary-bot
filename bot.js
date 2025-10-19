@@ -802,12 +802,12 @@ async function startReviewSession(chatId) {
     }
 }
 
-// ✅ ФУНКЦИЯ: Показ следующего слова для повторения с примерами
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
 async function showNextReviewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') return;
 
-    const { reviewWords, currentReviewIndex } = userState;
+    const { reviewWords, currentReviewIndex, reviewedCount } = userState;
     
     if (currentReviewIndex >= reviewWords.length) {
         // Сессия завершена
@@ -816,7 +816,7 @@ async function showNextReviewWord(chatId) {
     }
 
     const word = reviewWords[currentReviewIndex];
-    const progress = `${currentReviewIndex + 1}/${reviewWords.length}`;
+    const progress = `${currentReviewIndex + 1}/${reviewWords.length}`; // ✅ ТЕКУЩИЙ индекс + 1
     
     let message = `📚 Повторение слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -1065,7 +1065,7 @@ async function getAvailableNewWordsForToday(chatId, alreadyLearnedToday) {
     }
 }
 
-// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Показ следующего нового слова с актуальной статистикой
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показ следующего нового слова
 async function showNextNewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -1085,14 +1085,17 @@ async function showNextNewWord(chatId) {
 
     const word = newWords[userState.currentWordIndex];
     
-    // ✅ ПОЛУЧАЕМ АКТУАЛЬНУЮ СТАТИСТИКУ ИЗ GOOGLE SHEETS
+    // ✅ ПОЛУЧАЕМ АКТУАЛЬНУЮ СТАТИСТИКУ
     const currentLearnedToday = await getLearnedToday(chatId);
     const remainingSlots = Math.max(0, 5 - currentLearnedToday);
     
-    const progress = `${currentLearnedToday}/5 изучено сегодня | ${newWords.length} осталось`;
+    // ✅ ИСПРАВЛЕННЫЙ ПРОГРЕСС: текущая позиция + изученные слова
+    const currentPosition = userState.currentWordIndex + 1;
+    const totalWords = newWords.length;
+    const progress = `${currentPosition}/${totalWords}`;
     
-    let message = `🆕 Изучение новых слов\n\n`;
-    message += `📊 ${progress}\n\n`;
+    let message = `🆕 Изучение новых слов ${progress}\n\n`;
+    message += `📊 Изучено сегодня: ${currentLearnedToday}/5\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
     
     if (word.transcription) {
@@ -1129,6 +1132,7 @@ async function showNextNewWord(chatId) {
 }
 
 // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -1160,6 +1164,12 @@ async function processNewWordLearning(chatId, action) {
                 // ✅ УДАЛЯЕМ изученное слово из массива
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
+                console.log(`✅ Слово "${word.english}" удалено из списка. Осталось слов: ${userState.newWords.length}`);
+                
+                // ✅ ПОСЛЕ УДАЛЕНИЯ СЛОВА ИНДЕКС ОСТАЕТСЯ ПРЕЖНИМ
+                // (так как массив уменьшился, текущий индекс теперь указывает на следующее слово)
+                console.log(`📝 Индекс остается: ${userState.currentWordIndex}`);
+                
                 // ✅ ПРОВЕРЯЕМ ЛИМИТ С АКТУАЛЬНЫМИ ДАННЫМИ ИЗ GOOGLE SHEETS
                 const currentLearnedToday = await getLearnedToday(chatId);
                 console.log(`📈 После изучения "${word.english}": ${currentLearnedToday}/5 изучено сегодня`);
@@ -1175,12 +1185,6 @@ async function processNewWordLearning(chatId, action) {
                     return;
                 }
                 
-                // ✅ ЕСЛИ СЛОВА ЗАКОНЧИЛИСЬ ПОСЛЕ УДАЛЕНИЯ - ЗАВЕРШАЕМ
-                if (userState.newWords.length === 0) {
-                    await completeNewWordsSession(chatId, userState);
-                    return;
-                }
-                
             } else {
                 console.error(`❌ Не удалось обновить интервал для слова "${word.english}"`);
                 await bot.sendMessage(chatId, '❌ Ошибка при сохранении прогресса слова.');
@@ -1190,37 +1194,36 @@ async function processNewWordLearning(chatId, action) {
         } else if (action === 'repeat') {
             console.log(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
             userState.currentWordIndex++;
+            console.log(`📝 Индекс увеличен до: ${userState.currentWordIndex}`);
             
         } else if (action === 'skip') {
             // Пропускаем слово - перемещаем в конец
             const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
             userState.newWords.push(skippedWord);
             console.log(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец списка`);
+            console.log(`📝 Индекс остается: ${userState.currentWordIndex}`);
             
             // ✅ ОБНОВЛЯЕМ СЧЕТЧИК ПОСЛЕ ПРОПУСКА
             const currentLearnedToday = await getLearnedToday(chatId);
             console.log(`📊 После пропуска слова "${skippedWord.english}": изучено сегодня ${currentLearnedToday}`);
         }
         
-        // ✅ КОРРЕКТНО ОБРАБАТЫВАЕМ ИНДЕКС ПОСЛЕ ДЕЙСТВИЙ
-        if (action === 'learned') {
-            // После удаления слова индекс уже корректен - не увеличиваем
-            if (userState.currentWordIndex >= userState.newWords.length) {
-                userState.currentWordIndex = 0;
-            }
-        } else {
-            // Для repeat и skip - увеличиваем индекс или сбрасываем если нужно
-            if (userState.currentWordIndex >= userState.newWords.length) {
-                userState.currentWordIndex = 0;
-            }
+        // ✅ КОРРЕКТНАЯ ОБРАБОТКА ГРАНИЦ МАССИВА
+        if (userState.currentWordIndex >= userState.newWords.length) {
+            userState.currentWordIndex = 0;
+            console.log(`🔄 Индекс сброшен в 0 (достигнут конец массива)`);
+        }
+        
+        // ✅ ЕСЛИ СЛОВА ЗАКОНЧИЛИСЬ ПОСЛЕ УДАЛЕНИЯ - ЗАВЕРШАЕМ
+        if (userState.newWords.length === 0) {
+            console.log(`🎯 Все слова обработаны, завершение сессии`);
+            await completeNewWordsSession(chatId, userState);
+            return;
         }
         
         // ✅ ПОКАЗЫВАЕМ СЛЕДУЮЩЕЕ СЛОВО ЕСЛИ ОСТАЛИСЬ СЛОВА
-        if (userState.newWords.length > 0) {
-            await showNextNewWord(chatId);
-        } else {
-            await completeNewWordsSession(chatId, userState);
-        }
+        console.log(`🔄 Переход к следующему слову. Текущий индекс: ${userState.currentWordIndex}, всего слов: ${userState.newWords.length}`);
+        await showNextNewWord(chatId);
 
     } catch (error) {
         console.error('❌ Error processing new word learning:', error);
@@ -2308,11 +2311,12 @@ bot.on('callback_query', async (callbackQuery) => {
         await processReviewRating(chatId, rating);
     }
     else if (data === 'skip_review') {
-        if (userState?.state === 'review_session') {
-            userState.currentReviewIndex++;
-            await showNextReviewWord(chatId);
-        }
+    if (userState?.state === 'review_session') {
+        userState.currentReviewIndex++;
+        console.log(`⏭️ Пропущено слово в повторении. Новый индекс: ${userState.currentReviewIndex}`);
+        await showNextReviewWord(chatId);
     }
+}
     else if (data === 'end_review') {
         if (userState?.state === 'review_session') {
             await completeReviewSession(chatId, userState);
@@ -2326,14 +2330,18 @@ bot.on('callback_query', async (callbackQuery) => {
         await processNewWordLearning(chatId, 'repeat');
     }
     else if (data === 'skip_new_word') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'learning_new_words') {
-            // ✅ ПЕРЕМЕЩАЕМ текущее слово в конец массива при пропуске
-            const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
-            userState.newWords.push(skippedWord);
-            await showNextNewWord(chatId);
-        }
+    const userState = userStates.get(chatId);
+    if (userState?.state === 'learning_new_words') {
+        // ✅ ПЕРЕМЕЩАЕМ текущее слово в конец массива
+        const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
+        userState.newWords.push(skippedWord);
+        
+        console.log(`⏭️ Пропущено слово "${skippedWord.english}". Новый индекс: ${userState.currentWordIndex}`);
+        
+        // ✅ НЕ УВЕЛИЧИВАЕМ ИНДЕКС - показываем следующее слово по текущему индексу
+        await showNextNewWord(chatId);
     }
+}
     else if (data === 'end_learning') {
         const userState = userStates.get(chatId);
         if (userState?.state === 'learning_new_words') {
@@ -2420,6 +2428,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
