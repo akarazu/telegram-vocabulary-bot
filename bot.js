@@ -882,18 +882,35 @@ async function startReviewSession(chatId) {
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
 async function showNextReviewWord(chatId) {
     const userState = userStates.get(chatId);
-    if (!userState || userState.state !== 'review_session') return;
+    if (!userState || userState.state !== 'review_session') {
+        await bot.sendMessage(chatId, '❌ Сессия повторения не найдена. Начните заново.');
+        return;
+    }
 
     const { reviewWords, currentReviewIndex, reviewedCount } = userState;
+    
+    if (!reviewWords || reviewWords.length === 0) {
+        await bot.sendMessage(chatId, '❌ Нет слов для повторения.');
+        userStates.delete(chatId);
+        return;
+    }
     
     if (currentReviewIndex >= reviewWords.length) {
         userState.currentReviewIndex = 0;
     }
 
     const word = reviewWords[userState.currentReviewIndex];
+    
+    if (!word) {
+        await bot.sendMessage(chatId, '❌ Ошибка: слово не найдено.');
+        userState.currentReviewIndex++;
+        await showNextReviewWord(chatId);
+        return;
+    }
+    
     const progress = `${userState.currentReviewIndex + 1}/${reviewWords.length} (${userState.reviewedCount} оценено)`;
     
     let message = `📚 Повторение слов ${progress}\n\n`;
@@ -916,12 +933,20 @@ async function showNextReviewWord(chatId) {
     });
 }
 
-// ✅ ФУНКЦИЯ: Показать ответ для повторения
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показать ответ для повторения
 async function showReviewAnswer(chatId) {
     const userState = userStates.get(chatId);
-    if (!userState || userState.state !== 'review_session') return;
+    if (!userState || userState.state !== 'review_session') {
+        await bot.sendMessage(chatId, '❌ Сессия повторения не найдена.');
+        return;
+    }
 
     const word = userState.reviewWords[userState.currentReviewIndex];
+    
+    if (!word) {
+        await bot.sendMessage(chatId, '❌ Ошибка: слово не найдено.');
+        return;
+    }
     
     let message = `📚 **Ответ:**\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -931,15 +956,20 @@ async function showReviewAnswer(chatId) {
     }
     
     message += `\n🇷🇺 **Переводы:**\n`;
-    word.meanings.forEach((meaning, index) => {
-        message += `\n${index + 1}. ${meaning.translation}`;
-        if (meaning.definition) {
-            message += ` - ${meaning.definition}`;
-        }
-        if (meaning.example && meaning.example.trim() !== '') {
-            message += `\n   📝 *Пример:* ${meaning.example}`;
-        }
-    });
+    
+    if (word.meanings && Array.isArray(word.meanings)) {
+        word.meanings.forEach((meaning, index) => {
+            message += `\n${index + 1}. ${meaning.translation || 'Перевод не указан'}`;
+            if (meaning.definition) {
+                message += ` - ${meaning.definition}`;
+            }
+            if (meaning.example && meaning.example.trim() !== '') {
+                message += `\n   📝 *Пример:* ${meaning.example}`;
+            }
+        });
+    } else {
+        message += `\n❌ Переводы не найдены`;
+    }
 
     if (word.audioUrl) {
         try {
@@ -947,14 +977,14 @@ async function showReviewAnswer(chatId) {
                 caption: '🔊 Произношение'
             });
         } catch (error) {
-            optimizedLog('❌ Audio not available for review word');
+            optimizedLog('❌ Audio not available for review word:', error);
         }
     }
 
     await bot.sendMessage(chatId, message, getReviewKeyboard());
 }
 
-// ✅ ФУНКЦИЯ: Обработка оценки повторения
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения
 async function processReviewRating(chatId, rating) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') return;
@@ -971,7 +1001,7 @@ async function processReviewRating(chatId, rating) {
             reps: word.reps || 0,
             lapses: word.lapses || 0,
             state: word.state || 0,
-            last_review: word.last_review ? new Date(word.last_review) : undefined
+            last_review: word.lastReview ? new Date(word.lastReview) : undefined // ✅ ИСПРАВЛЕНО: lastReview вместо last_review
         };
 
         const fsrsData = fsrsService.reviewCard(cardData, rating);
@@ -2159,6 +2189,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
