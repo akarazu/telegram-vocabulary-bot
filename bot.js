@@ -327,38 +327,44 @@ setInterval(() => {
 async function getLearnedToday(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const now = new Date();
         
-        const learnedToday = userWords.filter(word => {
-            // ✅ ПРОСТАЯ ПРОВЕРКА: слово активно и изучено сегодня
-            if (word.status !== 'active') return false;
+        // ✅ Московское время для корректного определения "сегодня"
+        const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
+        const moscowNow = new Date(now.getTime() + moscowOffset);
+        const todayStart = new Date(moscowNow);
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(moscowNow);
+        todayEnd.setHours(23, 59, 59, 999);
+        
+        optimizedLog(`🔍 Дата проверки: ${moscowNow.toISOString()}`);
+        optimizedLog(`🔍 Сегодня: с ${todayStart.toISOString()} по ${todayEnd.toISOString()}`);
+
+        let learnedToday = 0;
+        let debugWords = [];
+
+        userWords.forEach(word => {
+            if (word.status !== 'active') return;
             
-            try {
-                // ✅ ИСПОЛЬЗУЕМ lastReview ЕСЛИ ОН ЕСТЬ
-                if (word.lastReview && word.lastReview.trim() !== '') {
-                    const lastReviewDate = new Date(word.lastReview);
-                    const lastReviewDay = new Date(lastReviewDate.getFullYear(), lastReviewDate.getMonth(), lastReviewDate.getDate());
-                    return lastReviewDay.getTime() === today.getTime();
+            if (word.LastReview) { // ✅ Обратите внимание на заглавную L!
+                try {
+                    const lastReviewDate = new Date(word.LastReview);
+                    optimizedLog(`🔍 Слово "${word.english}": LastReview=${word.LastReview}, дата=${lastReviewDate.toISOString()}`);
+                    
+                    // ✅ Проверяем в диапазоне сегодняшнего дня по Москве
+                    if (lastReviewDate >= todayStart && lastReviewDate <= todayEnd) {
+                        learnedToday++;
+                        debugWords.push(`${word.english} (${lastReviewDate.toISOString()})`);
+                    }
+                } catch (error) {
+                    optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
                 }
-                
-                // ✅ ДЛЯ НОВЫХ СЛОВ: считаем изученными если интервал стал >1 сегодня
-                if (word.interval > 1) {
-                    // Предполагаем что слово было изучено при создании
-                    const createdDate = word.createdDate ? new Date(word.createdDate) : new Date();
-                    const createdDay = new Date(createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate());
-                    return createdDay.getTime() === today.getTime();
-                }
-                
-                return false;
-                
-            } catch (error) {
-                optimizedLog(`❌ Ошибка проверки слова "${word.english}":`, error);
-                return false;
             }
-        }).length;
+        });
 
         optimizedLog(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday}`);
+        optimizedLog(`📝 Слова: ${debugWords.join(', ')}`);
+        
         return learnedToday;
         
     } catch (error) {
@@ -2441,6 +2447,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
