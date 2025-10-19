@@ -287,56 +287,23 @@ export class GoogleSheetsService {
     }
     
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
-    async getWordsForReview(userId) {
-        if (!this.initialized) {
-            return [];
-        }
+async getWordsForReview(chatId) {
+    const userWords = await this.getUserWords(chatId);
+    const now = new Date();
+    
+    return userWords.filter(word => {
+        if (!word.nextReview || word.status !== 'active') return false;
         
-        const cacheKey = `review_${userId}`;
-        return this.getCachedData(cacheKey, async () => {
-            try {
-                const userWords = await this.getUserWords(userId);
-                const now = new Date();
-                
-                console.log(`🔍 Поиск слов для повторения для пользователя ${userId}, текущее время: ${now.toISOString()}`);
-
-                // Фильтруем слова, готовые к повторению
-                const wordsForReview = userWords.filter(word => {
-                    if (!word.nextReview || word.status !== 'active') return false;
-                    
-                    try {
-                        const nextReviewDate = new Date(word.nextReview);
-                        
-                        // ✅ ИСПРАВЛЕНИЕ: Используем полное сравнение дат-времени
-                        const isDue = nextReviewDate <= now;
-                        const isNotNew = word.interval > 1; // Исключаем новые слова
-                        
-                        if (isDue && isNotNew) {
-                            console.log(`✅ Слово "${word.english}" готово к повторению: ${nextReviewDate.toISOString()}`);
-                        } else if (isNotNew) {
-                            console.log(`⏰ Слово "${word.english}" еще не готово: ${nextReviewDate.toISOString()}`);
-                        }
-                        
-                        return isDue && isNotNew;
-                    } catch (dateError) {
-                        console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
-                        return false;
-                    }
-                });
-
-                console.log(`📊 Найдено слов для повторения: ${wordsForReview.length}`);
-                
-                // Сортируем по дате следующего повторения
-                wordsForReview.sort((a, b) => new Date(a.nextReview) - new Date(b.nextReview));
-
-                return wordsForReview;
-                
-            } catch (error) {
-                console.error('❌ Error getting words for review:', error.message);
-                return [];
-            }
-        });
-    }
+        try {
+            const nextReview = new Date(word.nextReview);
+            // ✅ ИСПРАВЛЕНИЕ: Используем функцию с учетом часового пояса
+            return isReviewDue(word.nextReview);
+        } catch (error) {
+            console.error('Error checking review date:', error);
+            return false;
+        }
+    });
+}
     
     // ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Получение новых слов с проверкой повторений
     async getNewWordsForLearning(userId) {
@@ -1026,3 +993,4 @@ export class GoogleSheetsService {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
