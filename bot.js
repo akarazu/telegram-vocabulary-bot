@@ -1161,7 +1161,7 @@ async function completeNewWordsSession(chatId, userState) {
     await bot.sendMessage(chatId, message, getMainMenu());
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показ статистики с временем
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Показ статистики с временем
 async function showUserStats(chatId) {
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
@@ -1214,7 +1214,7 @@ async function showUserStats(chatId) {
             if (wordsWithFutureReview.length > 0) {
                 const nearestReview = wordsWithFutureReview[0];
                 
-                // ✅ КОНКРЕТНАЯ ДАТА С ВРЕМЕНЕМ
+                // ✅ КОНКРЕТНАЯ ДАТА С ВРЕМЕНЕМ (без слов "завтра", "послезавтра")
                 const formattedDate = formatConcreteDate(nearestReview.nextReview);
                 message += `\n⏰ **Ближайшее повторение:** ${formattedDate}\n`;
                 
@@ -1307,7 +1307,7 @@ async function showUserStats(chatId) {
     }
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Форматирование конкретной даты с временем
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Форматирование конкретной даты с временем
 function formatConcreteDate(date) {
     const now = new Date();
     const targetDate = new Date(date);
@@ -1332,16 +1332,16 @@ function formatConcreteDate(date) {
     
     if (diffDays === 0) {
         if (diffHours <= 1) {
-            return `сегодня (${hours}:${minutes}) - через ${diffHours} час`;
+            return `${hours}:${minutes} (через ${diffHours} час)`;
         } else if (diffHours <= 24) {
-            return `сегодня (${hours}:${minutes}) - через ${diffHours} часов`;
+            return `${hours}:${minutes} (через ${diffHours} часов)`;
         } else {
-            return `сегодня (${day}.${month}.${year} ${hours}:${minutes})`;
+            return `${day}.${month}.${year} ${hours}:${minutes}`;
         }
     } else if (diffDays === 1) {
-        return `завтра (${day}.${month}.${year} ${hours}:${minutes})`;
+        return `${day}.${month}.${year} ${hours}:${minutes}`; // Убрано слово "завтра"
     } else if (diffDays === 2) {
-        return `послезавтра (${day}.${month}.${year} ${hours}:${minutes})`;
+        return `${day}.${month}.${year} ${hours}:${minutes}`; // Убрано слово "послезавтра"
     } else if (diffDays <= 7) {
         return `${day}.${month}.${year} ${hours}:${minutes} (${dayOfWeek}, через ${diffDays} дн.)`;
     } else {
@@ -2231,6 +2231,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
