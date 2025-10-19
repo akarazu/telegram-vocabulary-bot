@@ -96,7 +96,7 @@ async function getLearnedToday(chatId) {
             }
         }).length;
 
-        console.log(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday}`);
+        console.log(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday} (из Google Sheets)`);
         return learnedToday;
         
     } catch (error) {
@@ -104,6 +104,7 @@ async function getLearnedToday(chatId) {
         return 0;
     }
 }
+
 
 // ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Отметка слова как изученного сегодня
 function markWordAsLearnedToday(chatId, englishWord) {
@@ -1002,12 +1003,12 @@ async function getAvailableNewWordsForToday(chatId, alreadyLearnedToday) {
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего нового слова
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Показ следующего нового слова с актуальной статистикой
 async function showNextNewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
 
-    const { newWords, currentWordIndex } = userState;
+    const { newWords, currentWordIndex, learnedCount } = userState;
     
     // ✅ ПРОВЕРКА: Если слов не осталось - завершаем сессию
     if (newWords.length === 0) {
@@ -1017,13 +1018,19 @@ async function showNextNewWord(chatId) {
 
     // ✅ УБЕЖДАЕМСЯ, что индекс в пределах массива
     if (currentWordIndex >= newWords.length) {
-        userState.currentWordIndex = 0; // Начинаем сначала если индекс вышел за пределы
+        userState.currentWordIndex = 0;
     }
 
     const word = newWords[userState.currentWordIndex];
-    const progress = `${userState.learnedCount + 1}/${userState.learnedCount + newWords.length}`;
     
-    let message = `🆕 Изучение новых слов ${progress}\n\n`;
+    // ✅ ПОЛУЧАЕМ АКТУАЛЬНУЮ СТАТИСТИКУ ИЗ GOOGLE SHEETS
+    const currentLearnedToday = await getLearnedToday(chatId);
+    const remainingSlots = Math.max(0, 5 - currentLearnedToday);
+    
+    const progress = `${currentLearnedToday}/5 изучено сегодня | ${newWords.length} осталось`;
+    
+    let message = `🆕 Изучение новых слов\n\n`;
+    message += `📊 ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
     
     if (word.transcription) {
@@ -1089,11 +1096,15 @@ async function processNewWordLearning(chatId, action) {
                 // ✅ УДАЛЯЕМ изученное слово из массива
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
+                // ✅ ОБНОВЛЯЕМ СЧЕТЧИК ИЗУЧЕННЫХ СЛОВ СЕГОДНЯ
+                const currentLearnedToday = await getLearnedToday(chatId);
+                console.log(`📈 Обновленный счетчик изученных сегодня: ${currentLearnedToday}`);
+                
                 // ✅ ПРОВЕРЯЕМ НЕ ДОСТИГНУТ ЛИ ЛИМИТ
-                const learnedToday = await getLearnedToday(chatId);
-                if (learnedToday >= 5) {
+                if (currentLearnedToday >= 5) {
                     await bot.sendMessage(chatId, 
                         `🎉 Вы достигли дневного лимита в 5 слов!\n\n` +
+                        `📊 Изучено сегодня: ${currentLearnedToday}/5\n\n` +
                         '💡 Возвращайтесь завтра для изучения новых слов.'
                     );
                     await completeNewWordsSession(chatId, userState);
@@ -1112,6 +1123,10 @@ async function processNewWordLearning(chatId, action) {
             const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
             userState.newWords.push(skippedWord);
             console.log(`⏭️ Слово "${skippedWord.english}" пропущено`);
+            
+            // ✅ ОБНОВЛЯЕМ СЧЕТЧИК ПОСЛЕ ПРОПУСКА
+            const currentLearnedToday = await getLearnedToday(chatId);
+            console.log(`📊 После пропуска слова "${skippedWord.english}": изучено сегодня ${currentLearnedToday}`);
         }
         
         // ✅ ПРОВЕРЯЕМ остались ли слова
@@ -1131,8 +1146,23 @@ async function processNewWordLearning(chatId, action) {
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии изучения новых слов
+// ✅ ДОБАВЛЯЕМ ФУНКЦИЮ: Принудительное обновление статистики
+async function refreshLearnedToday(chatId) {
+    try {
+        const learnedToday = await getLearnedToday(chatId);
+        console.log(`🔄 Принудительное обновление статистики для ${chatId}: ${learnedToday} слов`);
+        return learnedToday;
+    } catch (error) {
+        console.error('❌ Error refreshing learned today:', error);
+        return 0;
+    }
+}
+
+
+// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Завершение сессии изучения новых слов
 async function completeNewWordsSession(chatId, userState) {
+    // ✅ ПОЛУЧАЕМ АКТУАЛЬНУЮ СТАТИСТИКУ ИЗ GOOGLE SHEETS
+    const currentLearnedToday = await getLearnedToday(chatId);
     const originalWordsCount = userState.originalWordsCount || (userState.newWords ? userState.newWords.length + userState.learnedCount : userState.learnedCount);
     const learnedCount = userState.learnedCount;
     
@@ -1141,10 +1171,14 @@ async function completeNewWordsSession(chatId, userState) {
     let message = '🎉 **Сессия изучения завершена!**\n\n';
     message += `📊 Результаты:\n`;
     message += `• Всего новых слов: ${originalWordsCount}\n`;
-    message += `• Изучено: ${learnedCount}\n`;
+    message += `• Изучено в этой сессии: ${learnedCount}\n`;
+    message += `• Всего изучено сегодня: ${currentLearnedToday}/5\n`;
     message += `• Отложено: ${originalWordsCount - learnedCount}\n\n`;
     
-    if (learnedCount === originalWordsCount && originalWordsCount > 0) {
+    if (currentLearnedToday >= 5) {
+        message += `✅ Дневной лимит достигнут!\n`;
+        message += `💡 Возвращайтесь завтра для изучения новых слов.\n\n`;
+    } else if (learnedCount === originalWordsCount && originalWordsCount > 0) {
         message += `💪 Отличная работа! Вы изучили все новые слова!\n\n`;
         message += `🔄 Эти слова появятся для повторения завтра.`;
     } else if (originalWordsCount > 0) {
@@ -1364,6 +1398,18 @@ bot.onText(/\/start/, async (msg) => {
         '2. 🆕 Изучить новые слова (5 в день)\n' +
         '3. 📚 Повторить изученные слова\n\n' +
         'Используйте меню для навигации:'
+    );
+});
+
+// ✅ ДОБАВЛЯЕМ КОМАНДУ ДЛЯ ПРОВЕРКИ СТАТИСТИКИ
+bot.onText(/\/refresh_stats/, async (msg) => {
+    const chatId = msg.chat.id;
+    const learnedToday = await refreshLearnedToday(chatId);
+    
+    await bot.sendMessage(chatId, 
+        `🔄 Обновленная статистика:\n\n` +
+        `📊 Изучено сегодня: ${learnedToday}/5 слов\n\n` +
+        `💡 Эта цифра берется из Google Sheets и должна быть точной.`
     );
 });
 
@@ -2231,6 +2277,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
