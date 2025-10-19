@@ -105,186 +105,212 @@ export class GoogleSheetsService {
     }
 
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Инициализация структуры таблицы с LastReview как столбцом G
-    async initializeSheetStructure() {
-        try {
-            // Получаем информацию о листах
-            const spreadsheet = await this.sheets.spreadsheets.get({
+ async initializeSheetStructure() {
+    try {
+        // Получаем информацию о листах
+        const spreadsheet = await this.sheets.spreadsheets.get({
+            spreadsheetId: this.spreadsheetId,
+        });
+
+        const sheets = spreadsheet.data.sheets;
+        const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
+
+        if (!wordsSheet) {
+            // Создаем новый лист с заголовками
+            await this.sheets.spreadsheets.batchUpdate({
                 spreadsheetId: this.spreadsheetId,
-            });
-
-            const sheets = spreadsheet.data.sheets;
-            const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
-
-            if (!wordsSheet) {
-                // Создаем новый лист с заголовками
-                await this.sheets.spreadsheets.batchUpdate({
-                    spreadsheetId: this.spreadsheetId,
-                    resource: {
-                        requests: [
-                            {
-                                addSheet: {
-                                    properties: {
-                                        title: 'Words'
-                                    }
+                resource: {
+                    requests: [
+                        {
+                            addSheet: {
+                                properties: {
+                                    title: 'Words'
                                 }
                             }
-                        ]
-                    }
-                });
-
-                // ✅ ОБНОВЛЕННЫЕ ЗАГОЛОВКИ: LastReview теперь столбец G
-                await this.sheets.spreadsheets.values.update({
-                    spreadsheetId: this.spreadsheetId,
-                    range: 'Words!A1:J1',
-                    valueInputOption: 'RAW',
-                    resource: {
-                        values: [[
-                            'UserID',
-                            'English',
-                            'Transcription',
-                            'AudioURL',
-                            'MeaningsJSON',
-                            'CreatedDate',
-                            'LastReview',    // ✅ СТОЛБЕЦ G - LastReview
-                            'NextReview',    // ✅ СТОЛБЕЦ H - NextReview
-                            'Interval',      // ✅ СТОЛБЕЦ I - Interval
-                            'Status'         // ✅ СТОЛБЕЦ J - Status
-                        ]]
-                    }
-                });
-                console.log('✅ Created new Words sheet with updated structure (LastReview as column G)');
-            } else {
-                console.log('✅ Words sheet already exists');
-            }
-        } catch (error) {
-            console.error('❌ Error initializing sheet structure:', error.message);
-        }
-    }
-    
-    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с новой структурой
-    async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
-        if (!this.initialized) {
-            console.log('❌ Google Sheets not initialized');
-            return false;
-        }
-
-        try {
-            const meaningsJSON = JSON.stringify(meanings);
-            const now = new Date();
-            const nextReview = new Date();
-            nextReview.setDate(nextReview.getDate() + 1);
-
-            const response = await this.sheets.spreadsheets.values.append({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:J',
-                valueInputOption: 'RAW',
-                requestBody: {
-                    values: [[
-                        userId.toString(),
-                        english.toLowerCase(),
-                        transcription || '',
-                        audioUrl || '',
-                        meaningsJSON,
-                        now.toISOString(),    // CreatedDate
-                        '',                   // ✅ LastReview - пусто для новых слов
-                        nextReview.toISOString(), // NextReview
-                        1,                    // начальный интервал
-                        'active'
-                    ]]
+                        }
+                    ]
                 }
             });
 
-            // Инвалидируем кеш для этого пользователя
-            this.cache.delete(`words_${userId}`);
-            console.log(`✅ Word "${english}" saved with new structure`);
-            return true;
-        } catch (error) {
-            console.error('❌ Error saving word:', error.message);
-            return false;
+            // ✅ ОБНОВЛЕННЫЕ ЗАГОЛОВКИ: Добавляем FirstLearnedDate как столбец K
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A1:K1',
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[
+                        'UserID',
+                        'English',
+                        'Transcription',
+                        'AudioURL',
+                        'MeaningsJSON',
+                        'CreatedDate',
+                        'LastReview',
+                        'NextReview',
+                        'Interval',
+                        'Status',
+                        'FirstLearnedDate' // ✅ НОВЫЙ СТОЛБЕЦ K - FirstLearnedDate
+                    ]]
+                }
+            });
+            console.log('✅ Created new Words sheet with FirstLearnedDate column');
+        } else {
+            console.log('✅ Words sheet already exists');
+            
+            // ✅ ПРОВЕРЯЕМ ЕСТЬ ЛИ СТОЛБЕЦ FirstLearnedDate
+            const headersResponse = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A1:K1',
+            });
+            
+            const headers = headersResponse.data.values ? headersResponse.data.values[0] : [];
+            if (!headers.includes('FirstLearnedDate')) {
+                console.log('🔄 Adding FirstLearnedDate column to existing sheet...');
+                
+                // Добавляем заголовок для нового столбца
+                await this.sheets.spreadsheets.values.update({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!K1',
+                    valueInputOption: 'RAW',
+                    resource: {
+                        values: [['FirstLearnedDate']]
+                    }
+                });
+                console.log('✅ Added FirstLearnedDate column header');
+            }
         }
+    } catch (error) {
+        console.error('❌ Error initializing sheet structure:', error.message);
+    }
+}
+    
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с новой структурой
+   async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
+    if (!this.initialized) {
+        console.log('❌ Google Sheets not initialized');
+        return false;
     }
 
+    try {
+        const meaningsJSON = JSON.stringify(meanings);
+        const now = new Date();
+        const nextReview = new Date();
+        nextReview.setDate(nextReview.getDate() + 1);
+
+        const response = await this.sheets.spreadsheets.values.append({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:K',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[
+                    userId.toString(),
+                    english.toLowerCase(),
+                    transcription || '',
+                    audioUrl || '',
+                    meaningsJSON,
+                    now.toISOString(),    // CreatedDate
+                    '',                   // LastReview - пусто для новых слов
+                    nextReview.toISOString(), // NextReview
+                    1,                    // начальный интервал
+                    'active',
+                    ''                    // ✅ FirstLearnedDate - пусто для новых слов
+                ]]
+            }
+        });
+
+        // Инвалидируем кеш для этого пользователя
+        this.cache.delete(`words_${userId}`);
+        console.log(`✅ Word "${english}" saved with FirstLearnedDate column`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error saving word:', error.message);
+        return false;
+    }
+}
+
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с новой структурой
-    async getUserWords(userId) {
-        if (!this.initialized) {
-            return [];
-        }
+   async getUserWords(userId) {
+    if (!this.initialized) {
+        return [];
+    }
 
-        const cacheKey = `words_${userId}`;
-        return this.getCachedData(cacheKey, async () => {
-            try {
-                const response = await this.sheets.spreadsheets.values.get({
-                    spreadsheetId: this.spreadsheetId,
-                    range: 'Words!A:J',
-                });
+    const cacheKey = `words_${userId}`;
+    return this.getCachedData(cacheKey, async () => {
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:K', // ✅ ОБНОВЛЕН ДИАПАЗОН ДО K
+            });
 
-                const rows = response.data.values || [];
+            const rows = response.data.values || [];
 
-                // Пропускаем заголовок и фильтруем по UserID и статусу
-                const userWords = rows.slice(1).filter(row => 
-                    row.length >= 6 && 
-                    row[0] === userId.toString() && 
-                    (row[9] === 'active' || !row[9] || row.length < 10)
-                );
+            // Пропускаем заголовок и фильтруем по UserID и статусу
+            const userWords = rows.slice(1).filter(row => 
+                row.length >= 6 && 
+                row[0] === userId.toString() && 
+                (row[9] === 'active' || !row[9] || row.length < 10)
+            );
 
-                return userWords.map(row => {
-                    // ✅ ОБНОВЛЕННОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
-                    const userId = row[0] || '';
-                    const english = row[1] || '';
-                    const transcription = row[2] || '';
-                    const audioUrl = row[3] || '';
-                    const meaningsJSON = row[4] || '[]';
-                    const createdDate = row[5] || new Date().toISOString();
-                    const lastReview = row[6] || ''; // ✅ СТОЛБЕЦ G - LastReview
-                    const nextReview = row[7] || new Date().toISOString(); // ✅ СТОЛБЕЦ H - NextReview
-                    const interval = parseInt(row[8]) || 1; // ✅ СТОЛБЕЦ I - Interval
-                    const status = row[9] || 'active'; // ✅ СТОЛБЕЦ J - Status
+            return userWords.map(row => {
+                // ✅ ОБНОВЛЕННОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
+                const userId = row[0] || '';
+                const english = row[1] || '';
+                const transcription = row[2] || '';
+                const audioUrl = row[3] || '';
+                const meaningsJSON = row[4] || '[]';
+                const createdDate = row[5] || new Date().toISOString();
+                const lastReview = row[6] || '';
+                const nextReview = row[7] || new Date().toISOString();
+                const interval = parseInt(row[8]) || 1;
+                const status = row[9] || 'active';
+                const firstLearnedDate = row[10] || ''; // ✅ НОВЫЙ СТОЛБЕЦ K - FirstLearnedDate
 
-                    let meanings = [];
-                    
-                    try {
-                        if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
-                            meanings = JSON.parse(meaningsJSON);
-                        } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
-                            meanings = [JSON.parse(meaningsJSON)];
-                        } else {
-                            console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
-                            meanings = [{
-                                translation: meaningsJSON || 'Неизвестный перевод',
-                                example: '',
-                                partOfSpeech: '',
-                                definition: ''
-                            }];
-                        }
-                    } catch (parseError) {
-                        console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
+                let meanings = [];
+                
+                try {
+                    if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
+                        meanings = JSON.parse(meaningsJSON);
+                    } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
+                        meanings = [JSON.parse(meaningsJSON)];
+                    } else {
+                        console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
                         meanings = [{
-                            translation: 'Перевод не загружен',
+                            translation: meaningsJSON || 'Неизвестный перевод',
                             example: '',
                             partOfSpeech: '',
                             definition: ''
                         }];
                     }
+                } catch (parseError) {
+                    console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
+                    meanings = [{
+                        translation: 'Перевод не загружен',
+                        example: '',
+                        partOfSpeech: '',
+                        definition: ''
+                    }];
+                }
 
-                    return {
-                        userId,
-                        english,
-                        transcription,
-                        audioUrl,
-                        meanings,
-                        createdDate,
-                        lastReview,
-                        nextReview,
-                        interval,
-                        status
-                    };
-                });
-            } catch (error) {
-                console.error('❌ Error reading words from Google Sheets:', error.message);
-                return [];
-            }
-        });
-    }
+                return {
+                    userId,
+                    english,
+                    transcription,
+                    audioUrl,
+                    meanings,
+                    createdDate,
+                    lastReview,
+                    nextReview,
+                    interval,
+                    status,
+                    firstLearnedDate // ✅ ДОБАВЛЯЕМ НОВОЕ ПОЛЕ
+                };
+            });
+        } catch (error) {
+            console.error('❌ Error reading words from Google Sheets:', error.message);
+            return [];
+        }
+    });
+}
     
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
 async getWordsForReview(chatId) {
@@ -401,73 +427,87 @@ async getWordsForReview(chatId) {
     }
 
     // ✅ НОВАЯ ФУНКЦИЯ: Массовое обновление слов (для батчинга)
-    async batchUpdateWords(chatId, wordUpdates) {
-        if (!this.initialized) {
-            return false;
-        }
+ async batchUpdateWords(chatId, wordUpdates) {
+    if (!this.initialized) {
+        return false;
+    }
+    
+    try {
+        console.log(`🔄 Batch updating ${wordUpdates.length} words for user ${chatId}`);
         
-        try {
-            console.log(`🔄 Batch updating ${wordUpdates.length} words for user ${chatId}`);
+        // Получаем все строки для поиска
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:K', // ✅ ОБНОВЛЕН ДИАПАЗОН
+        });
+        
+        const rows = response.data.values || [];
+        const updates = [];
+        
+        // Находим строки для обновления
+        for (const [english, data] of wordUpdates) {
+            let rowIndex = -1;
             
-            // Получаем все строки для поиска
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:J',
-            });
-            
-            const rows = response.data.values || [];
-            const updates = [];
-            
-            // Находим строки для обновления
-            for (const [english, data] of wordUpdates) {
-                let rowIndex = -1;
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][0] === chatId.toString() && 
+                    rows[i][1].toLowerCase() === english.toLowerCase() && 
+                    (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
+                    rowIndex = i + 1;
+                    break;
+                }
+            }
+
+            if (rowIndex !== -1) {
+                // ✅ ОБНОВЛЯЕМ FirstLearnedDate ТОЛЬКО ПРИ ПЕРВОМ ИЗУЧЕНИИ
+                const currentRow = rows[rowIndex - 1];
+                const currentFirstLearnedDate = currentRow[10] || '';
                 
-                for (let i = 0; i < rows.length; i++) {
-                    if (rows[i][0] === chatId.toString() && 
-                        rows[i][1].toLowerCase() === english.toLowerCase() && 
-                        (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
-                        rowIndex = i + 1;
-                        break;
-                    }
+                let firstLearnedDate = currentFirstLearnedDate;
+                if ((!currentFirstLearnedDate || currentFirstLearnedDate === '') && 
+                    data.interval > 1) {
+                    // Заполняем FirstLearnedDate только при первом изучении
+                    firstLearnedDate = data.lastReview ? data.lastReview.toISOString() : new Date().toISOString();
+                    console.log(`🎯 Установлен FirstLearnedDate для "${english}": ${firstLearnedDate}`);
                 }
 
-                if (rowIndex !== -1) {
-                    updates.push({
-                        range: `Words!G${rowIndex}:I${rowIndex}`,
-                        values: [[
-                            data.lastReview ? data.lastReview.toISOString() : new Date().toISOString(),
-                            data.nextReview.toISOString(),
-                            data.interval.toString()
-                        ]]
-                    });
-                }
-            }
-            
-            if (updates.length > 0) {
-                // Выполняем все обновления одним запросом
-                await this.sheets.spreadsheets.values.batchUpdate({
-                    spreadsheetId: this.spreadsheetId,
-                    resource: {
-                        valueInputOption: 'RAW',
-                        data: updates
-                    }
+                updates.push({
+                    range: `Words!G${rowIndex}:K${rowIndex}`, // ✅ ОБНОВЛЕН ДИАПАЗОН ДО K
+                    values: [[
+                        data.lastReview ? data.lastReview.toISOString() : new Date().toISOString(),
+                        data.nextReview.toISOString(),
+                        data.interval.toString(),
+                        'active',
+                        firstLearnedDate // ✅ ДОБАВЛЯЕМ FirstLearnedDate
+                    ]]
                 });
-                
-                // Инвалидируем кеш
-                this.cache.delete(`words_${chatId}`);
-                this.cache.delete(`review_${chatId}`);
-                
-                console.log(`✅ Batch update completed: ${updates.length} words updated`);
-                return true;
             }
-            
-            return false;
-            
-        } catch (error) {
-            console.error('❌ Error in batch update:', error.message);
-            return false;
         }
+        
+        if (updates.length > 0) {
+            // Выполняем все обновления одним запросом
+            await this.sheets.spreadsheets.values.batchUpdate({
+                spreadsheetId: this.spreadsheetId,
+                resource: {
+                    valueInputOption: 'RAW',
+                    data: updates
+                }
+            });
+            
+            // Инвалидируем кеш
+            this.cache.delete(`words_${chatId}`);
+            this.cache.delete(`review_${chatId}`);
+            
+            console.log(`✅ Batch update completed: ${updates.length} words updated`);
+            return true;
+        }
+        
+        return false;
+        
+    } catch (error) {
+        console.error('❌ Error in batch update:', error.message);
+        return false;
     }
+}
 
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление карточки после повторения
     async updateCardAfterReview(userId, english, fsrsData, rating) {
@@ -989,11 +1029,74 @@ async getWordsForReview(chatId) {
             }
         }, 5 * 60 * 1000); // Каждые 5 минут
     }
+
+    async migrateFirstLearnedDates(userId) {
+    if (!this.initialized) {
+        return false;
+    }
+    
+    try {
+        console.log(`🔄 Starting FirstLearnedDate migration for user ${userId}`);
+        
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:K',
+        });
+        
+        const rows = response.data.values || [];
+        const updates = [];
+        let migratedCount = 0;
+        
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (row.length >= 9 && row[0] === userId.toString() && 
+                (row[9] === 'active' || !row[9] || row.length < 10)) {
+                
+                const interval = parseInt(row[8]) || 1;
+                const lastReview = row[6] || '';
+                const currentFirstLearnedDate = row[10] || '';
+                
+                // ✅ ЗАПОЛНЯЕМ FirstLearnedDate ДЛЯ ИЗУЧЕННЫХ СЛОВ
+                if (interval > 1 && (!currentFirstLearnedDate || currentFirstLearnedDate === '') && lastReview) {
+                    updates.push({
+                        range: `Words!K${i + 1}`,
+                        values: [[lastReview]] // Используем LastReview как FirstLearnedDate
+                    });
+                    migratedCount++;
+                }
+            }
+        }
+        
+        if (updates.length > 0) {
+            await this.sheets.spreadsheets.values.batchUpdate({
+                spreadsheetId: this.spreadsheetId,
+                resource: {
+                    valueInputOption: 'RAW',
+                    data: updates
+                }
+            });
+            
+            // Инвалидируем кеш
+            this.cache.delete(`words_${userId}`);
+            
+            console.log(`✅ FirstLearnedDate migration completed: ${migratedCount} words updated`);
+        } else {
+            console.log('✅ No words need FirstLearnedDate migration');
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Error migrating FirstLearnedDates:', error.message);
+        return false;
+    }
+}
 }
 
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
