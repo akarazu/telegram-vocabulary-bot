@@ -334,30 +334,40 @@ async function getLearnedToday(chatId) {
         const moscowNow = new Date(now.getTime() + moscowOffset);
         const todayStart = new Date(moscowNow);
         todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(moscowNow);
+        todayEnd.setHours(23, 59, 59, 999);
         
-        optimizedLog(`🔍 Дата проверки: ${moscowNow.toLocaleString('ru-RU')}`);
+        optimizedLog(`🔍 getLearnedToday проверка для ${chatId}`);
+        optimizedLog(`📅 Московское время: ${moscowNow.toLocaleString('ru-RU')}`);
+        optimizedLog(`⏰ Сегодня: с ${todayStart.toLocaleString('ru-RU')} по ${todayEnd.toLocaleString('ru-RU')}`);
 
         let learnedToday = 0;
         let debugWords = [];
 
         userWords.forEach(word => {
-            if (word.status !== 'active' || word.interval <= 1) return;
+            if (word.status !== 'active') return;
             
-            // ✅ ИСПОЛЬЗУЕМ FirstLearnedDate вместо lastReview
+            // ✅ ИСПОЛЬЗУЕМ ТОЛЬКО FirstLearnedDate для определения дня изучения
             const firstLearnedDate = word.firstLearnedDate;
+            
             if (firstLearnedDate && firstLearnedDate.trim() !== '') {
                 try {
                     const learnedDate = new Date(firstLearnedDate);
                     const moscowLearned = new Date(learnedDate.getTime() + moscowOffset);
                     
-                    // ✅ Считаем слово изученным сегодня если FirstLearnedDate сегодня
-                    if (moscowLearned >= todayStart) {
+                    optimizedLog(`🔍 Слово "${word.english}": FirstLearnedDate=${firstLearnedDate}, MoscowTime=${moscowLearned.toLocaleString('ru-RU')}`);
+                    
+                    // ✅ Считаем слово изученным сегодня если FirstLearnedDate попадает в сегодняшний день
+                    if (moscowLearned >= todayStart && moscowLearned <= todayEnd) {
                         learnedToday++;
                         debugWords.push(`${word.english} (изучено: ${moscowLearned.toLocaleString('ru-RU')})`);
+                        optimizedLog(`✅ Слово "${word.english}" изучено сегодня!`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
                 }
+            } else {
+                optimizedLog(`⏭️ Слово "${word.english}" не имеет FirstLearnedDate`);
             }
         });
 
@@ -371,7 +381,6 @@ async function getLearnedToday(chatId) {
         return 0;
     }
 }
-
 // Оптимизация: кеширование данных словарей
 const dictionaryCache = new Map();
 
@@ -2496,6 +2505,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
