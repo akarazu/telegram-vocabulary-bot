@@ -329,7 +329,7 @@ async function getLearnedToday(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const now = new Date();
         
-        // ✅ Московское время для корректного определения "сегодня"
+        // Московское время для корректного определения "сегодня"
         const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
         const moscowNow = new Date(now.getTime() + moscowOffset);
         const todayStart = new Date(moscowNow);
@@ -338,7 +338,6 @@ async function getLearnedToday(chatId) {
         todayEnd.setHours(23, 59, 59, 999);
         
         optimizedLog(`🔍 Дата проверки: ${moscowNow.toISOString()}`);
-        optimizedLog(`🔍 Сегодня: с ${todayStart.toISOString()} по ${todayEnd.toISOString()}`);
 
         let learnedToday = 0;
         let debugWords = [];
@@ -346,15 +345,16 @@ async function getLearnedToday(chatId) {
         userWords.forEach(word => {
             if (word.status !== 'active') return;
             
-            if (word.LastReview) { // ✅ Обратите внимание на заглавную L!
+            // ✅ ИСПРАВЛЕНИЕ: используем lastReview (маленькая l) как в коде
+            const lastReview = word.lastReview || word.LastReview; // Проверяем оба варианта
+            if (lastReview) {
                 try {
-                    const lastReviewDate = new Date(word.LastReview);
-                    optimizedLog(`🔍 Слово "${word.english}": LastReview=${word.LastReview}, дата=${lastReviewDate.toISOString()}`);
+                    const lastReviewDate = new Date(lastReview);
                     
                     // ✅ Проверяем в диапазоне сегодняшнего дня по Москве
                     if (lastReviewDate >= todayStart && lastReviewDate <= todayEnd) {
                         learnedToday++;
-                        debugWords.push(`${word.english} (${lastReviewDate.toISOString()})`);
+                        debugWords.push(`${word.english} (${lastReviewDate.toLocaleString('ru-RU')})`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
@@ -2447,6 +2447,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
