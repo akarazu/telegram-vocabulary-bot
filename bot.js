@@ -335,29 +335,25 @@ async function getLearnedToday(chatId) {
         const todayStart = new Date(moscowNow);
         todayStart.setHours(0, 0, 0, 0);
         
-        optimizedLog(`🔍 Дата проверки: ${moscowNow.toISOString()}`);
-        optimizedLog(`🔍 Начало сегодня: ${todayStart.toISOString()}`);
+        optimizedLog(`🔍 Дата проверки: ${moscowNow.toLocaleString('ru-RU')}`);
 
         let learnedToday = 0;
         let debugWords = [];
 
         userWords.forEach(word => {
-            if (word.status !== 'active') return;
+            if (word.status !== 'active' || word.interval <= 1) return;
             
-            // ✅ ИСПРАВЛЕНИЕ: используем lastReview (маленькая l) как в коде
-            const lastReview = word.lastReview || word.LastReview; // Проверяем оба варианта
-            if (lastReview) {
+            // ✅ ИСПОЛЬЗУЕМ FirstLearnedDate вместо lastReview
+            const firstLearnedDate = word.firstLearnedDate;
+            if (firstLearnedDate && firstLearnedDate.trim() !== '') {
                 try {
-                    const lastReviewDate = new Date(lastReview);
-                    const moscowLastReview = new Date(lastReviewDate.getTime() + moscowOffset);
+                    const learnedDate = new Date(firstLearnedDate);
+                    const moscowLearned = new Date(learnedDate.getTime() + moscowOffset);
                     
-                    optimizedLog(`🔍 Слово "${word.english}": lastReview=${lastReview}, моск.время=${moscowLastReview.toISOString()}`);
-                    
-                    // ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: считаем только слова с lastReview СЕГОДНЯ
-                    // и с интервалом > 1 (уже изученные)
-                    if (moscowLastReview >= todayStart && word.interval > 1) {
+                    // ✅ Считаем слово изученным сегодня если FirstLearnedDate сегодня
+                    if (moscowLearned >= todayStart) {
                         learnedToday++;
-                        debugWords.push(`${word.english} (${moscowLastReview.toLocaleString('ru-RU')}, инт.${word.interval})`);
+                        debugWords.push(`${word.english} (изучено: ${moscowLearned.toLocaleString('ru-RU')})`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
@@ -1784,6 +1780,20 @@ bot.onText(/\/new/, async (msg) => {
     await startNewWordsSession(chatId);
 });
 
+bot.onText(/\/migrate_first_learned/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    try {
+        await sheetsService.migrateFirstLearnedDates(chatId);
+        await bot.sendMessage(chatId, 
+            '✅ Миграция FirstLearnedDate завершена!\n\n' +
+            '💡 Теперь счетчик изученных слов сегодня будет работать правильно.'
+        );
+    } catch (error) {
+        await bot.sendMessage(chatId, '❌ Ошибка при миграции данных.');
+    }
+});
+
 // ✅ ДОБАВЛЯЕМ КОМАНДУ: Диагностика статуса слов
 bot.onText(/\/debug_stats/, async (msg) => {
     const chatId = msg.chat.id;
@@ -2450,6 +2460,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
