@@ -511,7 +511,7 @@ function getReviewKeyboard() {
                     { text: '🎉 Легко', callback_data: 'review_easy' }
                 ],
                 [
-                    { text: '⏭️ Следующее слово', callback_data: 'skip_review' }
+                    { text: '✍️ Правописание', callback_data: 'spelling_train' } // ✅ ДОБАВЛЕНО
                 ]
             ]
         }
@@ -525,8 +525,8 @@ function getNewWordsKeyboard() {
             inline_keyboard: [
                 [{ text: '✅ Выучил', callback_data: 'learned_word' }],
                 [{ text: '🔄 Нужно повторить', callback_data: 'need_repeat_word' }],
-                [{ text: '⏭️ Пропустить слово', callback_data: 'skip_new_word' }],
-                [{ text: '❌ Завершить изучение', callback_data: 'end_learning' }]
+                [{ text: '✍️ Правописание', callback_data: 'spelling_train' }], // ✅ ДОБАВЛЕНО
+                [{ text: '⏭️ Пропустить слово', callback_data: 'skip_new_word' }]
             ]
         }
     };
@@ -812,6 +812,107 @@ async function checkAndSendNotifications() {
         
     } catch (error) {
         optimizedLog('❌ Error in notification check:', error);
+    }
+}
+
+// ✅ ДОБАВЛЕНО: Простой тренажер правописания
+async function startSpellingTraining(chatId, context) {
+    const userState = userStates.get(chatId);
+    if (!userState) return;
+
+    let word;
+    let originalState;
+
+    if (context === 'review' && userState.state === 'review_session') {
+        word = userState.reviewWords[userState.currentReviewIndex];
+        originalState = { ...userState };
+    } else if (context === 'learning' && userState.state === 'learning_new_words') {
+        word = userState.newWords[userState.currentWordIndex];
+        originalState = { ...userState };
+    } else {
+        return;
+    }
+
+    if (!word) return;
+
+    // Сохраняем оригинальное состояние и запускаем тренажер
+    userStates.set(chatId, {
+        state: 'spelling_training',
+        originalState: originalState,
+        originalContext: context,
+        trainingWord: word,
+        attempts: 0,
+        lastActivity: Date.now()
+    });
+
+    await askSpellingQuestion(chatId, word);
+}
+
+// ✅ ДОБАВЛЕНО: Задать вопрос по правописанию
+async function askSpellingQuestion(chatId, word) {
+    const message = `✍️ **Тренировка правописания**\n\n` +
+                   `🇷🇺 Перевод: **${word.meanings[0]?.translation || 'перевод'}**\n\n` +
+                   `✏️ Напишите английское слово:`;
+
+    await bot.sendMessage(chatId, message, {
+        reply_markup: {
+            keyboard: [['🔙 Назад к карточке']],
+            resize_keyboard: true
+        }
+    });
+}
+
+// ✅ ДОБАВЛЕНО: Проверить ответ
+async function checkSpellingAnswer(chatId, userAnswer) {
+    const userState = userStates.get(chatId);
+    if (!userState || userState.state !== 'spelling_training') return;
+
+    const word = userState.trainingWord;
+    const correct = word.english.toLowerCase();
+    const answer = userAnswer.trim().toLowerCase();
+    
+    userState.attempts++;
+
+    if (answer === correct) {
+        await bot.sendMessage(chatId, 
+            `✅ **Правильно!**\n\n` +
+            `🇬🇧 ${word.english}\n` +
+            `🔤 ${word.transcription || ''}`
+        );
+        
+        // Возвращаем к карточке через 2 секунды
+        setTimeout(() => returnToCard(chatId, userState), 2000);
+    } else {
+        await bot.sendMessage(chatId, 
+            `❌ Неправильно. Попробуйте еще раз!\n` +
+            `💡 Подсказка: начинается на "${word.english[0]}"`
+        );
+        
+        // После 3 попыток показываем ответ
+        if (userState.attempts >= 3) {
+            setTimeout(async () => {
+                await bot.sendMessage(chatId, 
+                    `💡 Правильный ответ: **${word.english}**\n` +
+                    `Возвращаем к карточке...`
+                );
+                setTimeout(() => returnToCard(chatId, userState), 2000);
+            }, 1000);
+        }
+    }
+}
+
+// ✅ ДОБАВЛЕНО: Вернуться к карточке
+async function returnToCard(chatId, userState) {
+    const originalState = userState.originalState;
+    const context = userState.originalContext;
+    
+    // Восстанавливаем оригинальное состояние
+    userStates.set(chatId, originalState);
+    
+    if (context === 'review') {
+        await showReviewAnswer(chatId);
+    } else if (context === 'learning') {
+        await showNextNewWord(chatId);
     }
 }
 
@@ -1799,6 +1900,13 @@ bot.on('message', async (msg) => {
         const example = text.trim();
         await processCustomTranslationWithExample(chatId, userState, example);
     }
+     else if (userState?.state === 'spelling_training') {
+        if (text === '🔙 Назад к карточке') {
+            await returnToCard(chatId, userState);
+        } else {
+            await checkSpellingAnswer(chatId, text);
+        }
+    }
     // Обработка других состояний
     else {
         await showMainMenu(chatId, 'Выберите действие из меню:');
@@ -2152,6 +2260,22 @@ bot.on('callback_query', async (callbackQuery) => {
                 message_id: callbackQuery.message.message_id
             }
         );
+    }   
+    else if (data === 'spelling_train') {
+        const userState = userStates.get(chatId);
+        
+        if (userState?.state === 'review_session') {
+            await startSpellingTraining(chatId, 'review');
+        } 
+        else if (userState?.state === 'learning_new_words') {
+            await startSpellingTraining(chatId, 'learning');
+        }
+        
+        try {
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+        } catch (e) {
+            optimizedLog('⚠️ Cannot delete message');
+        }
     }
     // Обработка неизвестных callback данных
     else {
@@ -2189,6 +2313,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
