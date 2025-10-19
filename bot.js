@@ -90,6 +90,34 @@ async function showTranslationDetails(chatId, translationIndex, userState) {
     }
 }
 
+function toMoscowTime(date) {
+    if (!date) return date;
+    
+    try {
+        const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа для Москвы
+        return new Date(date.getTime() + moscowOffset);
+    } catch (error) {
+        return date;
+    }
+}
+
+function formatMoscowDate(date) {
+    if (!date) return 'дата не указана';
+    
+    try {
+        const moscowDate = toMoscowTime(new Date(date));
+        const day = moscowDate.getDate().toString().padStart(2, '0');
+        const month = (moscowDate.getMonth() + 1).toString().padStart(2, '0');
+        const year = moscowDate.getFullYear();
+        const hours = moscowDate.getHours().toString().padStart(2, '0');
+        const minutes = moscowDate.getMinutes().toString().padStart(2, '0');
+        
+        return `${day}.${month}.${year} ${hours}:${minutes}`;
+    } catch (error) {
+        return 'ошибка даты';
+    }
+}
+
 // ✅ ВОССТАНОВЛЕНО: Функция возврата к выбору переводов
 async function backToTranslationSelection(chatId, userState, callbackQuery) {
     try {
@@ -1539,8 +1567,11 @@ async function showUserStats(chatId) {
                 .map(word => {
                     try {
                         const nextReview = new Date(word.nextReview);
-                        const daysUntil = Math.ceil((nextReview - now) / (1000 * 60 * 60 * 24));
-                        return { word: word.english, daysUntil, nextReview };
+                        const moscowNextReview = toMoscowTime(nextReview);
+                        const moscowNow = toMoscowTime(now);
+                        
+                        const daysUntil = Math.ceil((moscowNextReview - moscowNow) / (1000 * 60 * 60 * 24));
+                        return { word: word.english, daysUntil, nextReview: moscowNextReview };
                     } catch (error) {
                         return null;
                     }
@@ -1555,7 +1586,7 @@ async function showUserStats(chatId) {
                 
                 const reviewSchedule = {};
                 wordsWithFutureReview.forEach(item => {
-                    const dateKey = formatConcreteDate(item.nextReview);
+                    const dateKey = formatMoscowDate(item.nextReview);
                     reviewSchedule[dateKey] = (reviewSchedule[dateKey] || 0) + 1;
                 });
 
@@ -1571,70 +1602,21 @@ async function showUserStats(chatId) {
                     sortedDates.slice(0, 5).forEach(date => {
                         message += `• ${date}: ${reviewSchedule[date]} слов\n`;
                     });
-                    
-                    if (sortedDates.length > 5) {
-                        const remainingWords = Object.values(reviewSchedule).slice(5).reduce((a, b) => a + b, 0);
-                        message += `• И еще ${remainingWords} слов в следующие дни\n`;
-                    }
                 }
-            } else {
-                message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
             }
-            
-            const intervals = {
-                'Новые': 0,
-                'Короткие (2-3д)': 0,
-                'Средние (4-7д)': 0,
-                'Долгие (8+д)': 0
-            };
-            
-            activeWords.forEach(word => {
-                const interval = word.interval || 1;
-                if (interval === 1) intervals['Новые']++;
-                else if (interval <= 3) intervals['Короткие (2-3д)']++;
-                else if (interval <= 7) intervals['Средние (4-7д)']++;
-                else intervals['Долгие (8+д)']++;
-            });
-            
-            message += `\n📈 **Интервалы повторения:**\n`;
-            message += `• Новые: ${intervals['Новые']} слов\n`;
-            message += `• Короткие: ${intervals['Короткие (2-3д)']} слов\n`;
-            message += `• Средние: ${intervals['Средние (4-7д)']} слов\n`;
-            message += `• Долгие: ${intervals['Долгие (8+д)']} слов\n`;
-            
-            const learnedWordsCount = activeWords.filter(word => word.interval > 1).length;
-            const progressPercentage = activeWords.length > 0 
-                ? Math.round((learnedWordsCount / activeWords.length) * 100) 
-                : 0;
-                
-            message += `\n🎓 **Общий прогресс:** ${learnedWordsCount}/${activeWords.length} (${progressPercentage}%)\n`;
         }
         
-        message += `\n💡 **Рекомендации:**\n`;
+        // Показываем время сервера и московское
+        const serverTime = new Date();
+        const moscowTime = toMoscowTime(serverTime);
+        message += `\n🌍 **Время сервера:** ${serverTime.toLocaleString('ru-RU')}`;
+        message += `\n🇷🇺 **Московское время:** ${moscowTime.toLocaleString('ru-RU')}`;
         
-        if (reviewWordsCount > 0) {
-            message += `• Начните с повторения слов (${reviewWordsCount} слов ждут)\n`;
-        }
-        
-        if (newWordsCount > 0 && remainingToday > 0) {
-            message += `• Изучите новые слова (доступно ${Math.min(newWordsCount, remainingToday)} из ${newWordsCount})\n`;
-        } else if (newWordsCount > 0) {
-            message += `• Новые слова доступны завтра (${newWordsCount} слов)\n`;
-        }
-        
-        if (reviewWordsCount === 0 && newWordsCount === 0) {
-            message += `🎉 Отличная работа! Все слова изучены!\n`;
-            message += `• Добавьте новые слова через меню\n`;
-        }
-
         await bot.sendMessage(chatId, message, getMainMenu());
         
     } catch (error) {
         optimizedLog('❌ Error showing stats:', error);
-        await bot.sendMessage(chatId, 
-            '❌ Ошибка при загрузке статистики.\n' +
-            'Попробуйте позже.'
-        );
+        await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
     }
 }
 
@@ -1643,19 +1625,23 @@ function formatConcreteDate(date) {
     const now = new Date();
     const targetDate = new Date(date);
     
-    const diffTime = targetDate - now;
+    // Используем московское время для расчетов
+    const moscowNow = toMoscowTime(now);
+    const moscowTarget = toMoscowTime(targetDate);
+    
+    const diffTime = moscowTarget - moscowNow;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     const diffHours = Math.ceil(diffTime / (1000 * 60 * 60));
     
-    const day = targetDate.getDate().toString().padStart(2, '0');
-    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
-    const year = targetDate.getFullYear();
+    const day = moscowTarget.getDate().toString().padStart(2, '0');
+    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
+    const year = moscowTarget.getFullYear();
     
-    const hours = targetDate.getHours().toString().padStart(2, '0');
-    const minutes = targetDate.getMinutes().toString().padStart(2, '0');
+    const hours = moscowTarget.getHours().toString().padStart(2, '0');
+    const minutes = moscowTarget.getMinutes().toString().padStart(2, '0');
     
     const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    const dayOfWeek = daysOfWeek[targetDate.getDay()];
+    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
     
     if (diffDays === 0) {
         if (diffHours <= 1) {
@@ -1666,7 +1652,7 @@ function formatConcreteDate(date) {
             return `${day}.${month}.${year} ${hours}:${minutes}`;
         }
     } else if (diffDays === 1) {
-        return `${day}.${month}.${year} ${hours}:${minutes}`;
+        return `завтра ${hours}:${minutes}`;
     } else if (diffDays === 2) {
         return `${day}.${month}.${year} ${hours}:${minutes}`;
     } else if (diffDays <= 7) {
@@ -2454,6 +2440,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
