@@ -1028,20 +1028,23 @@ async function showNextReviewWord(chatId) {
         return;
     }
     
+    // ✅ ПРОВЕРКА: если дошли до конца массива
     if (currentReviewIndex >= reviewWords.length) {
-        userState.currentReviewIndex = 0;
+        optimizedLog(`🎯 All words reviewed, completing session`);
+        await completeReviewSession(chatId, userState);
+        return;
     }
 
-    const word = reviewWords[userState.currentReviewIndex];
+    const word = reviewWords[currentReviewIndex];
     
     if (!word) {
-        await bot.sendMessage(chatId, '❌ Ошибка: слово не найдено.');
+        optimizedLog(`❌ Word not found at index ${currentReviewIndex}`);
         userState.currentReviewIndex++;
         await showNextReviewWord(chatId);
         return;
     }
     
-    const progress = `${userState.currentReviewIndex + 1}/${reviewWords.length} (${userState.reviewedCount} оценено)`;
+    const progress = `${currentReviewIndex + 1}/${reviewWords.length} (${reviewedCount} оценено)`;
     
     let message = `📚 Повторение слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -1121,8 +1124,9 @@ async function processReviewRating(chatId, rating) {
 
     const word = userState.reviewWords[userState.currentReviewIndex];
     
+    optimizedLog(`🔧 Processing rating: ${rating} for word: ${word.english}, index: ${userState.currentReviewIndex}/${userState.reviewWords.length}`);
+    
     try {
-        // ✅ ПРОСТЫЕ ДАННЫЕ ДЛЯ FSRS
         const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
@@ -1135,10 +1139,8 @@ async function processReviewRating(chatId, rating) {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
-        // ✅ ВСЕГДА РАБОТАЮЩИЙ FSRS (даже через fallback)
         const fsrsData = fsrsService.reviewCard(cardData, rating);
 
-        // ✅ ПРОСТОЕ СОХРАНЕНИЕ
         const success = await batchSheetsService.updateWordReviewBatch(
             chatId,
             word.english,
@@ -1149,24 +1151,32 @@ async function processReviewRating(chatId, rating) {
 
         if (success) {
             userState.reviewedCount++;
-            userState.currentReviewIndex++;
-            userState.lastActivity = Date.now();
+            userState.currentReviewIndex++; // ✅ Увеличиваем индекс
             
-            // Циклический переход по словам
+            optimizedLog(`🔧 After rating: index=${userState.currentReviewIndex}, total=${userState.reviewWords.length}`);
+
+            // ✅ ПРОВЕРЯЕМ ЗАВЕРШЕНИЕ СЕССИИ
             if (userState.currentReviewIndex >= userState.reviewWords.length) {
-                userState.currentReviewIndex = 0;
+                optimizedLog(`🎯 Session completed: ${userState.reviewedCount} words reviewed`);
+                await completeReviewSession(chatId, userState);
+            } else {
+                // ✅ ПРОДОЛЖАЕМ СЛЕДУЮЩЕЕ СЛОВО
+                userState.lastActivity = Date.now();
+                await showNextReviewWord(chatId);
             }
-            
-            await showNextReviewWord(chatId);
         } else {
             await bot.sendMessage(chatId, '❌ Ошибка при сохранении.');
         }
 
     } catch (error) {
         optimizedLog('❌ Error processing review rating:', error);
-        // ✅ ДАЖЕ ПРИ ОШИБКЕ ПРОДОЛЖАЕМ
+        // ✅ ПРИ ОШИБКЕ ТОЖЕ ПРОДОЛЖАЕМ
         userState.currentReviewIndex++;
-        await showNextReviewWord(chatId);
+        if (userState.currentReviewIndex >= userState.reviewWords.length) {
+            await completeReviewSession(chatId, userState);
+        } else {
+            await showNextReviewWord(chatId);
+        }
     }
 }
 
@@ -1174,13 +1184,18 @@ async function processReviewRating(chatId, rating) {
 async function completeReviewSession(chatId, userState) {
     const totalWords = userState.reviewWords.length;
     const reviewedCount = userState.reviewedCount;
+    const skippedCount = totalWords - reviewedCount;
     
     userStates.delete(chatId);
 
     let message = '🎉 **Сессия повторения завершена!**\n\n';
     message += `📊 Результаты:\n`;
-    message += `• Всего слов для повторения: ${totalWords}\n`;
+    message += `• Всего слов: ${totalWords}\n`;
     message += `• Повторено: ${reviewedCount}\n`;
+    
+    if (skippedCount > 0) {
+        message += `• Пропущено: ${skippedCount}\n`;
+    }
     
     if (reviewedCount > 0) {
         const progressPercentage = Math.round((reviewedCount / totalWords) * 100);
@@ -1193,6 +1208,13 @@ async function completeReviewSession(chatId, userState) {
     message += `• Начать новую сессию повторения\n`;
     message += `• Изучить новые слова\n`;
     message += `• Посмотреть статистику\n`;
+    
+    // ✅ ПРОВЕРЯЕМ ЕСТЬ ЛИ ЕЩЕ СЛОВА ДЛЯ ПОВТОРЕНИЯ
+    const hasMoreWords = await hasWordsForReview(chatId);
+    if (hasMoreWords) {
+        const remainingCount = await sheetsService.getReviewWordsCount(chatId);
+        message += `\n📚 Осталось слов для повторения: ${remainingCount}`;
+    }
     
     await bot.sendMessage(chatId, message, getMainMenu());
 }
@@ -2432,6 +2454,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
