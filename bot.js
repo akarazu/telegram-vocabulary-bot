@@ -334,10 +334,9 @@ async function getLearnedToday(chatId) {
         const moscowNow = new Date(now.getTime() + moscowOffset);
         const todayStart = new Date(moscowNow);
         todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date(moscowNow);
-        todayEnd.setHours(23, 59, 59, 999);
         
         optimizedLog(`🔍 Дата проверки: ${moscowNow.toISOString()}`);
+        optimizedLog(`🔍 Начало сегодня: ${todayStart.toISOString()}`);
 
         let learnedToday = 0;
         let debugWords = [];
@@ -350,11 +349,15 @@ async function getLearnedToday(chatId) {
             if (lastReview) {
                 try {
                     const lastReviewDate = new Date(lastReview);
+                    const moscowLastReview = new Date(lastReviewDate.getTime() + moscowOffset);
                     
-                    // ✅ Проверяем в диапазоне сегодняшнего дня по Москве
-                    if (lastReviewDate >= todayStart && lastReviewDate <= todayEnd) {
+                    optimizedLog(`🔍 Слово "${word.english}": lastReview=${lastReview}, моск.время=${moscowLastReview.toISOString()}`);
+                    
+                    // ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: считаем только слова с lastReview СЕГОДНЯ
+                    // и с интервалом > 1 (уже изученные)
+                    if (moscowLastReview >= todayStart && word.interval > 1) {
                         learnedToday++;
-                        debugWords.push(`${word.english} (${lastReviewDate.toLocaleString('ru-RU')})`);
+                        debugWords.push(`${word.english} (${moscowLastReview.toLocaleString('ru-RU')}, инт.${word.interval})`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
@@ -2447,6 +2450,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
