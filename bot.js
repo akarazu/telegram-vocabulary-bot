@@ -720,15 +720,13 @@ async function hasWordsForReview(userId) {
     }
     
     try {
-        const userWords = await getCachedUserWords(userId);
+        const wordsToReview = await sheetsService.getWordsForReview(userId);
         
-        const hasReviewWords = userWords.some(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
-            return isReviewDue(word.nextReview);
-        });
-
-        optimizedLog(`🔍 Check review words for ${userId}: ${hasReviewWords}`);
-        return hasReviewWords;
+        // ✅ ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: только слова с интервалом > 1
+        const validReviewWords = wordsToReview.filter(word => word.interval > 1);
+        
+        optimizedLog(`🔍 Check review words for ${userId}: ${validReviewWords.length} valid words`);
+        return validReviewWords.length > 0;
         
     } catch (error) {
         optimizedLog('❌ Error checking words for review:', error);
@@ -970,36 +968,29 @@ async function startReviewSession(chatId) {
     try {
         const wordsToReview = await sheetsService.getWordsForReview(chatId);
         
-        optimizedLog(`🔍 Words for review for ${chatId}:`, wordsToReview.length);
+        // ✅ ДОПОЛНИТЕЛЬНЫЙ ФИЛЬТР: только изученные слова
+        const validReviewWords = wordsToReview.filter(word => word.interval > 1);
         
-        if (wordsToReview.length === 0) {
-            // Показываем детальную информацию почему нет слов
+        optimizedLog(`🔍 Review session for ${chatId}: ${validReviewWords.length} valid words`);
+        
+        if (validReviewWords.length === 0) {
+            // Показываем детальную информацию
             const userWords = await getCachedUserWords(chatId);
             const activeWords = userWords.filter(word => word.status === 'active');
-            const wordsWithFutureReview = activeWords.filter(word => {
-                if (!word.nextReview) return false;
-                try {
-                    const nextReview = new Date(word.nextReview);
-                    return nextReview > new Date();
-                } catch (e) {
-                    return false;
-                }
-            });
+            const learnedWords = activeWords.filter(word => word.interval > 1);
+            const newWords = activeWords.filter(word => word.interval === 1);
             
             let message = '📊 **Статус повторений:**\n\n';
             message += `• Всего активных слов: ${activeWords.length}\n`;
-            message += `• Слов готово к повторению: 0\n`;
+            message += `• Изученных слов: ${learnedWords.length}\n`;
+            message += `• Новых слов: ${newWords.length}\n`;
+            message += `• Слов готово к повторению: 0\n\n`;
             
-            if (wordsWithFutureReview.length > 0) {
-                const nearest = wordsWithFutureReview
-                    .map(word => ({ word, date: new Date(word.nextReview) }))
-                    .sort((a, b) => a.date - b.date)[0];
-                
-                message += `• Ближайшее повторение: ${formatConcreteDate(nearest.date)}\n`;
-                message += `• Следующие слова: ${wordsWithFutureReview.length}\n\n`;
+            if (learnedWords.length === 0) {
+                message += '💡 Сначала изучите слова в разделе "🆕 Новые слова"';
+            } else {
+                message += '⏰ Слова появятся для повторения согласно их интервалам';
             }
-            
-            message += '💡 Слова появятся для повторения согласно алгоритму интервальных повторений.';
             
             await bot.sendMessage(chatId, message);
             return;
@@ -1007,7 +998,7 @@ async function startReviewSession(chatId) {
 
         userStates.set(chatId, {
             state: 'review_session',
-            reviewWords: wordsToReview,
+            reviewWords: validReviewWords,
             currentReviewIndex: 0,
             reviewedCount: 0,
             lastActivity: Date.now()
@@ -1017,10 +1008,7 @@ async function startReviewSession(chatId) {
         
     } catch (error) {
         optimizedLog('❌ Error starting review session:', error);
-        await bot.sendMessage(chatId, 
-            '❌ Ошибка при загрузке слов для повторения.\n' +
-            'Попробуйте команду /debug_stats для диагностики.'
-        );
+        await bot.sendMessage(chatId, '❌ Ошибка при загрузке слов для повторения.');
     }
 }
 
@@ -2444,6 +2432,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
