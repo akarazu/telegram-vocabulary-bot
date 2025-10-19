@@ -289,21 +289,16 @@ export class GoogleSheetsService {
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
 async getWordsForReview(chatId) {
     const userWords = await this.getUserWords(chatId);
-    const now = new Date();
-    
-    // ✅ ДОБАВЛЯЕМ +3 ЧАСА ДЛЯ МОСКОВСКОГО ВРЕМЕНИ
-    const timezoneOffset = 3 * 60 * 60 * 1000;
-    const moscowTime = new Date(now.getTime() + timezoneOffset);
+    const now = new Date(); // ✅ ОРИГИНАЛЬНОЕ СЕРВЕРНОЕ ВРЕМЯ
     
     return userWords.filter(word => {
-        // ✅ ВАЖНО: Только активные слова с интервалом > 1 (уже изученные)
         if (!word.nextReview || word.status !== 'active' || word.interval === 1) {
             return false;
         }
         
         try {
             const nextReview = new Date(word.nextReview);
-            return nextReview <= moscowTime; // ✅ Сравниваем с московским временем
+            return nextReview <= now; // ✅ ОРИГИНАЛЬНАЯ ПРОВЕРКА
         } catch (error) {
             console.error('Error checking review date:', error);
             return false;
@@ -999,6 +994,7 @@ async getWordsForReview(chatId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
