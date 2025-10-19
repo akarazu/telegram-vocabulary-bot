@@ -802,21 +802,20 @@ async function startReviewSession(chatId) {
     }
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
 async function showNextReviewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') return;
 
     const { reviewWords, currentReviewIndex, reviewedCount } = userState;
     
+    // ✅ УБЕЖДАЕМСЯ, ЧТО ИНДЕКС В ПРЕДЕЛАХ МАССИВА
     if (currentReviewIndex >= reviewWords.length) {
-        // Сессия завершена
-        await completeReviewSession(chatId, userState);
-        return;
+        userState.currentReviewIndex = 0;
     }
 
-    const word = reviewWords[currentReviewIndex];
-    const progress = `${currentReviewIndex + 1}/${reviewWords.length}`; // ✅ ТЕКУЩИЙ индекс + 1
+    const word = reviewWords[userState.currentReviewIndex];
+    const progress = `${userState.currentReviewIndex + 1}/${reviewWords.length} (${userState.reviewedCount} оценено)`;
     
     let message = `📚 Повторение слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -836,49 +835,6 @@ async function showNextReviewWord(chatId) {
             ]
         }
     });
-}
-
-// ✅ ФУНКЦИЯ: Показ ответа с кнопками оценки и примерами
-async function showReviewAnswer(chatId) {
-    const userState = userStates.get(chatId);
-    if (!userState || userState.state !== 'review_session') return;
-
-    const word = userState.reviewWords[userState.currentReviewIndex];
-    
-    let message = `📖 **Ответ:**\n\n`;
-    message += `🇬🇧 ${word.english}\n`;
-    
-    if (word.transcription) {
-        message += `🔤 ${word.transcription}\n`;
-    }
-    
-    message += `\n🇷🇺 **Переводы:**\n`;
-    
-    // Показываем переводы и примеры
-    word.meanings.forEach((meaning, index) => {
-        message += `\n${index + 1}. ${meaning.translation}`;
-        if (meaning.definition) {
-            message += ` - ${meaning.definition}`;
-        }
-        
-        // ✅ ДОБАВЛЯЕМ ПРИМЕРЫ ЕСЛИ ЕСТЬ
-        if (meaning.example && meaning.example.trim() !== '') {
-            message += `\n   📝 *Пример:* ${meaning.example}`;
-        }
-    });
-
-    if (word.audioUrl) {
-        // Отправляем аудио отдельным сообщением
-        try {
-            await bot.sendAudio(chatId, word.audioUrl, {
-                caption: '🔊 Произношение'
-            });
-        } catch (error) {
-            console.log('❌ Audio not available for review');
-        }
-    }
-
-    await bot.sendMessage(chatId, message, getReviewKeyboard());
 }
 
 // ✅ ФУНКЦИЯ: Обработка оценки повторения
@@ -934,7 +890,7 @@ async function processReviewRating(chatId, rating) {
     }
 }
 
-// ✅ ФУНКЦИЯ: Завершение сессии повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
     const totalWords = userState.reviewWords.length;
     const reviewedCount = userState.reviewedCount;
@@ -945,20 +901,18 @@ async function completeReviewSession(chatId, userState) {
     message += `📊 Результаты:\n`;
     message += `• Всего слов для повторения: ${totalWords}\n`;
     message += `• Повторено: ${reviewedCount}\n`;
-    message += `• Осталось: ${totalWords - reviewedCount}\n\n`;
     
-    if (reviewedCount === totalWords && totalWords > 0) {
-        message += `💪 Отличная работа! Вы повторили все слова!\n\n`;
-    } else if (totalWords > 0) {
-        message += `💡 Вы можете продолжить повторение позже.\n\n`;
+    if (reviewedCount > 0) {
+        const progressPercentage = Math.round((reviewedCount / totalWords) * 100);
+        message += `• Прогресс: ${progressPercentage}%\n\n`;
+    } else {
+        message += `\n`;
     }
     
-    // Проверяем новые слова для изучения
-    const newWordsCount = await getUnlearnedNewWords(chatId).then(words => words.length);
-    if (newWordsCount > 0) {
-        message += `🆕 Доступно новых слов для изучения: ${newWordsCount}\n`;
-        message += `Можете изучить их через меню "🆕 Новые слова"!`;
-    }
+    message += `💡 Вы можете:\n`;
+    message += `• Начать новую сессию повторения\n`;
+    message += `• Изучить новые слова\n`;
+    message += `• Посмотреть статистику\n`;
     
     await bot.sendMessage(chatId, message, getMainMenu());
 }
@@ -2303,13 +2257,63 @@ bot.on('callback_query', async (callbackQuery) => {
         }
     }
     // ✅ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ПОВТОРЕНИЯ
-    else if (data === 'show_answer') {
-        await showReviewAnswer(chatId);
+else if (data === 'show_answer') {
+    await showReviewAnswer(chatId);
+}
+else if (data.startsWith('review_')) {
+    const rating = data.replace('review_', '');
+    const userState = userStates.get(chatId);
+    if (!userState || userState.state !== 'review_session') return;
+
+    const word = userState.reviewWords[userState.currentReviewIndex];
+    
+    try {
+        // Создаем объект карточки для FSRS
+        const cardData = {
+            due: new Date(word.nextReview),
+            stability: word.stability || 0,
+            difficulty: word.difficulty || 0,
+            elapsed_days: word.elapsed_days || 0,
+            scheduled_days: word.scheduled_days || 0,
+            reps: word.reps || 0,
+            lapses: word.lapses || 0,
+            state: word.state || 0,
+            last_review: word.last_review ? new Date(word.last_review) : undefined
+        };
+
+        // Обновляем данные FSRS
+        const fsrsData = fsrsService.reviewCard(cardData, rating);
+
+        // Сохраняем в Google Sheets
+        const success = await sheetsService.updateCardAfterReview(
+            chatId, 
+            word.english, 
+            fsrsData, 
+            rating
+        );
+
+        if (success) {
+            // Обновляем состояние
+            userState.reviewedCount++;
+            userState.currentReviewIndex++;
+            
+            // ✅ ЦИКЛИЧЕСКАЯ ЛОГИКА: ПРОВЕРЯЕМ ГРАНИЦЫ МАССИВА
+            if (userState.currentReviewIndex >= userState.reviewWords.length) {
+                console.log('🔄 Достигнут конец списка после оценки, начинаем заново');
+                userState.currentReviewIndex = 0;
+            }
+            
+            // Показываем следующий вопрос
+            await showNextReviewWord(chatId);
+        } else {
+            await bot.sendMessage(chatId, '❌ Ошибка при сохранении результата.');
+        }
+
+    } catch (error) {
+        console.error('❌ Error processing review rating:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при обработке оценки.');
     }
-    else if (data.startsWith('review_')) {
-        const rating = data.replace('review_', '');
-        await processReviewRating(chatId, rating);
-    }
+}
 else if (data === 'skip_review') {
     if (userState?.state === 'review_session') {
         // ✅ УВЕЛИЧИВАЕМ ИНДЕКС
@@ -2318,12 +2322,13 @@ else if (data === 'skip_review') {
         
         // ✅ ПРОВЕРЯЕМ НЕ ВЫШЕЛ ЛИ ИНДЕКС ЗА ГРАНИЦЫ МАССИВА
         if (userState.currentReviewIndex >= userState.reviewWords.length) {
-            console.log('🎯 Сессия повторения завершена (после пропуска последнего слова)');
-            await completeReviewSession(chatId, userState);
-        } else {
-            // ✅ ЕСЛИ ЕСТЬ ЕЩЕ СЛОВА - ПОКАЗЫВАЕМ СЛЕДУЮЩЕЕ
-            await showNextReviewWord(chatId);
+            console.log('🔄 Достигнут конец списка, начинаем заново с первого слова');
+            // ✅ СБРАСЫВАЕМ ИНДЕКС В 0 И НАЧИНАЕМ ЗАНОВО
+            userState.currentReviewIndex = 0;
         }
+        
+        // ✅ ПОКАЗЫВАЕМ СЛЕДУЮЩЕЕ СЛОВО (всегда, т.к. индекс теперь всегда валидный)
+        await showNextReviewWord(chatId);
     }
 }
     else if (data === 'end_review') {
@@ -2437,6 +2442,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
