@@ -74,62 +74,64 @@ export class GoogleSheetsService {
         }
     }
 
-    async initializeSheetStructure() {
-        try {
-            // Получаем информацию о листах
-            const spreadsheet = await this.sheets.spreadsheets.get({
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Инициализация структуры таблицы с LastReview как столбцом G
+async initializeSheetStructure() {
+    try {
+        // Получаем информацию о листах
+        const spreadsheet = await this.sheets.spreadsheets.get({
+            spreadsheetId: this.spreadsheetId,
+        });
+
+        const sheets = spreadsheet.data.sheets;
+        const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
+
+        if (!wordsSheet) {
+            // Создаем новый лист с заголовками
+            await this.sheets.spreadsheets.batchUpdate({
                 spreadsheetId: this.spreadsheetId,
-            });
-
-            const sheets = spreadsheet.data.sheets;
-            const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
-
-            if (!wordsSheet) {
-                // Создаем новый лист с заголовками
-                await this.sheets.spreadsheets.batchUpdate({
-                    spreadsheetId: this.spreadsheetId,
-                    resource: {
-                        requests: [
-                            {
-                                addSheet: {
-                                    properties: {
-                                        title: 'Words'
-                                    }
+                resource: {
+                    requests: [
+                        {
+                            addSheet: {
+                                properties: {
+                                    title: 'Words'
                                 }
                             }
-                        ]
-                    }
-                });
+                        }
+                    ]
+                }
+            });
 
-                // Добавляем заголовки
-                await this.sheets.spreadsheets.values.update({
-                    spreadsheetId: this.spreadsheetId,
-                    range: 'Words!A1:I1',
-                    valueInputOption: 'RAW',
-                    resource: {
-                        values: [[
-                            'UserID',
-                            'English',
-                            'Transcription',
-                            'AudioURL',
-                            'MeaningsJSON',
-                            'CreatedDate',
-                            'NextReview',
-                            'Interval',
-                            'Status'
-                        ]]
-                    }
-                });
-                console.log('✅ Created new Words sheet with JSON structure');
-            } else {
-                console.log('✅ Words sheet already exists');
-            }
-        } catch (error) {
-            console.error('❌ Error initializing sheet structure:', error.message);
+            // ✅ ОБНОВЛЕННЫЕ ЗАГОЛОВКИ: LastReview теперь столбец G
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A1:J1', // ✅ ОБНОВЛЕНО: до столбца J
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[
+                        'UserID',
+                        'English',
+                        'Transcription',
+                        'AudioURL',
+                        'MeaningsJSON',
+                        'CreatedDate',
+                        'LastReview',    // ✅ СТОЛБЕЦ G - LastReview
+                        'NextReview',    // ✅ СТОЛБЕЦ H - NextReview
+                        'Interval',      // ✅ СТОЛБЕЦ I - Interval
+                        'Status'         // ✅ СТОЛБЕЦ J - Status
+                    ]]
+                }
+            });
+            console.log('✅ Created new Words sheet with updated structure (LastReview as column G)');
+        } else {
+            console.log('✅ Words sheet already exists');
         }
+    } catch (error) {
+        console.error('❌ Error initializing sheet structure:', error.message);
     }
-
- // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с отслеживанием повторений
+}
+    
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с новой структурой
 async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
     if (!this.initialized) {
         console.log('❌ Google Sheets not initialized');
@@ -138,12 +140,13 @@ async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
 
     try {
         const meaningsJSON = JSON.stringify(meanings);
+        const now = new Date();
         const nextReview = new Date();
         nextReview.setDate(nextReview.getDate() + 1);
 
         const response = await this.sheets.spreadsheets.values.append({
             spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:I',
+            range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
             valueInputOption: 'RAW',
             requestBody: {
                 values: [[
@@ -152,16 +155,16 @@ async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
                     transcription || '',
                     audioUrl || '',
                     meaningsJSON,
-                    new Date().toISOString(),
-                    nextReview.toISOString(),
-                    1, // начальный интервал
+                    now.toISOString(),    // CreatedDate
+                    '',                   // ✅ LastReview - пусто для новых слов
+                    nextReview.toISOString(), // NextReview
+                    1,                    // начальный интервал
                     'active'
-                    // reps будет 0 по умолчанию (новое слово)
                 ]]
             }
         });
 
-        console.log(`✅ Word "${english}" saved as NEW word`);
+        console.log(`✅ Word "${english}" saved with new structure`);
         return true;
     } catch (error) {
         console.error('❌ Error saving word:', error.message);
@@ -169,7 +172,7 @@ async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
     }
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с новой структурой
 async getUserWords(userId) {
     if (!this.initialized) {
         return [];
@@ -178,7 +181,7 @@ async getUserWords(userId) {
     try {
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:I',
+            range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
         });
 
         const rows = response.data.values || [];
@@ -187,33 +190,30 @@ async getUserWords(userId) {
         const userWords = rows.slice(1).filter(row => 
             row.length >= 6 && 
             row[0] === userId.toString() && 
-            (row[8] === 'active' || !row[8] || row.length < 9)
+            (row[9] === 'active' || !row[9] || row.length < 10) // ✅ ОБНОВЛЕНО индекс статуса
         );
 
         return userWords.map(row => {
-            // ✅ ПРАВИЛЬНОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
+            // ✅ ОБНОВЛЕННОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
             const userId = row[0] || '';
             const english = row[1] || '';
             const transcription = row[2] || '';
             const audioUrl = row[3] || '';
             const meaningsJSON = row[4] || '[]';
             const createdDate = row[5] || new Date().toISOString();
-            const nextReview = row[6] || new Date().toISOString(); // Столбец G
-            const interval = parseInt(row[7]) || 1; // Столбец H
-            const status = row[8] || 'active';
+            const lastReview = row[6] || ''; // ✅ СТОЛБЕЦ G - LastReview
+            const nextReview = row[7] || new Date().toISOString(); // ✅ СТОЛБЕЦ H - NextReview
+            const interval = parseInt(row[8]) || 1; // ✅ СТОЛБЕЦ I - Interval
+            const status = row[9] || 'active'; // ✅ СТОЛБЕЦ J - Status
 
-            // ✅ ИСПРАВЛЕНИЕ: Определяем переменную meanings ДО использования
             let meanings = [];
             
             try {
-                // Проверяем, является ли meaningsJSON валидным JSON
                 if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
                     meanings = JSON.parse(meaningsJSON);
                 } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
-                    // Если это объект, оборачиваем в массив
                     meanings = [JSON.parse(meaningsJSON)];
                 } else {
-                    // Если это не JSON, создаем fallback значение
                     console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
                     meanings = [{
                         translation: meaningsJSON || 'Неизвестный перевод',
@@ -224,9 +224,6 @@ async getUserWords(userId) {
                 }
             } catch (parseError) {
                 console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
-                console.log(`📝 Problematic JSON:`, meaningsJSON.substring(0, 100));
-                
-                // Fallback: создаем базовую структуру
                 meanings = [{
                     translation: 'Перевод не загружен',
                     example: '',
@@ -235,14 +232,14 @@ async getUserWords(userId) {
                 }];
             }
 
-            // ✅ ТЕПЕРЬ возвращаем объект с определенной переменной meanings
             return {
                 userId,
                 english,
                 transcription,
                 audioUrl,
-                meanings, // Теперь переменная определена
+                meanings,
                 createdDate,
+                lastReview, // ✅ ДОБАВЛЕНО: LastReview
                 nextReview,
                 interval,
                 status
@@ -253,7 +250,7 @@ async getUserWords(userId) {
         return [];
     }
 }
-
+    
 // ✅ ДОБАВЛЯЕМ в GoogleSheetsService новую функцию:
 async getWordsForReview(userId) {
     if (!this.initialized) {
@@ -449,6 +446,7 @@ async updateCardAfterReview(userId, english, fsrsData, rating) {
     }
 }
 
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
 async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
     if (!this.initialized) {
         return false;
@@ -458,7 +456,7 @@ async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview 
         // Сначала находим строку для обновления
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:I',
+            range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
         });
         
         const rows = response.data.values || [];
@@ -467,7 +465,7 @@ async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview 
         for (let i = 0; i < rows.length; i++) {
             if (rows[i][0] === userId.toString() && 
                 rows[i][1].toLowerCase() === english.toLowerCase() && 
-                (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
+                (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) { // ✅ ОБНОВЛЕНО индекс статуса
                 rowIndex = i + 1;
                 break;
             }
@@ -478,16 +476,16 @@ async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview 
             return false;
         }
 
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбцы F (LastReview), G (NextReview) и H (Interval)
+        // ✅ ОБНОВЛЕНИЕ: Обновляем столбцы G (LastReview), H (NextReview) и I (Interval)
         const updateData = [
-            lastReview ? lastReview.toISOString() : new Date().toISOString(), // Столбец F - LastReview (текущая дата)
-            nextReviewDate.toISOString(), // Столбец G - NextReview
-            newInterval                   // Столбец H - Interval
+            lastReview ? lastReview.toISOString() : new Date().toISOString(), // ✅ СТОЛБЕЦ G - LastReview
+            nextReviewDate.toISOString(), // ✅ СТОЛБЕЦ H - NextReview
+            newInterval.toString()        // ✅ СТОЛБЕЦ I - Interval
         ];
 
         await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
-            range: `Words!F${rowIndex}:H${rowIndex}`, // F=LastReview, G=NextReview, H=Interval
+            range: `Words!G${rowIndex}:I${rowIndex}`, // ✅ G=LastReview, H=NextReview, I=Interval
             valueInputOption: 'RAW',
             resource: {
                 values: [updateData]
@@ -732,6 +730,7 @@ async resetUserProgress(userId) {
         }
     }
 }
+
 
 
 
