@@ -717,10 +717,11 @@ async function hasWordsForReview(userId) {
             }
         });
 
+        optimizedLog(`🔍 Check review words for ${userId}: ${hasReviewWords}`);
         return hasReviewWords;
         
     } catch (error) {
-        optimizedLog('❌ Error checking words for review:', error.message);
+        optimizedLog('❌ Error checking words for review:', error);
         return false;
     }
 }
@@ -959,11 +960,38 @@ async function startReviewSession(chatId) {
     try {
         const wordsToReview = await sheetsService.getWordsForReview(chatId);
         
+        optimizedLog(`🔍 Words for review for ${chatId}:`, wordsToReview.length);
+        
         if (wordsToReview.length === 0) {
-            await bot.sendMessage(chatId, 
-                '🎉 Отлично! На сегодня слов для повторения нет.\n\n' +
-                'Возвращайтесь завтра для следующей сессии повторения.'
-            );
+            // Показываем детальную информацию почему нет слов
+            const userWords = await getCachedUserWords(chatId);
+            const activeWords = userWords.filter(word => word.status === 'active');
+            const wordsWithFutureReview = activeWords.filter(word => {
+                if (!word.nextReview) return false;
+                try {
+                    const nextReview = new Date(word.nextReview);
+                    return nextReview > new Date();
+                } catch (e) {
+                    return false;
+                }
+            });
+            
+            let message = '📊 **Статус повторений:**\n\n';
+            message += `• Всего активных слов: ${activeWords.length}\n`;
+            message += `• Слов готово к повторению: 0\n`;
+            
+            if (wordsWithFutureReview.length > 0) {
+                const nearest = wordsWithFutureReview
+                    .map(word => ({ word, date: new Date(word.nextReview) }))
+                    .sort((a, b) => a.date - b.date)[0];
+                
+                message += `• Ближайшее повторение: ${formatConcreteDate(nearest.date)}\n`;
+                message += `• Следующие слова: ${wordsWithFutureReview.length}\n\n`;
+            }
+            
+            message += '💡 Слова появятся для повторения согласно алгоритму интервальных повторений.';
+            
+            await bot.sendMessage(chatId, message);
             return;
         }
 
@@ -979,7 +1007,10 @@ async function startReviewSession(chatId) {
         
     } catch (error) {
         optimizedLog('❌ Error starting review session:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при загрузке слов для повторения.');
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при загрузке слов для повторения.\n' +
+            'Попробуйте команду /debug_stats для диагностики.'
+        );
     }
 }
 
@@ -1732,6 +1763,91 @@ bot.onText(/\/new/, async (msg) => {
     await startNewWordsSession(chatId);
 });
 
+// ✅ ДОБАВЛЯЕМ КОМАНДУ: Диагностика статуса слов
+bot.onText(/\/debug_stats/, async (msg) => {
+    const chatId = msg.chat.id;
+    await initializeServices();
+    
+    try {
+        const userWords = await getCachedUserWords(chatId);
+        const activeWords = userWords.filter(word => word.status === 'active');
+        const now = new Date();
+        
+        let message = '🔍 **Диагностика статуса слов:**\n\n';
+        
+        // Слова для повторения
+        const reviewWords = activeWords.filter(word => {
+            if (!word.nextReview) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                return nextReview <= now;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        // Слова в будущем
+        const futureWords = activeWords.filter(word => {
+            if (!word.nextReview) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                return nextReview > now;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        // Новые слова
+        const newWords = activeWords.filter(word => word.interval === 1);
+        
+        message += `📊 Всего активных слов: ${activeWords.length}\n`;
+        message += `🔄 Готово к повторению: ${reviewWords.length}\n`;
+        message += `⏰ Ожидают повторения: ${futureWords.length}\n`;
+        message += `🆕 Новые слова: ${newWords.length}\n\n`;
+        
+        // Показываем ближайшие 3 слова для повторения
+        if (futureWords.length > 0) {
+            message += `📅 **Ближайшие повторения:**\n`;
+            const sorted = futureWords
+                .map(word => ({ 
+                    word: word.english, 
+                    date: new Date(word.nextReview),
+                    interval: word.interval 
+                }))
+                .sort((a, b) => a.date - b.date)
+                .slice(0, 3);
+                
+            sorted.forEach(item => {
+                message += `• ${item.word} (инт. ${item.interval}д): ${formatConcreteDate(item.date)}\n`;
+            });
+        }
+        
+        // Показываем слова которые ДОЛЖНЫ быть готовы
+        const shouldBeReady = activeWords.filter(word => {
+            if (!word.nextReview || word.interval === 1) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                const yesterday = new Date(now);
+                yesterday.setDate(yesterday.getDate() - 1);
+                return nextReview <= yesterday;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        if (shouldBeReady.length > 0 && reviewWords.length === 0) {
+            message += `\n⚠️ **Проблема:** ${shouldBeReady.length} слов должны быть готовы к повторению!\n`;
+            message += `Возможно ошибка в датах. Используйте /reset_progress для сброса.`;
+        }
+        
+        await bot.sendMessage(chatId, message);
+        
+    } catch (error) {
+        optimizedLog('❌ Debug stats error:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка диагностики.');
+    }
+});
+
 // Обработка сообщений
 // Обработка сообщений
 bot.on('message', async (msg) => {
@@ -2313,6 +2429,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
