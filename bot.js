@@ -33,34 +33,66 @@ function optimizedLog(message, data = null) {
     }
 }
 
+// ✅ ВОССТАНОВЛЕНО: Обработка ошибок инициализации
 async function initializeServices() {
-    if (servicesInitialized) return;
+    if (servicesInitialized) return true;
     
     try {
+        optimizedLog('🔄 Initializing services...');
         sheetsService = new GoogleSheetsService();
         batchSheetsService = new BatchSheetsService(sheetsService);
         yandexService = new YandexDictionaryService();
         cambridgeService = new CambridgeDictionaryService();
         fsrsService = new FSRSService();
         
+        // Ждем инициализацию Google Sheets
+        await new Promise(resolve => {
+            const checkInitialized = () => {
+                if (sheetsService.initialized) {
+                    resolve();
+                } else {
+                    setTimeout(checkInitialized, 100);
+                }
+            };
+            checkInitialized();
+        });
+        
         servicesInitialized = true;
         optimizedLog('✅ Все сервисы успешно инициализированы');
+        return true;
     } catch (error) {
         optimizedLog('❌ Ошибка инициализации сервисов:', error);
-        // Создаем заглушки чтобы бот не падал
+        // ✅ ВОССТАНОВЛЕНО: Создаем заглушки чтобы бот не падал
         sheetsService = { 
             initialized: false,
             hasWordsForReview: () => false,
             getReviewWordsCount: () => 0,
-            getUserWords: () => []
+            getUserWords: () => [],
+            getWordsForReview: () => [],
+            getNewWordsCount: () => 0,
+            getAllActiveUsers: () => [],
+            addWordWithMeanings: async () => false,
+            updateWordReview: async () => false,
+            updateCardAfterReview: async () => false,
+            batchUpdateWords: async () => false,
+            // ✅ ВОССТАНОВЛЕНО: Критически важные методы
+            resetUserProgress: async () => true
         };
-        yandexService = { getTranscriptionAndAudio: () => ({ transcription: '', audioUrl: '' }) };
-        cambridgeService = { getWordData: () => ({ meanings: [] }) };
+        yandexService = { 
+            getTranscriptionAndAudio: () => ({ transcription: '', audioUrl: '' }),
+            getTranscriptionAndAudio: async () => ({ transcription: '', audioUrl: '' })
+        };
+        cambridgeService = { 
+            getWordData: () => ({ meanings: [] }),
+            getWordData: async () => ({ meanings: [] })
+        };
         fsrsService = new FSRSService();
         batchSheetsService = {
             updateWordReviewBatch: async () => true,
             flushAll: async () => {}
         };
+        servicesInitialized = true; // Все равно помечаем как инициализированные
+        return false;
     }
 }
 
@@ -292,56 +324,81 @@ function getExampleInputKeyboard() {
 
 // Клавиатура для выбора переводов с кнопкой "Подробнее" для всех переводов
 function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
+    if (!translations || translations.length === 0) {
+        console.log('❌ No translations provided to keyboard function');
+        return {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '✏️ Добавить свой перевод', callback_data: 'custom_translation' }],
+                    [{ text: '🔙 Назад', callback_data: 'cancel_translation' }]
+                ]
+            }
+        };
+    }
+
     const translationButtons = [];
+    
     translations.forEach((translation, index) => {
         const isSelected = selectedIndices.includes(index);
-        let numberEmoji;
-        if (index < 9) {
-            numberEmoji = `${index + 1}️⃣`;
-        } else {
-            const number = index + 1;
-            const digits = number.toString().split('');
-            numberEmoji = digits.map(digit => {
-                const digitEmojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
-                return digitEmojis[parseInt(digit)];
-            }).join('');
-        }
+        const numberEmoji = getNumberEmoji(index + 1);
         const emoji = isSelected ? '✅' : numberEmoji;
         
-        // Находим английское значение для этого перевода
-        const meaningForTranslation = meanings.find(meaning => meaning.translation === translation);
-        const englishDefinition = meaningForTranslation?.englishDefinition || '';
+        const buttonText = `${emoji} ${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}`;
         
-        // Основная кнопка с переводом
-        const mainButtonText = `${emoji} ${translation}`;
-        
-        // Всегда создаем две кнопки: основную и "Подробнее"
         const row = [
-            { text: mainButtonText, callback_data: `toggle_translation_${index}` },
-            { text: '🔍 Подробнее', callback_data: `details_${index}` }
+            { 
+                text: buttonText, 
+                callback_data: `toggle_translation_${index}` 
+            }
         ];
+        
+        // Добавляем кнопку "Подробнее" только если есть детали
+        const hasDetails = meanings && meanings[index] && 
+                          (meanings[index].englishDefinition || meanings[index].examples?.length > 0);
+        
+        if (hasDetails) {
+            row.push({ 
+                text: '🔍', 
+                callback_data: `details_${index}` 
+            });
+        }
+        
         translationButtons.push(row);
     });
 
     const actionButtons = [];
+    
     if (selectedIndices.length > 0) {
         actionButtons.push([
-            { text: `💾 Сохранить (${selectedIndices.length})`, callback_data: 'save_selected_translations' }
+            { 
+                text: `💾 Сохранить (${selectedIndices.length})`, 
+                callback_data: 'save_selected_translations' 
+            }
         ]);
     }
+    
     actionButtons.push([
-        { text: '✏️ Добавить свой перевод', callback_data: 'custom_translation' },
-        { text: '🔙 Отменить', callback_data: 'cancel_translation' }
+        { 
+            text: '✏️ Свой перевод', 
+            callback_data: 'custom_translation' 
+        },
+        { 
+            text: '🔙 Назад', 
+            callback_data: 'cancel_translation' 
+        }
     ]);
 
     return {
         reply_markup: {
-            inline_keyboard: [
-                ...translationButtons,
-                ...actionButtons
-            ]
+            inline_keyboard: [...translationButtons, ...actionButtons]
         }
     };
+}
+
+// Вспомогательная функция для эмодзи номеров
+function getNumberEmoji(number) {
+    const emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    return number <= emojis.length ? emojis[number - 1] : `${number}.`;
 }
 
 // Клавиатура для повторения слов
@@ -572,136 +629,7 @@ async function hasWordsForReview(userId) {
     }
 }
 
-// Оптимизация: батчинг нотификаций
-async function sendBatchNotifications(userIds) {
-    const BATCH_SIZE = 10;
-    const DELAY_BETWEEN_BATCHES = 2000;
-    
-    for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
-        const batch = userIds.slice(i, i + BATCH_SIZE);
-        
-        await Promise.allSettled(
-            batch.map(chatId => sendReviewNotification(chatId))
-        );
-        
-        if (i + BATCH_SIZE < userIds.length) {
-            await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES));
-        }
-    }
-}
-
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка и отправка нотификаций
-async function checkAndSendNotifications() {
-    optimizedLog('🔔 Checking notifications for all users...');
-    
-    if (!servicesInitialized || !sheetsService.initialized) {
-        optimizedLog('❌ Sheets service not initialized, skipping notifications');
-        return;
-    }
-    
-    try {
-        const activeUsers = await sheetsService.getAllActiveUsers();
-        optimizedLog(`📋 Found ${activeUsers.length} active users`);
-        
-        // Оптимизация: батчинг пользователей
-        const userWordsMap = await sheetsService.getMultipleUsersWords(activeUsers);
-        
-        let sentCount = 0;
-        const notificationPromises = [];
-        
-        for (const userId of activeUsers) {
-            try {
-                const userScheduler = notificationScheduler.get(userId);
-                if (userScheduler?.disabled) {
-                    optimizedLog(`⏸️ Notifications disabled for today for user ${userId}`);
-                    continue;
-                }
-                
-                const today = new Date().toDateString();
-                if (userScheduler?.date === today && userScheduler?.sent) {
-                    optimizedLog(`✅ Notification already sent today for user ${userId}`);
-                    continue;
-                }
-                
-                const userWords = userWordsMap.get(userId) || [];
-                const hasReviewWords = userWords.some(word => {
-                    if (!word.nextReview || word.status !== 'active') return false;
-                    try {
-                        const nextReviewDate = new Date(word.nextReview);
-                        return nextReviewDate <= new Date();
-                    } catch (error) {
-                        return false;
-                    }
-                });
-                
-                if (hasReviewWords) {
-                    notificationPromises.push(sendReviewNotification(userId));
-                }
-                
-            } catch (userError) {
-                optimizedLog(`❌ Error processing user ${userId}:`, userError);
-            }
-        }
-        
-        // Отправляем нотификации батчами
-        const results = await Promise.allSettled(notificationPromises);
-        sentCount = results.filter(r => r.status === 'fulfilled' && r.value).length;
-        
-        optimizedLog(`📢 Notification check completed: ${sentCount} sent`);
-        
-    } catch (error) {
-        optimizedLog('❌ Error in notification check:', error);
-    }
-}
-
-// Оптимизация: улучшенная система нотификаций
-let lastNotificationCheck = 0;
-function startOptimizedNotifications() {
-    optimizedLog('💰 Запуск оптимизированных нотификаций...');
-    
-    // Основная проверка каждые 2 часа вместо 30 минут
-    setInterval(async () => {
-        const now = Date.now();
-        if (now - lastNotificationCheck >= 2 * 60 * 60 * 1000) {
-            await checkAndSendNotifications().catch(console.error);
-            lastNotificationCheck = now;
-        }
-    }, 60 * 1000);
-    
-    scheduleMorningNotification();
-    scheduleActiveHoursNotifications();
-}
-
-function scheduleActiveHoursNotifications() {
-    const now = new Date();
-    const nextCheck = new Date();
-    
-    nextCheck.setHours(9, 0, 0, 0);
-    if (now >= nextCheck) {
-        nextCheck.setDate(nextCheck.getDate() + 1);
-    }
-    
-    const timeUntilCheck = nextCheck.getTime() - now.getTime();
-    
-    setTimeout(() => {
-        let checkCount = 0;
-        const dayInterval = setInterval(() => {
-            const currentHour = new Date().getHours();
-            if (currentHour >= 9 && currentHour <= 21) {
-                checkAndSendNotifications().catch(console.error);
-                checkCount++;
-                
-                if (checkCount >= 4 || currentHour >= 21) {
-                    clearInterval(dayInterval);
-                    scheduleActiveHoursNotifications();
-                }
-            }
-        }, 4 * 60 * 60 * 1000);
-        
-    }, timeUntilCheck);
-}
-
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Отправка нотификаций о повторении
+// ✅ УПРОЩЕННАЯ ВЕРСИЯ: Отправка нотификаций
 async function sendReviewNotification(chatId) {
     try {
         const hasWords = await hasWordsForReview(chatId);
@@ -711,7 +639,6 @@ async function sendReviewNotification(chatId) {
             const userWords = await getCachedUserWords(chatId);
             
             const newWords = userWords.filter(word => word.interval === 1).length;
-            const reviewWords = userWords.filter(word => word.interval > 1).length;
             
             let message = '🔔 **Время учить английский!**\n\n';
             
@@ -723,13 +650,8 @@ async function sendReviewNotification(chatId) {
                 message += `🆕 **Новых слов доступно:** ${newWords}\n`;
             }
             
-            message += `\n💪 **Потратьте всего 5-10 минут:**\n`;
-            message += `• Повторите изученные слова\n`;
-            message += `• Изучите новые слова\n`;
-            message += `• Укрепите память\n\n`;
-            
-            message += 'Выберите действие:';
-            
+            message += `\n💪 Потратьте всего 5-10 минут на изучение!`;
+
             const keyboard = {
                 reply_markup: {
                     inline_keyboard: []
@@ -748,22 +670,9 @@ async function sendReviewNotification(chatId) {
                 ]);
             }
             
-            keyboard.reply_markup.inline_keyboard.push([
-                { text: '⏰ Напомнить позже', callback_data: 'snooze_notification' },
-                { text: '🚫 Отключить на сегодня', callback_data: 'disable_today' }
-            ]);
-            
             await bot.sendMessage(chatId, message, keyboard);
             
-            // Обновляем статус отправки
-            const today = new Date().toDateString();
-            notificationScheduler.set(chatId, {
-                date: today,
-                sent: true,
-                disabled: false
-            });
-            
-            optimizedLog(`✅ Sent notification to ${chatId}: ${wordsCount} words for review, ${newWords} new words`);
+            optimizedLog(`✅ Sent notification to ${chatId}`);
             return true;
         } else {
             optimizedLog(`ℹ️ No words for review for ${chatId}, skipping notification`);
@@ -775,20 +684,64 @@ async function sendReviewNotification(chatId) {
     }
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Утренняя нотификация
+// ✅ УПРОЩЕННАЯ ВЕРСИЯ: Проверка и отправка нотификаций
+async function checkAndSendNotifications() {
+    optimizedLog('🔔 Checking notifications for all users...');
+    
+    if (!servicesInitialized || !sheetsService.initialized) {
+        optimizedLog('❌ Sheets service not initialized, skipping notifications');
+        return;
+    }
+    
+    try {
+        const activeUsers = await sheetsService.getAllActiveUsers();
+        optimizedLog(`📋 Found ${activeUsers.length} active users`);
+        
+        let sentCount = 0;
+        
+        for (const userId of activeUsers) {
+            try {
+                const sent = await sendReviewNotification(userId);
+                if (sent) {
+                    sentCount++;
+                    // Задержка между отправками
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            } catch (userError) {
+                optimizedLog(`❌ Error processing user ${userId}:`, userError);
+            }
+        }
+        
+        optimizedLog(`📢 Notification check completed: ${sentCount} sent`);
+        
+    } catch (error) {
+        optimizedLog('❌ Error in notification check:', error);
+    }
+}
+
+// ✅ УПРОЩЕННАЯ ВЕРСИЯ: Запуск нотификаций
+function startOptimizedNotifications() {
+    optimizedLog('💰 Запуск оптимизированных нотификаций...');
+    
+    // Основная проверка каждые 2 часа
+    setInterval(async () => {
+        await checkAndSendNotifications().catch(console.error);
+    }, 2 * 60 * 60 * 1000);
+    
+    // Утренняя нотификация в 9:00
+    scheduleMorningNotification();
+}
+
 function scheduleMorningNotification() {
     const now = new Date();
     const nextMorning = new Date();
     
     nextMorning.setHours(9, 0, 0, 0);
-    
     if (now >= nextMorning) {
         nextMorning.setDate(nextMorning.getDate() + 1);
     }
     
     const timeUntilMorning = nextMorning.getTime() - now.getTime();
-    
-    optimizedLog(`⏰ Morning notification scheduled for ${nextMorning.toLocaleString()}`);
     
     setTimeout(() => {
         optimizedLog('🌅 Sending morning notifications...');
@@ -1397,7 +1350,7 @@ async function showUserStats(chatId) {
         optimizedLog('❌ Error showing stats:', error);
         await bot.sendMessage(chatId, 
             '❌ Ошибка при загрузке статистики.\n' +
-            'Попробуйте позже или используйте /debug_progress для диагностики.'
+            'Попробуйте позже.'
         );
     }
 }
@@ -1476,54 +1429,49 @@ async function getAllUnlearnedWords(chatId) {
     }
 }
 
-// ✅ ФУНКЦИЯ: Получение НЕ ИЗУЧЕННЫХ слов
-async function getUnlearnedNewWords(chatId) {
-    if (!servicesInitialized || !sheetsService.initialized) {
-        return [];
-    }
+// ✅ ВОССТАНОВЛЕНО: Критически важная команда сброса прогресса
+bot.onText(/\/reset_progress/, async (msg) => {
+    const chatId = msg.chat.id;
     
+    if (!servicesInitialized || !sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        return;
+    }
+
     try {
-        const userWords = await getCachedUserWords(chatId);
-        const learnedToday = await getLearnedToday(chatId);
-        const DAILY_LIMIT = 5;
+        // Сбрасываем внутренние хранилища бота
+        dailyLearnedWords.delete(chatId);
+        learnedWords.delete(chatId);
+        userStates.delete(chatId);
         
-        optimizedLog(`🔍 Поиск новых слов для ${chatId}, изучено сегодня: ${learnedToday}/${DAILY_LIMIT}`);
-
-        const newWords = userWords.filter(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
+        // ✅ ВОССТАНОВЛЕНО: Сбрасываем прогресс в Google Sheets
+        const success = await sheetsService.resetUserProgress(chatId);
+        
+        if (success) {
+            optimizedLog(`🔄 Полный сброс прогресса для пользователя ${chatId}`);
             
-            try {
-                const isFirstInterval = word.interval === 1;
-                const isNotLearned = !isWordLearned(chatId, word.english);
-                
-                if (isFirstInterval && isNotLearned) {
-                    optimizedLog(`✅ Слово "${word.english}" - новое и не изучено`);
-                }
-                
-                return isFirstInterval && isNotLearned;
-            } catch (error) {
-                optimizedLog(`❌ Ошибка проверки слова "${word.english}"`);
-                return false;
-            }
-        });
-
-        optimizedLog(`📊 Найдено не изученных слов: ${newWords.length}`);
-
-        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
-
-        const remainingSlots = Math.max(0, DAILY_LIMIT - learnedToday);
-        const result = newWords.slice(0, remainingSlots);
-        
-        optimizedLog(`🎯 Будет показано: ${result.length} слов (осталось слотов: ${remainingSlots})`);
-        return result;
+            await bot.sendMessage(chatId, 
+                '✅ **Весь прогресс полностью сброшен!**\n\n' +
+                '• Все интервалы сброшены\n' +
+                '• Дневной лимит очищен\n' + 
+                '• История изучения удалена\n' +
+                '• Все слова теперь "новые"\n\n' +
+                '💡 Теперь вы можете начать изучение заново!'
+            );
+        } else {
+            await bot.sendMessage(chatId, '❌ Не удалось сбросить прогресс в базе данных.');
+        }
         
     } catch (error) {
-        optimizedLog('❌ Error getting unlearned new words:', error);
-        return [];
+        optimizedLog('❌ Error resetting progress:', error);
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при сбросе прогресса.\n' +
+            'Попробуйте еще раз.'
+        );
     }
-}
+});
 
-// Команды бота (сокращены для экономии места)
+// Команды бота
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     await initializeServices();
@@ -1706,7 +1654,11 @@ bot.on('callback_query', async (callbackQuery) => {
     await initializeServices();
     updateUserActivity(chatId);
 
+    const userState = userStates.get(chatId);
     await bot.answerCallbackQuery(callbackQuery.id);
+
+    optimizedLog('🔍 Callback data:', data);
+    optimizedLog('🔍 User state:', userState?.state);
 
     // Обработка различных callback_data...
     if (data === 'show_answer') {
@@ -1744,7 +1696,90 @@ bot.on('callback_query', async (callbackQuery) => {
             await showNextNewWord(chatId);
         }
     }
-    // ... остальные обработчики callback_data
+    else if (data === 'enter_translation') {
+    optimizedLog('🔍 Processing enter_translation callback');
+    
+    if (userState?.state === 'showing_transcription') {
+        try {
+            // Удаляем клавиатуру предыдущего сообщения
+            try {
+                await bot.editMessageReplyMarkup(
+                    { inline_keyboard: [] },
+                    { 
+                        chat_id: chatId, 
+                        message_id: callbackQuery.message.message_id 
+                    }
+                );
+            } catch (editError) {
+                optimizedLog('⚠️ Could not edit message markup, continuing...');
+            }
+
+            // ✅ ИСПРАВЛЕНИЕ: Проверяем есть ли переводы
+            const hasTranslations = userState.tempTranslations && 
+                                  userState.tempTranslations.length > 0;
+            
+            optimizedLog(`🔍 Translations available: ${hasTranslations}, count: ${userState.tempTranslations?.length}`);
+
+            if (hasTranslations) {
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'choosing_translation',
+                    selectedTranslationIndices: []
+                });
+
+                let translationMessage = '🎯 **Выберите переводы:**\n\n' +
+                    `🇬🇧 **${userState.tempWord}**`;
+                    
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+                
+                translationMessage += '\n\n💡 Нажмите на номер перевода чтобы выбрать его';
+
+                // Отправляем новое сообщение с выбором переводов
+                await bot.sendMessage(
+                    chatId, 
+                    translationMessage,
+                    getTranslationSelectionKeyboard(
+                        userState.tempTranslations, 
+                        userState.meanings, 
+                        []
+                    )
+                );
+                
+            } else {
+                // Если переводов нет, переходим к ручному вводу
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'waiting_custom_translation'
+                });
+
+                let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
+                    `🇬🇧 Слово: **${userState.tempWord}**`;
+                    
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+                
+                translationMessage += '\n\n📝 Введите ваш вариант перевода:';
+
+                await bot.sendMessage(chatId, translationMessage);
+            }
+            
+        } catch (error) {
+            optimizedLog('❌ Error in enter_translation:', error);
+            await bot.sendMessage(chatId, 
+                '❌ Ошибка при обработке запроса. Попробуйте еще раз.'
+            );
+        }
+    } else {
+        optimizedLog(`❌ Wrong state for enter_translation: ${userState?.state}`);
+        await bot.sendMessage(chatId, 
+            '❌ Неверное состояние. Начните добавление слова заново.'
+        );
+        userStates.delete(chatId);
+    }
+}
 });
 
 // Graceful shutdown
@@ -1775,5 +1810,4 @@ setTimeout(() => {
     startOptimizedNotifications();
 }, 5000);
 
-optimizedLog('🤖 Бот запущен: Версия с оптимизациями для Railways!');
-
+optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
