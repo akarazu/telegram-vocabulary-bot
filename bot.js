@@ -85,13 +85,30 @@ async function getLearnedToday(chatId) {
         today.setHours(0, 0, 0, 0);
         
         const learnedToday = userWords.filter(word => {
-            if (word.interval <= 1) return false;
+            if (word.interval <= 1) return false; // Только слова с интервалом >1
             
             try {
-                const lastReview = word.lastReview ? new Date(word.lastReview) : new Date(word.createdDate);
-                const reviewDate = new Date(lastReview.getFullYear(), lastReview.getMonth(), lastReview.getDate());
-                return reviewDate.getTime() === today.getTime();
+                // ✅ ПРИОРИТЕТ: используем lastReview если есть, иначе createdDate
+                let reviewDate;
+                if (word.lastReview) {
+                    reviewDate = new Date(word.lastReview);
+                } else {
+                    // Если lastReview нет, используем createdDate
+                    reviewDate = new Date(word.createdDate);
+                }
+                
+                // Приводим к началу дня для сравнения
+                const reviewDay = new Date(reviewDate.getFullYear(), reviewDate.getMonth(), reviewDate.getDate());
+                
+                const isLearnedToday = reviewDay.getTime() === today.getTime();
+                
+                if (isLearnedToday) {
+                    console.log(`✅ Слово "${word.english}" изучено сегодня: интервал=${word.interval}, дата изучения=${reviewDate}`);
+                }
+                
+                return isLearnedToday;
             } catch (error) {
+                console.error(`❌ Ошибка проверки слова "${word.english}":`, error);
                 return false;
             }
         }).length;
@@ -105,6 +122,51 @@ async function getLearnedToday(chatId) {
     }
 }
 
+// ✅ ДОБАВЛЯЕМ ФУНКЦИЮ: Подробная отладка статистики
+async function debugLearnedToday(chatId) {
+    try {
+        const userWords = await sheetsService.getUserWords(chatId);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        console.log(`🔍 ДЕТАЛЬНАЯ ОТЛАДКА СТАТИСТИКИ ДЛЯ ${chatId}:`);
+        
+        const learnedWordsDetails = userWords.filter(word => {
+            if (word.interval <= 1) return false;
+            
+            try {
+                let reviewDate;
+                if (word.lastReview) {
+                    reviewDate = new Date(word.lastReview);
+                } else {
+                    reviewDate = new Date(word.createdDate);
+                }
+                
+                const reviewDay = new Date(reviewDate.getFullYear(), reviewDate.getMonth(), reviewDate.getDate());
+                const isLearnedToday = reviewDay.getTime() === today.getTime();
+                
+                if (isLearnedToday) {
+                    console.log(`🎯 Слово "${word.english}":`);
+                    console.log(`   - Интервал: ${word.interval}`);
+                    console.log(`   - LastReview: ${word.lastReview}`);
+                    console.log(`   - CreatedDate: ${word.createdDate}`);
+                    console.log(`   - Дата изучения: ${reviewDate}`);
+                }
+                
+                return isLearnedToday;
+            } catch (error) {
+                return false;
+            }
+        });
+
+        console.log(`📊 ИТОГО изучено сегодня: ${learnedWordsDetails.length} слов`);
+        return learnedWordsDetails.length;
+        
+    } catch (error) {
+        console.error('❌ Error in debug:', error);
+        return 0;
+    }
+}
 
 // ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Отметка слова как изученного сегодня
 function markWordAsLearnedToday(chatId, englishWord) {
@@ -1075,30 +1137,32 @@ async function processNewWordLearning(chatId, action) {
     
     try {
         if (action === 'learned') {
-            // ✅ ОТМЕЧАЕМ СЛОВО КАК ИЗУЧЕННОЕ
-            markWordAsLearned(chatId, word.english);
-            
-            // ✅ ОБНОВЛЯЕМ В GOOGLE SHEETS С ДАТОЙ ИЗУЧЕНИЯ
+            // ✅ ОБНОВЛЯЕМ С ДАТОЙ ИЗУЧЕНИЯ = СЕГОДНЯ
             const newInterval = 2;
             const nextReview = new Date(Date.now() + newInterval * 24 * 60 * 60 * 1000);
+            const today = new Date(); // Текущая дата и время
+            
+            console.log(`💾 Сохранение слова "${word.english}" как изученного сегодня: ${today}`);
             
             const success = await sheetsService.updateWordReview(
                 chatId,
                 word.english,
                 newInterval,
-                nextReview
+                nextReview,
+                today // ✅ Явно передаем дату изучения = сегодня
             );
 
             if (success) {
                 userState.learnedCount++;
-                console.log(`📚 Слово "${word.english}" перешло в систему повторения`);
+                markWordAsLearned(chatId, word.english);
+                console.log(`📚 Слово "${word.english}" изучено сегодня: ${today}`);
                 
                 // ✅ УДАЛЯЕМ изученное слово из массива
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
-                // ✅ ОБНОВЛЯЕМ СЧЕТЧИК ИЗУЧЕННЫХ СЛОВ СЕГОДНЯ
+                // ✅ ПРОВЕРЯЕМ ЛИМИТ С АКТУАЛЬНЫМИ ДАННЫМИ ИЗ GOOGLE SHEETS
                 const currentLearnedToday = await getLearnedToday(chatId);
-                console.log(`📈 Обновленный счетчик изученных сегодня: ${currentLearnedToday}`);
+                console.log(`📈 После изучения "${word.english}": ${currentLearnedToday}/5 изучено сегодня`);
                 
                 // ✅ ПРОВЕРЯЕМ НЕ ДОСТИГНУТ ЛИ ЛИМИТ
                 if (currentLearnedToday >= 5) {
@@ -1110,30 +1174,48 @@ async function processNewWordLearning(chatId, action) {
                     await completeNewWordsSession(chatId, userState);
                     return;
                 }
+                
+                // ✅ ЕСЛИ СЛОВА ЗАКОНЧИЛИСЬ ПОСЛЕ УДАЛЕНИЯ - ЗАВЕРШАЕМ
+                if (userState.newWords.length === 0) {
+                    await completeNewWordsSession(chatId, userState);
+                    return;
+                }
+                
             } else {
                 console.error(`❌ Не удалось обновить интервал для слова "${word.english}"`);
+                await bot.sendMessage(chatId, '❌ Ошибка при сохранении прогресса слова.');
                 return;
             }
             
         } else if (action === 'repeat') {
             console.log(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
             userState.currentWordIndex++;
+            
         } else if (action === 'skip') {
             // Пропускаем слово - перемещаем в конец
             const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
             userState.newWords.push(skippedWord);
-            console.log(`⏭️ Слово "${skippedWord.english}" пропущено`);
+            console.log(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец списка`);
             
             // ✅ ОБНОВЛЯЕМ СЧЕТЧИК ПОСЛЕ ПРОПУСКА
             const currentLearnedToday = await getLearnedToday(chatId);
             console.log(`📊 После пропуска слова "${skippedWord.english}": изучено сегодня ${currentLearnedToday}`);
         }
         
-        // ✅ ПРОВЕРЯЕМ остались ли слова
-        if (userState.currentWordIndex >= userState.newWords.length) {
-            userState.currentWordIndex = 0;
+        // ✅ КОРРЕКТНО ОБРАБАТЫВАЕМ ИНДЕКС ПОСЛЕ ДЕЙСТВИЙ
+        if (action === 'learned') {
+            // После удаления слова индекс уже корректен - не увеличиваем
+            if (userState.currentWordIndex >= userState.newWords.length) {
+                userState.currentWordIndex = 0;
+            }
+        } else {
+            // Для repeat и skip - увеличиваем индекс или сбрасываем если нужно
+            if (userState.currentWordIndex >= userState.newWords.length) {
+                userState.currentWordIndex = 0;
+            }
         }
         
+        // ✅ ПОКАЗЫВАЕМ СЛЕДУЮЩЕЕ СЛОВО ЕСЛИ ОСТАЛИСЬ СЛОВА
         if (userState.newWords.length > 0) {
             await showNextNewWord(chatId);
         } else {
@@ -1142,7 +1224,10 @@ async function processNewWordLearning(chatId, action) {
 
     } catch (error) {
         console.error('❌ Error processing new word learning:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при сохранении прогресса.');
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при сохранении прогресса.\n' +
+            'Попробуйте еще раз или используйте /debug_stats для диагностики.'
+        );
     }
 }
 
@@ -1398,6 +1483,19 @@ bot.onText(/\/start/, async (msg) => {
         '2. 🆕 Изучить новые слова (5 в день)\n' +
         '3. 📚 Повторить изученные слова\n\n' +
         'Используйте меню для навигации:'
+    );
+});
+
+bot.onText(/\/debug_stats/, async (msg) => {
+    const chatId = msg.chat.id;
+    const detailedCount = await debugLearnedToday(chatId);
+    const normalCount = await getLearnedToday(chatId);
+    
+    await bot.sendMessage(chatId, 
+        `🔍 **Детальная отладка статистики:**\n\n` +
+        `📊 Обычный подсчет: ${normalCount}/5\n` +
+        `📊 Детальный подсчет: ${detailedCount}/5\n\n` +
+        `💡 Если цифры разные - есть проблема с датами в базе.`
     );
 });
 
@@ -2277,6 +2375,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
