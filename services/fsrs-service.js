@@ -1,42 +1,59 @@
 import pkg from 'ts-fsrs';
 const { fsrs, generatorParameters, createEmptyCard, Grade } = pkg;
 
-// ✅ РЕАЛЬНЫЙ FSRS Service с ts-fsrs
 export class FSRSService {
     constructor() {
         try {
-            // Параметры для быстрого обучения
             this.parameters = generatorParameters({
-                request_retention: 0.85, // Немного ниже для более частых повторений
+                request_retention: 0.85,
                 maximum_interval: 365,
                 enable_fuzz: true
             });
             
             this.scheduler = fsrs(this.parameters);
+            this.Grade = Grade; // ✅ Сохраняем Grade в свойство класса
             console.log('✅ REAL FSRS service initialized with ts-fsrs');
         } catch (error) {
             console.error('❌ Error initializing REAL FSRS:', error);
             this.scheduler = null;
+            this.Grade = null;
         }
     }
 
-    // Основной метод для повторения карточки с реальной адаптацией
+    // Конвертация наших рейтингов в FSRS Grade
+    convertRatingToGrade(rating) {
+        // ✅ ПРОСТАЯ И НАДЕЖНАЯ КОНВЕРТАЦИЯ
+        const ratingMap = {
+            'again': 1,
+            'review_again': 1,
+            'hard': 2,
+            'review_hard': 2,
+            'good': 3,
+            'review_good': 3,
+            'easy': 4,
+            'review_easy': 4
+        };
+        
+        const gradeValue = ratingMap[rating] || 3; // По умолчанию Good
+        
+        console.log(`🔧 Rating conversion: ${rating} -> ${gradeValue}`);
+        return gradeValue;
+    }
+
+    // Основной метод для повторения карточки
     reviewCard(cardData, rating) {
         if (!this.scheduler) {
+            console.log('🔄 Using fallback FSRS');
             return this.fallbackRepeat(cardData, rating);
         }
 
         try {
-            // Создаем карточку в формате ts-fsrs
             const card = this.createCardFromData(cardData);
-
-            // Конвертируем наш рейтинг в FSRS Grade
             const grade = this.convertRatingToGrade(rating);
             
-            // ✅ РЕАЛЬНАЯ АДАПТАЦИЯ: ts-fsrs рассчитывает оптимальный интервал
+            console.log(`🎯 FSRS review: rating=${rating}, grade=${grade}`);
+            
             const result = this.scheduler.repeat(card, new Date(), grade);
-
-            console.log(`🎯 FSRS адаптация: рейтинг=${rating}, интервал=${result.card.scheduled_days}д, стабильность=${result.card.stability.toFixed(2)}`);
 
             return {
                 due: result.card.due,
@@ -48,7 +65,7 @@ export class FSRSService {
                 lapses: result.card.lapses,
                 state: result.card.state,
                 last_review: new Date(),
-                interval: result.card.scheduled_days
+                interval: Math.max(1, Math.round(result.card.scheduled_days || 1))
             };
 
         } catch (error) {
@@ -57,7 +74,7 @@ export class FSRSService {
         }
     }
 
-    // Создание карточки из данных
+    // Остальные методы без изменений
     createCardFromData(cardData) {
         const card = createEmptyCard();
         
@@ -74,72 +91,20 @@ export class FSRSService {
         return card;
     }
 
-    // Конвертация наших рейтингов в FSRS Grade
-    convertRatingToGrade(rating) {
-        const ratingMap = {
-            'again': Grade.Again,
-            'review_again': Grade.Again,
-            'hard': Grade.Hard,
-            'review_hard': Grade.Hard,
-            'good': Grade.Good,
-            'review_good': Grade.Good,
-            'easy': Grade.Easy,
-            'review_easy': Grade.Easy
-        };
-        return ratingMap[rating] || Grade.Good;
-    }
-
-    // Метод для создания новой карточки
-    createNewCard() {
-        const now = new Date();
-        
-        if (this.scheduler) {
-            // Используем ts-fsrs для создания новой карточки
-            const card = createEmptyCard();
-            // Новая карточка становится доступной через короткий интервал
-            const result = this.scheduler.repeat(card, now, Grade.Good);
-            
-            return {
-                due: result.card.due,
-                stability: result.card.stability,
-                difficulty: result.card.difficulty,
-                elapsed_days: result.card.elapsed_days,
-                scheduled_days: result.card.scheduled_days,
-                reps: result.card.reps,
-                lapses: result.card.lapses,
-                state: result.card.state,
-                last_review: now,
-                interval: result.card.scheduled_days
-            };
-        } else {
-            // Fallback
-            return {
-                due: new Date(now.getTime() + 24 * 60 * 60 * 1000),
-                stability: 0.1,
-                difficulty: 5.0,
-                elapsed_days: 0,
-                scheduled_days: 1,
-                reps: 0,
-                lapses: 0,
-                state: 1,
-                last_review: now,
-                interval: 1
-            };
-        }
-    }
-
     // Fallback метод на случай ошибок
     fallbackRepeat(cardData, rating) {
         const now = new Date();
         let interval;
 
         switch (rating) {
-            case 'again': case 'review_again': interval = 0.014; break; // 20 мин
-            case 'hard': case 'review_hard': interval = 0.33; break;    // 8 часов
-            case 'good': case 'review_good': interval = 1; break;       // 1 день
-            case 'easy': case 'review_easy': interval = 3; break;       // 3 дня
+            case 'again': case 'review_again': interval = 0.1; break;   // 2.4 часа
+            case 'hard': case 'review_hard': interval = 1; break;       // 1 день
+            case 'good': case 'review_good': interval = 3; break;       // 3 дня
+            case 'easy': case 'review_easy': interval = 7; break;       // 7 дней
             default: interval = 1;
         }
+
+        console.log(`🔄 Fallback FSRS: ${rating} -> ${interval} days`);
 
         return {
             due: new Date(now.getTime() + interval * 24 * 60 * 60 * 1000),
@@ -153,5 +118,40 @@ export class FSRSService {
             last_review: now,
             interval: interval
         };
+    }
+
+    createNewCard() {
+        const now = new Date();
+        
+        if (this.scheduler) {
+            const card = createEmptyCard();
+            const result = this.scheduler.repeat(card, now, 3); // Grade.Good = 3
+            
+            return {
+                due: result.card.due,
+                stability: result.card.stability,
+                difficulty: result.card.difficulty,
+                elapsed_days: result.card.elapsed_days,
+                scheduled_days: result.card.scheduled_days,
+                reps: result.card.reps,
+                lapses: result.card.lapses,
+                state: result.card.state,
+                last_review: now,
+                interval: Math.max(1, Math.round(result.card.scheduled_days || 1))
+            };
+        } else {
+            return {
+                due: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+                stability: 0.1,
+                difficulty: 5.0,
+                elapsed_days: 0,
+                scheduled_days: 1,
+                reps: 0,
+                lapses: 0,
+                state: 1,
+                last_review: now,
+                interval: 1
+            };
+        }
     }
 }
