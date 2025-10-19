@@ -251,7 +251,7 @@ async getUserWords(userId) {
     }
 }
     
-// ✅ ДОБАВЛЯЕМ в GoogleSheetsService новую функцию:
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
 async getWordsForReview(userId) {
     if (!this.initialized) {
         return [];
@@ -260,20 +260,25 @@ async getWordsForReview(userId) {
     try {
         const userWords = await this.getUserWords(userId);
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         
-        console.log(`🔍 Поиск слов для повторения для пользователя ${userId}`);
+        console.log(`🔍 Поиск слов для повторения для пользователя ${userId}, текущее время: ${now.toISOString()}`);
 
-        // Фильтруем слова, готовые к повторению (исключая новые слова с интервалом 1)
+        // Фильтруем слова, готовые к повторению
         const wordsForReview = userWords.filter(word => {
             if (!word.nextReview || word.status !== 'active') return false;
             
             try {
                 const nextReviewDate = new Date(word.nextReview);
-                const reviewDate = new Date(nextReviewDate.getFullYear(), nextReviewDate.getMonth(), nextReviewDate.getDate());
                 
-                const isDue = reviewDate <= today;
+                // ✅ ИСПРАВЛЕНИЕ: Используем полное сравнение дат-времени
+                const isDue = nextReviewDate <= now;
                 const isNotNew = word.interval > 1; // Исключаем новые слова
+                
+                if (isDue && isNotNew) {
+                    console.log(`✅ Слово "${word.english}" готово к повторению: ${nextReviewDate.toISOString()}`);
+                } else if (isNotNew) {
+                    console.log(`⏰ Слово "${word.english}" еще не готово: ${nextReviewDate.toISOString()}`);
+                }
                 
                 return isDue && isNotNew;
             } catch (dateError) {
@@ -344,20 +349,20 @@ async getNewWordsForLearning(userId) {
     }
 }
 
-    // ✅ ФУНКЦИЯ: Проверка есть ли слова для повторения (для нотификаций)
-    async hasWordsForReview(userId) {
-        if (!this.initialized) {
-            return false;
-        }
-        
-        try {
-            const wordsForReview = await this.getWordsForReview(userId);
-            return wordsForReview.length > 0;
-        } catch (error) {
-            console.error('❌ Error checking words for review:', error.message);
-            return false;
-        }
+  // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
+async hasWordsForReview(userId) {
+    if (!this.initialized) {
+        return false;
     }
+    
+    try {
+        const wordsForReview = await this.getWordsForReview(userId);
+        return wordsForReview.length > 0;
+    } catch (error) {
+        console.error('❌ Error checking words for review:', error.message);
+        return false;
+    }
+}
 
     // ✅ ФУНКЦИЯ: Получение количества слов для повторения
     async getReviewWordsCount(userId) {
@@ -388,72 +393,18 @@ async getNewWordsCount(userId) {
         return 0;
     }
 }
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обновление карточки после повторения
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление карточки после повторения
 async updateCardAfterReview(userId, english, fsrsData, rating) {
     if (!this.initialized) {
         return false;
     }
     
     try {
-        // Находим текущую карточку чтобы получить текущее количество повторений
+        // Находим текущую карточку
         const userWords = await this.getUserWords(userId);
         const currentWord = userWords.find(w => w.english.toLowerCase() === english.toLowerCase());
-        const currentReps = currentWord ? (currentWord.reps || 0) : 0;
         
         // Находим строку для обновления
-        const response = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:I',
-        });
-        
-        const rows = response.data.values || [];
-        let rowIndex = -1;
-        
-        for (let i = 0; i < rows.length; i++) {
-            if (rows[i][0] === userId.toString() && 
-                rows[i][1].toLowerCase() === english.toLowerCase() && 
-                rows[i][8] === 'active') {
-                rowIndex = i + 1;
-                break;
-            }
-        }
-
-        if (rowIndex === -1) {
-            console.error('❌ Word not found for review update:', english);
-            return false;
-        }
-
-        // Обновляем интервал, дату следующего повторения и увеличиваем счетчик повторений
-        await this.sheets.spreadsheets.values.update({
-            spreadsheetId: this.spreadsheetId,
-            range: `Words!G${rowIndex}:I${rowIndex}`,
-            valueInputOption: 'RAW',
-            resource: {
-                values: [[
-                    fsrsData.card.interval || 1,
-                    fsrsData.card.due.toISOString(),
-                    'active'
-                    // reps будет обновлен в отдельном вызове
-                ]]
-            }
-        });
-
-        console.log(`✅ Updated review for word "${english}": ${rating}, reps: ${currentReps + 1}`);
-        return true;
-    } catch (error) {
-        console.error('❌ Error updating card after review:', error.message);
-        return false;
-    }
-}
-
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
-async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
-    if (!this.initialized) {
-        return false;
-    }
-    
-    try {
-        // Сначала находим строку для обновления
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
             range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
@@ -465,22 +416,22 @@ async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview 
         for (let i = 0; i < rows.length; i++) {
             if (rows[i][0] === userId.toString() && 
                 rows[i][1].toLowerCase() === english.toLowerCase() && 
-                (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) { // ✅ ОБНОВЛЕНО индекс статуса
+                (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
                 rowIndex = i + 1;
                 break;
             }
         }
 
         if (rowIndex === -1) {
-            console.error('❌ Word not found for update:', english);
+            console.error('❌ Word not found for review update:', english);
             return false;
         }
 
-        // ✅ ОБНОВЛЕНИЕ: Обновляем столбцы G (LastReview), H (NextReview) и I (Interval)
+        // ✅ ИСПРАВЛЕНИЕ: Обновляем LastReview, NextReview и Interval
         const updateData = [
-            lastReview ? lastReview.toISOString() : new Date().toISOString(), // ✅ СТОЛБЕЦ G - LastReview
-            nextReviewDate.toISOString(), // ✅ СТОЛБЕЦ H - NextReview
-            newInterval.toString()        // ✅ СТОЛБЕЦ I - Interval
+            new Date().toISOString(), // ✅ LastReview - текущее время
+            fsrsData.card.due.toISOString(), // ✅ NextReview - из FSRS
+            fsrsData.card.interval.toString() // ✅ Interval - из FSRS
         ];
 
         await this.sheets.spreadsheets.values.update({
@@ -492,11 +443,107 @@ async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview 
             }
         });
 
+        console.log(`✅ Updated review for word "${english}": rating=${rating}, interval=${fsrsData.card.interval}, next review=${fsrsData.card.due.toISOString()}`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error updating card after review:', error.message);
+        return false;
+    }
+}
+    
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
+async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
+    if (!this.initialized) {
+        return false;
+    }
+    
+    try {
+        // Сначала находим строку для обновления
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:J',
+        });
+        
+        const rows = response.data.values || [];
+        let rowIndex = -1;
+        
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i][0] === userId.toString() && 
+                rows[i][1].toLowerCase() === english.toLowerCase() && 
+                (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
+                rowIndex = i + 1;
+                break;
+            }
+        }
+
+        if (rowIndex === -1) {
+            console.error('❌ Word not found for update:', english);
+            return false;
+        }
+
+        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбцы с правильными данными
+        const updateData = [
+            lastReview ? lastReview.toISOString() : new Date().toISOString(), // LastReview
+            nextReviewDate.toISOString(), // NextReview
+            newInterval.toString()        // Interval
+        ];
+
+        await this.sheets.spreadsheets.values.update({
+            spreadsheetId: this.spreadsheetId,
+            range: `Words!G${rowIndex}:I${rowIndex}`,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [updateData]
+            }
+        });
+
         console.log(`✅ Updated review for word "${english}": interval ${newInterval} days, last review: ${updateData[0]}, next review: ${updateData[1]}`);
         return true;
     } catch (error) {
         console.error('❌ Error updating word review:', error.message);
         return false;
+    }
+}
+
+    // ✅ ДОБАВЛЕНА ФУНКЦИЯ: Получение информации о датах повторения (для отладки)
+async getReviewDatesInfo(userId) {
+    if (!this.initialized) {
+        return [];
+    }
+    
+    try {
+        const userWords = await this.getUserWords(userId);
+        const now = new Date();
+        
+        const datesInfo = userWords
+            .filter(word => word.interval > 1)
+            .map(word => {
+                try {
+                    const nextReview = new Date(word.nextReview);
+                    const timeDiff = nextReview - now;
+                    const hoursUntil = Math.floor(timeDiff / (1000 * 60 * 60));
+                    const daysUntil = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+                    
+                    return {
+                        word: word.english,
+                        nextReview: nextReview.toISOString(),
+                        interval: word.interval,
+                        isDue: nextReview <= now,
+                        hoursUntil: hoursUntil,
+                        daysUntil: daysUntil
+                    };
+                } catch (error) {
+                    return {
+                        word: word.english,
+                        error: 'Invalid date'
+                    };
+                }
+            });
+        
+        return datesInfo;
+    } catch (error) {
+        console.error('❌ Error getting review dates info:', error.message);
+        return [];
     }
 }
     
@@ -730,6 +777,7 @@ async resetUserProgress(userId) {
         }
     }
 }
+
 
 
 
