@@ -1035,54 +1035,82 @@ async migrateFirstLearnedDates(userId) {
     }
     
     try {
-        console.log(`🔄 Starting FirstLearnedDate migration for user ${userId}`);
+        console.log(`🔄 Starting detailed FirstLearnedDate migration for user ${userId}`);
+        
+        // Сначала проверим заголовки
+        const headersResponse = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A1:K1',
+        });
+        
+        const headers = headersResponse.data.values ? headersResponse.data.values[0] : [];
+        console.log('📋 Headers:', headers);
+        console.log('🔍 Looking for FirstLearnedDate at index 10 (column K)');
         
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
             range: 'Words!A:K',
         });
         
-        console.log(`📊 Total rows in sheet: ${response.data.values ? response.data.values.length : 0}`);
+        console.log(`📊 Total rows: ${response.data.values ? response.data.values.length : 0}`);
         
         const rows = response.data.values || [];
         const updates = [];
         let migratedCount = 0;
+        let userWordCount = 0;
         
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
             
-            if (!row || row.length < 11) { // ✅ ИЗМЕНИЛИ НА 11 (A-K)
-                console.log(`⏭️ Skipping row ${i}: insufficient columns (has ${row ? row.length : 0}, need 11)`);
+            if (!row) {
+                console.log(`⏭️ Row ${i}: empty row`);
                 continue;
             }
             
-            if (row[0] === userId.toString() && 
-                (row[9] === 'active' || !row[9] || row.length < 10)) {
+            console.log(`\n🔍 Row ${i}: UserID=${row[0]}, Word=${row[1]}, Columns=${row.length}`);
+            
+            // Проверяем принадлежит ли слово пользователю
+            if (row[0] === userId.toString()) {
+                userWordCount++;
+                
+                if (row.length < 11) {
+                    console.log(`⏭️ Insufficient columns: ${row.length}, need 11`);
+                    continue;
+                }
                 
                 const interval = parseInt(row[8]) || 1;
                 const lastReview = row[6] || '';
-                const currentFirstLearnedDate = row[10] || ''; // ✅ СТОЛБЕЦ K - индекс 10
+                const currentFirstLearnedDate = row[10] || '';
                 
-                console.log(`📝 Word "${row[1]}": interval=${interval}, lastReview=${lastReview}, currentFirstLearnedDate=${currentFirstLearnedDate}`);
+                console.log(`📝 Details: interval=${interval}, lastReview=${lastReview}, currentFirstLearnedDate="${currentFirstLearnedDate}"`);
                 
-                // ✅ ЗАПОЛНЯЕМ FirstLearnedDate ДЛЯ ИЗУЧЕННЫХ СЛОВ
-                if (interval > 1 && (!currentFirstLearnedDate || currentFirstLearnedDate === '') && lastReview) {
-                    console.log(`🔄 Migrating: ${row[1]}`);
+                // Условия для миграции
+                const isLearned = interval > 1;
+                const needsMigration = !currentFirstLearnedDate || currentFirstLearnedDate === '';
+                const hasLastReview = lastReview && lastReview.trim() !== '';
+                
+                console.log(`🎯 Conditions: isLearned=${isLearned}, needsMigration=${needsMigration}, hasLastReview=${hasLastReview}`);
+                
+                if (isLearned && needsMigration && hasLastReview) {
+                    console.log(`✅ WILL MIGRATE: ${row[1]} - setting FirstLearnedDate to: ${lastReview}`);
                     updates.push({
-                        range: `Words!K${i + 1}`, // ✅ СТОЛБЕЦ K
+                        range: `Words!K${i + 1}`,
                         values: [[lastReview]]
                     });
                     migratedCount++;
+                } else {
+                    console.log(`⏭️ SKIPPING: conditions not met`);
                 }
             }
         }
         
-        console.log(`📊 Migration summary: ${migratedCount} words to update`);
+        console.log(`\n📊 SUMMARY: User words: ${userWordCount}, To migrate: ${migratedCount}`);
         
         if (updates.length > 0) {
             console.log(`🔄 Executing ${updates.length} updates...`);
             
-            await this.sheets.spreadsheets.values.batchUpdate({
+            // Выполняем обновления
+            const result = await this.sheets.spreadsheets.values.batchUpdate({
                 spreadsheetId: this.spreadsheetId,
                 resource: {
                     valueInputOption: 'RAW',
@@ -1090,19 +1118,22 @@ async migrateFirstLearnedDates(userId) {
                 }
             });
             
+            console.log('✅ Batch update result:', result.status);
+            
             // Инвалидируем кеш
             this.cache.delete(`words_${userId}`);
             
-            console.log(`✅ FirstLearnedDate migration completed: ${migratedCount} words updated`);
+            console.log(`🎉 FirstLearnedDate migration COMPLETED: ${migratedCount} words updated`);
             return true;
         } else {
-            console.log('✅ No words need FirstLearnedDate migration');
+            console.log('ℹ️ No words need FirstLearnedDate migration');
             return true;
         }
         
     } catch (error) {
-        console.error('❌ Error migrating FirstLearnedDates:', error);
-        console.error('❌ Error details:', error.message);
+        console.error('❌ CRITICAL ERROR in migrateFirstLearnedDates:', error);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
         return false;
     }
 }
@@ -1112,6 +1143,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
