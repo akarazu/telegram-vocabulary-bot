@@ -4,8 +4,12 @@ export class GoogleSheetsService {
     constructor() {
         this.initialized = false;
         this.sheets = null;
-        // Используем правильное название переменной из Railway
         this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        
+        // Оптимизация: кеширование для частых запросов
+        this.cache = new Map();
+        this.CACHE_TTL = 2 * 60 * 1000; // 2 минуты
+        
         console.log('🔧 GoogleSheetsService - Spreadsheet ID:', this.spreadsheetId ? 'SET' : 'NOT SET');
         
         if (!this.spreadsheetId) {
@@ -24,7 +28,6 @@ export class GoogleSheetsService {
 
         try {
             console.log('🔄 Initializing Google Sheets service...');
-            // Используем переменные окружения вместо файла
             const auth = new google.auth.GoogleAuth({
                 credentials: this.getCredentialsFromEnv(),
                 scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -32,7 +35,6 @@ export class GoogleSheetsService {
 
             this.sheets = google.sheets({ version: 'v4', auth });
 
-            // Проверяем и создаем таблицу с новой структурой
             await this.initializeSheetStructure();
             this.initialized = true;
             console.log('✅ Google Sheets service initialized');
@@ -74,295 +76,331 @@ export class GoogleSheetsService {
         }
     }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Инициализация структуры таблицы с LastReview как столбцом G
-async initializeSheetStructure() {
-    try {
-        // Получаем информацию о листах
-        const spreadsheet = await this.sheets.spreadsheets.get({
-            spreadsheetId: this.spreadsheetId,
+    // Оптимизация: кеширование методов
+    async getCachedData(cacheKey, fetchFunction) {
+        const cached = this.cache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+            return cached.data;
+        }
+        
+        const data = await fetchFunction();
+        this.cache.set(cacheKey, {
+            data: data,
+            timestamp: Date.now()
         });
+        
+        return data;
+    }
 
-        const sheets = spreadsheet.data.sheets;
-        const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
-
-        if (!wordsSheet) {
-            // Создаем новый лист с заголовками
-            await this.sheets.spreadsheets.batchUpdate({
-                spreadsheetId: this.spreadsheetId,
-                resource: {
-                    requests: [
-                        {
-                            addSheet: {
-                                properties: {
-                                    title: 'Words'
-                                }
-                            }
-                        }
-                    ]
+    // Периодическая очистка кеша
+    startCacheCleanup() {
+        setInterval(() => {
+            const now = Date.now();
+            for (const [key, value] of this.cache.entries()) {
+                if (now - value.timestamp > this.CACHE_TTL) {
+                    this.cache.delete(key);
                 }
+            }
+        }, 5 * 60 * 1000); // Каждые 5 минут
+    }
+
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Инициализация структуры таблицы с LastReview как столбцом G
+    async initializeSheetStructure() {
+        try {
+            // Получаем информацию о листах
+            const spreadsheet = await this.sheets.spreadsheets.get({
+                spreadsheetId: this.spreadsheetId,
             });
 
-            // ✅ ОБНОВЛЕННЫЕ ЗАГОЛОВКИ: LastReview теперь столбец G
-            await this.sheets.spreadsheets.values.update({
+            const sheets = spreadsheet.data.sheets;
+            const wordsSheet = sheets.find(sheet => sheet.properties.title === 'Words');
+
+            if (!wordsSheet) {
+                // Создаем новый лист с заголовками
+                await this.sheets.spreadsheets.batchUpdate({
+                    spreadsheetId: this.spreadsheetId,
+                    resource: {
+                        requests: [
+                            {
+                                addSheet: {
+                                    properties: {
+                                        title: 'Words'
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                });
+
+                // ✅ ОБНОВЛЕННЫЕ ЗАГОЛОВКИ: LastReview теперь столбец G
+                await this.sheets.spreadsheets.values.update({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!A1:J1',
+                    valueInputOption: 'RAW',
+                    resource: {
+                        values: [[
+                            'UserID',
+                            'English',
+                            'Transcription',
+                            'AudioURL',
+                            'MeaningsJSON',
+                            'CreatedDate',
+                            'LastReview',    // ✅ СТОЛБЕЦ G - LastReview
+                            'NextReview',    // ✅ СТОЛБЕЦ H - NextReview
+                            'Interval',      // ✅ СТОЛБЕЦ I - Interval
+                            'Status'         // ✅ СТОЛБЕЦ J - Status
+                        ]]
+                    }
+                });
+                console.log('✅ Created new Words sheet with updated structure (LastReview as column G)');
+            } else {
+                console.log('✅ Words sheet already exists');
+            }
+        } catch (error) {
+            console.error('❌ Error initializing sheet structure:', error.message);
+        }
+    }
+    
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с новой структурой
+    async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
+        if (!this.initialized) {
+            console.log('❌ Google Sheets not initialized');
+            return false;
+        }
+
+        try {
+            const meaningsJSON = JSON.stringify(meanings);
+            const now = new Date();
+            const nextReview = new Date();
+            nextReview.setDate(nextReview.getDate() + 1);
+
+            const response = await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A1:J1', // ✅ ОБНОВЛЕНО: до столбца J
+                range: 'Words!A:J',
                 valueInputOption: 'RAW',
-                resource: {
+                requestBody: {
                     values: [[
-                        'UserID',
-                        'English',
-                        'Transcription',
-                        'AudioURL',
-                        'MeaningsJSON',
-                        'CreatedDate',
-                        'LastReview',    // ✅ СТОЛБЕЦ G - LastReview
-                        'NextReview',    // ✅ СТОЛБЕЦ H - NextReview
-                        'Interval',      // ✅ СТОЛБЕЦ I - Interval
-                        'Status'         // ✅ СТОЛБЕЦ J - Status
+                        userId.toString(),
+                        english.toLowerCase(),
+                        transcription || '',
+                        audioUrl || '',
+                        meaningsJSON,
+                        now.toISOString(),    // CreatedDate
+                        '',                   // ✅ LastReview - пусто для новых слов
+                        nextReview.toISOString(), // NextReview
+                        1,                    // начальный интервал
+                        'active'
                     ]]
                 }
             });
-            console.log('✅ Created new Words sheet with updated structure (LastReview as column G)');
-        } else {
-            console.log('✅ Words sheet already exists');
+
+            // Инвалидируем кеш для этого пользователя
+            this.cache.delete(`words_${userId}`);
+            console.log(`✅ Word "${english}" saved with new structure`);
+            return true;
+        } catch (error) {
+            console.error('❌ Error saving word:', error.message);
+            return false;
         }
-    } catch (error) {
-        console.error('❌ Error initializing sheet structure:', error.message);
-    }
-}
-    
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с новой структурой
-async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
-    if (!this.initialized) {
-        console.log('❌ Google Sheets not initialized');
-        return false;
     }
 
-    try {
-        const meaningsJSON = JSON.stringify(meanings);
-        const now = new Date();
-        const nextReview = new Date();
-        nextReview.setDate(nextReview.getDate() + 1);
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с новой структурой
+    async getUserWords(userId) {
+        if (!this.initialized) {
+            return [];
+        }
 
-        const response = await this.sheets.spreadsheets.values.append({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
-            valueInputOption: 'RAW',
-            requestBody: {
-                values: [[
-                    userId.toString(),
-                    english.toLowerCase(),
-                    transcription || '',
-                    audioUrl || '',
-                    meaningsJSON,
-                    now.toISOString(),    // CreatedDate
-                    '',                   // ✅ LastReview - пусто для новых слов
-                    nextReview.toISOString(), // NextReview
-                    1,                    // начальный интервал
-                    'active'
-                ]]
-            }
-        });
-
-        console.log(`✅ Word "${english}" saved with new structure`);
-        return true;
-    } catch (error) {
-        console.error('❌ Error saving word:', error.message);
-        return false;
-    }
-}
-
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с новой структурой
-async getUserWords(userId) {
-    if (!this.initialized) {
-        return [];
-    }
-
-    try {
-        const response = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
-        });
-
-        const rows = response.data.values || [];
-
-        // Пропускаем заголовок и фильтруем по UserID и статусу
-        const userWords = rows.slice(1).filter(row => 
-            row.length >= 6 && 
-            row[0] === userId.toString() && 
-            (row[9] === 'active' || !row[9] || row.length < 10) // ✅ ОБНОВЛЕНО индекс статуса
-        );
-
-        return userWords.map(row => {
-            // ✅ ОБНОВЛЕННОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
-            const userId = row[0] || '';
-            const english = row[1] || '';
-            const transcription = row[2] || '';
-            const audioUrl = row[3] || '';
-            const meaningsJSON = row[4] || '[]';
-            const createdDate = row[5] || new Date().toISOString();
-            const lastReview = row[6] || ''; // ✅ СТОЛБЕЦ G - LastReview
-            const nextReview = row[7] || new Date().toISOString(); // ✅ СТОЛБЕЦ H - NextReview
-            const interval = parseInt(row[8]) || 1; // ✅ СТОЛБЕЦ I - Interval
-            const status = row[9] || 'active'; // ✅ СТОЛБЕЦ J - Status
-
-            let meanings = [];
-            
+        const cacheKey = `words_${userId}`;
+        return this.getCachedData(cacheKey, async () => {
             try {
-                if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
-                    meanings = JSON.parse(meaningsJSON);
-                } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
-                    meanings = [JSON.parse(meaningsJSON)];
-                } else {
-                    console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
-                    meanings = [{
-                        translation: meaningsJSON || 'Неизвестный перевод',
-                        example: '',
-                        partOfSpeech: '',
-                        definition: ''
-                    }];
-                }
-            } catch (parseError) {
-                console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
-                meanings = [{
-                    translation: 'Перевод не загружен',
-                    example: '',
-                    partOfSpeech: '',
-                    definition: ''
-                }];
+                const response = await this.sheets.spreadsheets.values.get({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!A:J',
+                });
+
+                const rows = response.data.values || [];
+
+                // Пропускаем заголовок и фильтруем по UserID и статусу
+                const userWords = rows.slice(1).filter(row => 
+                    row.length >= 6 && 
+                    row[0] === userId.toString() && 
+                    (row[9] === 'active' || !row[9] || row.length < 10)
+                );
+
+                return userWords.map(row => {
+                    // ✅ ОБНОВЛЕННОЕ СООТВЕТСТВИЕ СТОЛБЦОВ:
+                    const userId = row[0] || '';
+                    const english = row[1] || '';
+                    const transcription = row[2] || '';
+                    const audioUrl = row[3] || '';
+                    const meaningsJSON = row[4] || '[]';
+                    const createdDate = row[5] || new Date().toISOString();
+                    const lastReview = row[6] || ''; // ✅ СТОЛБЕЦ G - LastReview
+                    const nextReview = row[7] || new Date().toISOString(); // ✅ СТОЛБЕЦ H - NextReview
+                    const interval = parseInt(row[8]) || 1; // ✅ СТОЛБЕЦ I - Interval
+                    const status = row[9] || 'active'; // ✅ СТОЛБЕЦ J - Status
+
+                    let meanings = [];
+                    
+                    try {
+                        if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
+                            meanings = JSON.parse(meaningsJSON);
+                        } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
+                            meanings = [JSON.parse(meaningsJSON)];
+                        } else {
+                            console.log(`⚠️ Invalid JSON for word "${english}", creating fallback:`, meaningsJSON.substring(0, 50));
+                            meanings = [{
+                                translation: meaningsJSON || 'Неизвестный перевод',
+                                example: '',
+                                partOfSpeech: '',
+                                definition: ''
+                            }];
+                        }
+                    } catch (parseError) {
+                        console.error(`❌ Error parsing meanings JSON for word "${english}":`, parseError.message);
+                        meanings = [{
+                            translation: 'Перевод не загружен',
+                            example: '',
+                            partOfSpeech: '',
+                            definition: ''
+                        }];
+                    }
+
+                    return {
+                        userId,
+                        english,
+                        transcription,
+                        audioUrl,
+                        meanings,
+                        createdDate,
+                        lastReview,
+                        nextReview,
+                        interval,
+                        status
+                    };
+                });
+            } catch (error) {
+                console.error('❌ Error reading words from Google Sheets:', error.message);
+                return [];
             }
-
-            return {
-                userId,
-                english,
-                transcription,
-                audioUrl,
-                meanings,
-                createdDate,
-                lastReview, // ✅ ДОБАВЛЕНО: LastReview
-                nextReview,
-                interval,
-                status
-            };
         });
-    } catch (error) {
-        console.error('❌ Error reading words from Google Sheets:', error.message);
-        return [];
-    }
-}
-    
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
-async getWordsForReview(userId) {
-    if (!this.initialized) {
-        return [];
     }
     
-    try {
-        const userWords = await this.getUserWords(userId);
-        const now = new Date();
+    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
+    async getWordsForReview(userId) {
+        if (!this.initialized) {
+            return [];
+        }
         
-        console.log(`🔍 Поиск слов для повторения для пользователя ${userId}, текущее время: ${now.toISOString()}`);
-
-        // Фильтруем слова, готовые к повторению
-        const wordsForReview = userWords.filter(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
-            
+        const cacheKey = `review_${userId}`;
+        return this.getCachedData(cacheKey, async () => {
             try {
-                const nextReviewDate = new Date(word.nextReview);
+                const userWords = await this.getUserWords(userId);
+                const now = new Date();
                 
-                // ✅ ИСПРАВЛЕНИЕ: Используем полное сравнение дат-времени
-                const isDue = nextReviewDate <= now;
-                const isNotNew = word.interval > 1; // Исключаем новые слова
+                console.log(`🔍 Поиск слов для повторения для пользователя ${userId}, текущее время: ${now.toISOString()}`);
+
+                // Фильтруем слова, готовые к повторению
+                const wordsForReview = userWords.filter(word => {
+                    if (!word.nextReview || word.status !== 'active') return false;
+                    
+                    try {
+                        const nextReviewDate = new Date(word.nextReview);
+                        
+                        // ✅ ИСПРАВЛЕНИЕ: Используем полное сравнение дат-времени
+                        const isDue = nextReviewDate <= now;
+                        const isNotNew = word.interval > 1; // Исключаем новые слова
+                        
+                        if (isDue && isNotNew) {
+                            console.log(`✅ Слово "${word.english}" готово к повторению: ${nextReviewDate.toISOString()}`);
+                        } else if (isNotNew) {
+                            console.log(`⏰ Слово "${word.english}" еще не готово: ${nextReviewDate.toISOString()}`);
+                        }
+                        
+                        return isDue && isNotNew;
+                    } catch (dateError) {
+                        console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
+                        return false;
+                    }
+                });
+
+                console.log(`📊 Найдено слов для повторения: ${wordsForReview.length}`);
                 
-                if (isDue && isNotNew) {
-                    console.log(`✅ Слово "${word.english}" готово к повторению: ${nextReviewDate.toISOString()}`);
-                } else if (isNotNew) {
-                    console.log(`⏰ Слово "${word.english}" еще не готово: ${nextReviewDate.toISOString()}`);
-                }
+                // Сортируем по дате следующего повторения
+                wordsForReview.sort((a, b) => new Date(a.nextReview) - new Date(b.nextReview));
+
+                return wordsForReview;
                 
-                return isDue && isNotNew;
-            } catch (dateError) {
-                console.error(`❌ Invalid date for word "${word.english}":`, word.nextReview);
-                return false;
+            } catch (error) {
+                console.error('❌ Error getting words for review:', error.message);
+                return [];
             }
         });
-
-        console.log(`📊 Найдено слов для повторения: ${wordsForReview.length}`);
-        
-        // Сортируем по дате следующего повторения
-        wordsForReview.sort((a, b) => new Date(a.nextReview) - new Date(b.nextReview));
-
-        return wordsForReview;
-        
-    } catch (error) {
-        console.error('❌ Error getting words for review:', error.message);
-        return [];
-    }
-}
-    
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Получение новых слов с проверкой повторений
-async getNewWordsForLearning(userId) {
-    if (!this.initialized) {
-        return [];
     }
     
-    try {
-        const userWords = await this.getUserWords(userId);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+    // ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Получение новых слов с проверкой повторений
+    async getNewWordsForLearning(userId) {
+        if (!this.initialized) {
+            return [];
+        }
         
-        console.log(`🔍 Поиск новых слов для пользователя ${userId}`);
-
-        // Фильтруем слова, которые созданы сегодня и имеют 0 повторений
-        const newWords = userWords.filter(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
+        try {
+            const userWords = await this.getUserWords(userId);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
             
-            try {
-                const createdDate = new Date(word.createdDate);
-                const isCreatedToday = createdDate >= today;
-                const hasZeroRepetitions = !word.reps || word.reps === 0;
+            console.log(`🔍 Поиск новых слов для пользователя ${userId}`);
+
+            // Фильтруем слова, которые созданы сегодня и имеют 0 повторений
+            const newWords = userWords.filter(word => {
+                if (!word.nextReview || word.status !== 'active') return false;
                 
-                const isNewWord = isCreatedToday && hasZeroRepetitions;
-                
-                if (isNewWord) {
-                    console.log(`✅ Слово "${word.english}" - НОВОЕ: создано сегодня, повторений: ${word.reps || 0}`);
+                try {
+                    const createdDate = new Date(word.createdDate);
+                    const isCreatedToday = createdDate >= today;
+                    const hasZeroRepetitions = !word.reps || word.reps === 0;
+                    
+                    const isNewWord = isCreatedToday && hasZeroRepetitions;
+                    
+                    if (isNewWord) {
+                        console.log(`✅ Слово "${word.english}" - НОВОЕ: создано сегодня, повторений: ${word.reps || 0}`);
+                    }
+                    
+                    return isNewWord;
+                } catch (dateError) {
+                    console.error(`❌ Invalid date for word "${word.english}"`);
+                    return false;
                 }
-                
-                return isNewWord;
-            } catch (dateError) {
-                console.error(`❌ Invalid date for word "${word.english}"`);
-                return false;
-            }
-        });
+            });
 
-        console.log(`📊 Найдено новых слов: ${newWords.length}`);
+            console.log(`📊 Найдено новых слов: ${newWords.length}`);
+            
+            // Сортируем по дате создания
+            newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+
+            // Лимит 5 новых слов в день
+            return newWords.slice(0, 5);
+            
+        } catch (error) {
+            console.error('❌ Error getting new words for learning:', error.message);
+            return [];
+        }
+    }
+
+    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
+    async hasWordsForReview(userId) {
+        if (!this.initialized) {
+            return false;
+        }
         
-        // Сортируем по дате создания
-        newWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
-
-        // Лимит 5 новых слов в день
-        return newWords.slice(0, 5);
-        
-    } catch (error) {
-        console.error('❌ Error getting new words for learning:', error.message);
-        return [];
+        try {
+            const wordsForReview = await this.getWordsForReview(userId);
+            return wordsForReview.length > 0;
+        } catch (error) {
+            console.error('❌ Error checking words for review:', error.message);
+            return false;
+        }
     }
-}
-
-  // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
-async hasWordsForReview(userId) {
-    if (!this.initialized) {
-        return false;
-    }
-    
-    try {
-        const wordsForReview = await this.getWordsForReview(userId);
-        return wordsForReview.length > 0;
-    } catch (error) {
-        console.error('❌ Error checking words for review:', error.message);
-        return false;
-    }
-}
 
     // ✅ ФУНКЦИЯ: Получение количества слов для повторения
     async getReviewWordsCount(userId) {
@@ -379,175 +417,253 @@ async hasWordsForReview(userId) {
         }
     }
 
-  // ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
-async getNewWordsCount(userId) {
-    if (!this.initialized) {
-        return 0;
-    }
-    
-    try {
-        const newWords = await this.getNewWordsForLearning(userId);
-        return newWords.length;
-    } catch (error) {
-        console.error('❌ Error getting new words count:', error.message);
-        return 0;
-    }
-}
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление карточки после повторения
-async updateCardAfterReview(userId, english, fsrsData, rating) {
-    if (!this.initialized) {
-        return false;
-    }
-    
-    try {
-        // Находим текущую карточку
-        const userWords = await this.getUserWords(userId);
-        const currentWord = userWords.find(w => w.english.toLowerCase() === english.toLowerCase());
-        
-        // Находим строку для обновления
-        const response = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:J', // ✅ ОБНОВЛЕНО: до столбца J
-        });
-        
-        const rows = response.data.values || [];
-        let rowIndex = -1;
-        
-        for (let i = 0; i < rows.length; i++) {
-            if (rows[i][0] === userId.toString() && 
-                rows[i][1].toLowerCase() === english.toLowerCase() && 
-                (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
-                rowIndex = i + 1;
-                break;
-            }
+    // ✅ ФУНКЦИЯ: Получение количества новых слов для изучения
+    async getNewWordsCount(userId) {
+        if (!this.initialized) {
+            return 0;
         }
+        
+        try {
+            const newWords = await this.getNewWordsForLearning(userId);
+            return newWords.length;
+        } catch (error) {
+            console.error('❌ Error getting new words count:', error.message);
+            return 0;
+        }
+    }
 
-        if (rowIndex === -1) {
-            console.error('❌ Word not found for review update:', english);
+    // ✅ НОВАЯ ФУНКЦИЯ: Массовое обновление слов (для батчинга)
+    async batchUpdateWords(chatId, wordUpdates) {
+        if (!this.initialized) {
             return false;
         }
-
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем LastReview, NextReview и Interval
-        const updateData = [
-            new Date().toISOString(), // ✅ LastReview - текущее время
-            fsrsData.card.due.toISOString(), // ✅ NextReview - из FSRS
-            fsrsData.card.interval.toString() // ✅ Interval - из FSRS
-        ];
-
-        await this.sheets.spreadsheets.values.update({
-            spreadsheetId: this.spreadsheetId,
-            range: `Words!G${rowIndex}:I${rowIndex}`, // ✅ G=LastReview, H=NextReview, I=Interval
-            valueInputOption: 'RAW',
-            resource: {
-                values: [updateData]
-            }
-        });
-
-        console.log(`✅ Updated review for word "${english}": rating=${rating}, interval=${fsrsData.card.interval}, next review=${fsrsData.card.due.toISOString()}`);
-        return true;
-    } catch (error) {
-        console.error('❌ Error updating card after review:', error.message);
-        return false;
-    }
-}
-    
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
-async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
-    if (!this.initialized) {
-        return false;
-    }
-    
-    try {
-        // Сначала находим строку для обновления
-        const response = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:J',
-        });
         
-        const rows = response.data.values || [];
-        let rowIndex = -1;
-        
-        for (let i = 0; i < rows.length; i++) {
-            if (rows[i][0] === userId.toString() && 
-                rows[i][1].toLowerCase() === english.toLowerCase() && 
-                (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
-                rowIndex = i + 1;
-                break;
-            }
-        }
+        try {
+            console.log(`🔄 Batch updating ${wordUpdates.length} words for user ${chatId}`);
+            
+            // Получаем все строки для поиска
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:J',
+            });
+            
+            const rows = response.data.values || [];
+            const updates = [];
+            
+            // Находим строки для обновления
+            for (const [english, data] of wordUpdates) {
+                let rowIndex = -1;
+                
+                for (let i = 0; i < rows.length; i++) {
+                    if (rows[i][0] === chatId.toString() && 
+                        rows[i][1].toLowerCase() === english.toLowerCase() && 
+                        (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
+                        rowIndex = i + 1;
+                        break;
+                    }
+                }
 
-        if (rowIndex === -1) {
-            console.error('❌ Word not found for update:', english);
+                if (rowIndex !== -1) {
+                    updates.push({
+                        range: `Words!G${rowIndex}:I${rowIndex}`,
+                        values: [[
+                            data.lastReview ? data.lastReview.toISOString() : new Date().toISOString(),
+                            data.nextReview.toISOString(),
+                            data.interval.toString()
+                        ]]
+                    });
+                }
+            }
+            
+            if (updates.length > 0) {
+                // Выполняем все обновления одним запросом
+                await this.sheets.spreadsheets.values.batchUpdate({
+                    spreadsheetId: this.spreadsheetId,
+                    resource: {
+                        valueInputOption: 'RAW',
+                        data: updates
+                    }
+                });
+                
+                // Инвалидируем кеш
+                this.cache.delete(`words_${chatId}`);
+                this.cache.delete(`review_${chatId}`);
+                
+                console.log(`✅ Batch update completed: ${updates.length} words updated`);
+                return true;
+            }
+            
+            return false;
+            
+        } catch (error) {
+            console.error('❌ Error in batch update:', error.message);
             return false;
         }
-
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбцы с правильными данными
-        const updateData = [
-            lastReview ? lastReview.toISOString() : new Date().toISOString(), // LastReview
-            nextReviewDate.toISOString(), // NextReview
-            newInterval.toString()        // Interval
-        ];
-
-        await this.sheets.spreadsheets.values.update({
-            spreadsheetId: this.spreadsheetId,
-            range: `Words!G${rowIndex}:I${rowIndex}`,
-            valueInputOption: 'RAW',
-            resource: {
-                values: [updateData]
-            }
-        });
-
-        console.log(`✅ Updated review for word "${english}": interval ${newInterval} days, last review: ${updateData[0]}, next review: ${updateData[1]}`);
-        return true;
-    } catch (error) {
-        console.error('❌ Error updating word review:', error.message);
-        return false;
     }
-}
 
-    // ✅ ДОБАВЛЕНА ФУНКЦИЯ: Получение информации о датах повторения (для отладки)
-async getReviewDatesInfo(userId) {
-    if (!this.initialized) {
-        return [];
-    }
-    
-    try {
-        const userWords = await this.getUserWords(userId);
-        const now = new Date();
+    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление карточки после повторения
+    async updateCardAfterReview(userId, english, fsrsData, rating) {
+        if (!this.initialized) {
+            return false;
+        }
         
-        const datesInfo = userWords
-            .filter(word => word.interval > 1)
-            .map(word => {
-                try {
-                    const nextReview = new Date(word.nextReview);
-                    const timeDiff = nextReview - now;
-                    const hoursUntil = Math.floor(timeDiff / (1000 * 60 * 60));
-                    const daysUntil = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-                    
-                    return {
-                        word: word.english,
-                        nextReview: nextReview.toISOString(),
-                        interval: word.interval,
-                        isDue: nextReview <= now,
-                        hoursUntil: hoursUntil,
-                        daysUntil: daysUntil
-                    };
-                } catch (error) {
-                    return {
-                        word: word.english,
-                        error: 'Invalid date'
-                    };
+        try {
+            // Находим текущую карточку
+            const userWords = await this.getUserWords(userId);
+            const currentWord = userWords.find(w => w.english.toLowerCase() === english.toLowerCase());
+            
+            // Находим строку для обновления
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:J',
+            });
+            
+            const rows = response.data.values || [];
+            let rowIndex = -1;
+            
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][0] === userId.toString() && 
+                    rows[i][1].toLowerCase() === english.toLowerCase() && 
+                    (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
+                    rowIndex = i + 1;
+                    break;
+                }
+            }
+
+            if (rowIndex === -1) {
+                console.error('❌ Word not found for review update:', english);
+                return false;
+            }
+
+            // ✅ ИСПРАВЛЕНИЕ: Обновляем LastReview, NextReview и Interval
+            const updateData = [
+                new Date().toISOString(), // ✅ LastReview - текущее время
+                fsrsData.card.due.toISOString(), // ✅ NextReview - из FSRS
+                fsrsData.card.interval.toString() // ✅ Interval - из FSRS
+            ];
+
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Words!G${rowIndex}:I${rowIndex}`, // ✅ G=LastReview, H=NextReview, I=Interval
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [updateData]
                 }
             });
-        
-        return datesInfo;
-    } catch (error) {
-        console.error('❌ Error getting review dates info:', error.message);
-        return [];
+
+            // Инвалидируем кеш
+            this.cache.delete(`words_${userId}`);
+            this.cache.delete(`review_${userId}`);
+
+            console.log(`✅ Updated review for word "${english}": rating=${rating}, interval=${fsrsData.card.interval}, next review=${fsrsData.card.due.toISOString()}`);
+            return true;
+        } catch (error) {
+            console.error('❌ Error updating card after review:', error.message);
+            return false;
+        }
     }
-}
     
-// ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
+    // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
+    async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
+        if (!this.initialized) {
+            return false;
+        }
+        
+        try {
+            // Сначала находим строку для обновления
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:J',
+            });
+            
+            const rows = response.data.values || [];
+            let rowIndex = -1;
+            
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][0] === userId.toString() && 
+                    rows[i][1].toLowerCase() === english.toLowerCase() && 
+                    (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
+                    rowIndex = i + 1;
+                    break;
+                }
+            }
+
+            if (rowIndex === -1) {
+                console.error('❌ Word not found for update:', english);
+                return false;
+            }
+
+            // ✅ ИСПРАВЛЕНИЕ: Обновляем столбцы с правильными данными
+            const updateData = [
+                lastReview ? lastReview.toISOString() : new Date().toISOString(), // LastReview
+                nextReviewDate.toISOString(), // NextReview
+                newInterval.toString()        // Interval
+            ];
+
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Words!G${rowIndex}:I${rowIndex}`,
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [updateData]
+                }
+            });
+
+            // Инвалидируем кеш
+            this.cache.delete(`words_${userId}`);
+            this.cache.delete(`review_${userId}`);
+
+            console.log(`✅ Updated review for word "${english}": interval ${newInterval} days, last review: ${updateData[0]}, next review: ${updateData[1]}`);
+            return true;
+        } catch (error) {
+            console.error('❌ Error updating word review:', error.message);
+            return false;
+        }
+    }
+
+    // ✅ ДОБАВЛЕНА ФУНКЦИЯ: Получение информации о датах повторения (для отладки)
+    async getReviewDatesInfo(userId) {
+        if (!this.initialized) {
+            return [];
+        }
+        
+        try {
+            const userWords = await this.getUserWords(userId);
+            const now = new Date();
+            
+            const datesInfo = userWords
+                .filter(word => word.interval > 1)
+                .map(word => {
+                    try {
+                        const nextReview = new Date(word.nextReview);
+                        const timeDiff = nextReview - now;
+                        const hoursUntil = Math.floor(timeDiff / (1000 * 60 * 60));
+                        const daysUntil = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+                        
+                        return {
+                            word: word.english,
+                            nextReview: nextReview.toISOString(),
+                            interval: word.interval,
+                            isDue: nextReview <= now,
+                            hoursUntil: hoursUntil,
+                            daysUntil: daysUntil
+                        };
+                    } catch (error) {
+                        return {
+                            word: word.english,
+                            error: 'Invalid date'
+                        };
+                    }
+                });
+            
+            return datesInfo;
+        } catch (error) {
+            console.error('❌ Error getting review dates info:', error.message);
+            return [];
+        }
+    }
+    
+    // ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
     async addMeaningToWord(userId, english, newMeaning) {
         if (!this.initialized) {
             return false;
@@ -570,7 +686,7 @@ async getReviewDatesInfo(userId) {
             // Находим строку для обновления
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:I',
+                range: 'Words!A:J',
             });
             
             const rows = response.data.values || [];
@@ -579,7 +695,7 @@ async getReviewDatesInfo(userId) {
             for (let i = 0; i < rows.length; i++) {
                 if (rows[i][0] === userId.toString() && 
                     rows[i][1].toLowerCase() === english.toLowerCase() && 
-                    (rows[i][8] === 'active' || !rows[i][8] || rows[i].length < 9)) {
+                    (rows[i][9] === 'active' || !rows[i][9] || rows[i].length < 10)) {
                     rowIndex = i + 1;
                     break;
                 }
@@ -599,6 +715,9 @@ async getReviewDatesInfo(userId) {
                     values: [[updatedMeaningsJSON]]
                 }
             });
+
+            // Инвалидируем кеш
+            this.cache.delete(`words_${userId}`);
 
             console.log(`✅ Added new meaning to word "${english}"`);
             return true;
@@ -665,7 +784,7 @@ async getReviewDatesInfo(userId) {
                     // Находим строку для обновления
                     const response = await this.sheets.spreadsheets.values.get({
                         spreadsheetId: this.spreadsheetId,
-                        range: 'Words!A:I',
+                        range: 'Words!A:J',
                     });
                     
                     const rows = response.data.values || [];
@@ -694,6 +813,9 @@ async getReviewDatesInfo(userId) {
                 }
             }
             
+            // Инвалидируем кеш
+            this.cache.delete(`words_${userId}`);
+            
             console.log(`✅ Migration completed: ${migratedCount} words migrated`);
             return true;
         } catch (error) {
@@ -702,49 +824,61 @@ async getReviewDatesInfo(userId) {
         }
     }
 
-    // ✅ ДОБАВИМ В GoogleSheetsService функцию для массового сброса прогресса
-async resetUserProgress(userId) {
-    if (!this.initialized) {
-        return false;
-    }
-    
-    try {
-        const response = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:I',
-        });
+    // ✅ ДОБАВИМ ФУНКЦИЮ для массового сброса прогресса
+    async resetUserProgress(userId) {
+        if (!this.initialized) {
+            return false;
+        }
         
-        const rows = response.data.values || [];
-        let resetCount = 0;
-        
-        for (let i = 1; i < rows.length; i++) {
-            const row = rows[i];
-            if (row.length >= 9 && row[0] === userId.toString() && row[8] === 'active') {
-                // Обновляем интервал и дату следующего повторения
-                const nextReview = new Date().toISOString();
-                const interval = 1;
-                
-                await this.sheets.spreadsheets.values.update({
-                    spreadsheetId: this.spreadsheetId,
-                    range: `Words!G${i + 1}:H${i + 1}`,
-                    valueInputOption: 'RAW',
-                    resource: {
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:J',
+            });
+            
+            const rows = response.data.values || [];
+            let resetCount = 0;
+            const updates = [];
+            
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.length >= 9 && row[0] === userId.toString() && row[9] === 'active') {
+                    // Обновляем интервал и дату следующего повторения
+                    const nextReview = new Date().toISOString();
+                    const interval = 1;
+                    
+                    updates.push({
+                        range: `Words!G${i + 1}:I${i + 1}`,
                         values: [[nextReview, interval]]
+                    });
+                    
+                    resetCount++;
+                }
+            }
+            
+            if (updates.length > 0) {
+                // Выполняем все обновления одним запросом
+                await this.sheets.spreadsheets.values.batchUpdate({
+                    spreadsheetId: this.spreadsheetId,
+                    resource: {
+                        valueInputOption: 'RAW',
+                        data: updates
                     }
                 });
                 
-                resetCount++;
+                // Инвалидируем кеш
+                this.cache.delete(`words_${userId}`);
+                this.cache.delete(`review_${userId}`);
             }
+            
+            console.log(`✅ Reset progress for user ${userId}: ${resetCount} words`);
+            return true;
+            
+        } catch (error) {
+            console.error('❌ Error resetting user progress:', error.message);
+            return false;
         }
-        
-        console.log(`✅ Reset progress for user ${userId}: ${resetCount} words`);
-        return true;
-        
-    } catch (error) {
-        console.error('❌ Error resetting user progress:', error.message);
-        return false;
     }
-}
 
     // ✅ НОВАЯ ФУНКЦИЯ: Получение всех активных пользователей (для нотификаций)
     async getAllActiveUsers() {
@@ -752,40 +886,143 @@ async resetUserProgress(userId) {
             return [];
         }
 
+        const cacheKey = 'all_active_users';
+        return this.getCachedData(cacheKey, async () => {
+            try {
+                const response = await this.sheets.spreadsheets.values.get({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!A:J',
+                });
+
+                const rows = response.data.values || [];
+                
+                // Получаем уникальные ID пользователей
+                const userSet = new Set();
+                
+                for (let i = 1; i < rows.length; i++) {
+                    const row = rows[i];
+                    if (row.length > 0 && row[0] && (row[9] === 'active' || !row[9] || row.length < 10)) {
+                        userSet.add(row[0]);
+                    }
+                }
+                
+                return Array.from(userSet);
+            } catch (error) {
+                console.error('❌ Error getting all active users:', error.message);
+                return [];
+            }
+        });
+    }
+
+    // ✅ НОВАЯ ФУНКЦИЯ: Получение данных для нескольких пользователей (для батчинга нотификаций)
+    async getMultipleUsersWords(userIds) {
+        if (!this.initialized) {
+            return new Map();
+        }
+
         try {
+            // Оптимизированная загрузка данных для нескольких пользователей
+            const userWordsMap = new Map();
+            
+            // Загружаем все данные одним запросом
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:I',
+                range: 'Words!A:J',
             });
 
             const rows = response.data.values || [];
             
-            // Получаем уникальные ID пользователей
-            const userSet = new Set();
+            // Создаем Set для быстрого поиска
+            const userIdSet = new Set(userIds.map(id => id.toString()));
             
+            // Фильтруем и группируем данные
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (row.length > 0 && row[0]) {
-                    userSet.add(row[0]);
+                if (row.length >= 6 && userIdSet.has(row[0]) && (row[9] === 'active' || !row[9] || row.length < 10)) {
+                    const userId = row[0];
+                    
+                    if (!userWordsMap.has(userId)) {
+                        userWordsMap.set(userId, []);
+                    }
+                    
+                    const word = this.parseRowToWord(row);
+                    userWordsMap.get(userId).push(word);
                 }
             }
             
-            return Array.from(userSet);
+            console.log(`✅ Loaded data for ${userWordsMap.size} users`);
+            return userWordsMap;
+            
         } catch (error) {
-            console.error('❌ Error getting all active users:', error.message);
-            return [];
+            console.error('❌ Error getting multiple users words:', error.message);
+            return new Map();
         }
+    }
+
+    // Вспомогательная функция для парсинга строки
+    parseRowToWord(row) {
+        const userId = row[0] || '';
+        const english = row[1] || '';
+        const transcription = row[2] || '';
+        const audioUrl = row[3] || '';
+        const meaningsJSON = row[4] || '[]';
+        const createdDate = row[5] || new Date().toISOString();
+        const lastReview = row[6] || '';
+        const nextReview = row[7] || new Date().toISOString();
+        const interval = parseInt(row[8]) || 1;
+        const status = row[9] || 'active';
+
+        let meanings = [];
+        
+        try {
+            if (meaningsJSON && meaningsJSON.trim().startsWith('[')) {
+                meanings = JSON.parse(meaningsJSON);
+            } else if (meaningsJSON && meaningsJSON.trim().startsWith('{')) {
+                meanings = [JSON.parse(meaningsJSON)];
+            }
+        } catch (parseError) {
+            meanings = [{
+                translation: 'Перевод не загружен',
+                example: '',
+                partOfSpeech: '',
+                definition: ''
+            }];
+        }
+
+        return {
+            userId,
+            english,
+            transcription,
+            audioUrl,
+            meanings,
+            createdDate,
+            lastReview,
+            nextReview,
+            interval,
+            status
+        };
+    }
+
+    // Запускаем очистку кеша при инициализации
+    startCacheCleanup() {
+        setInterval(() => {
+            const now = Date.now();
+            let cleanedCount = 0;
+            
+            for (const [key, value] of this.cache.entries()) {
+                if (now - value.timestamp > this.CACHE_TTL) {
+                    this.cache.delete(key);
+                    cleanedCount++;
+                }
+            }
+            
+            if (cleanedCount > 0) {
+                console.log(`🧹 Cache cleanup: removed ${cleanedCount} expired entries`);
+            }
+        }, 5 * 60 * 1000); // Каждые 5 минут
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
+// Запускаем сервис при импорте
+const sheetsService = new GoogleSheetsService();
+sheetsService.startCacheCleanup();
