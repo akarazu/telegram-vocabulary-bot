@@ -327,16 +327,33 @@ setInterval(() => {
 async function getLearnedToday(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
-        const today = new Date().toDateString();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
         
-        // ✅ ПРОСТО СЧИТАЕМ СЛОВА С lastReview СЕГОДНЯ
         const learnedToday = userWords.filter(word => {
-            if (word.status !== 'active' || !word.lastReview) return false;
+            // ✅ ПРОСТАЯ ПРОВЕРКА: слово активно и изучено сегодня
+            if (word.status !== 'active') return false;
             
             try {
-                const lastReviewDate = new Date(word.lastReview);
-                return lastReviewDate.toDateString() === today;
+                // ✅ ИСПОЛЬЗУЕМ lastReview ЕСЛИ ОН ЕСТЬ
+                if (word.lastReview && word.lastReview.trim() !== '') {
+                    const lastReviewDate = new Date(word.lastReview);
+                    const lastReviewDay = new Date(lastReviewDate.getFullYear(), lastReviewDate.getMonth(), lastReviewDate.getDate());
+                    return lastReviewDay.getTime() === today.getTime();
+                }
+                
+                // ✅ ДЛЯ НОВЫХ СЛОВ: считаем изученными если интервал стал >1 сегодня
+                if (word.interval > 1) {
+                    // Предполагаем что слово было изучено при создании
+                    const createdDate = word.createdDate ? new Date(word.createdDate) : new Date();
+                    const createdDay = new Date(createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate());
+                    return createdDay.getTime() === today.getTime();
+                }
+                
+                return false;
+                
             } catch (error) {
+                optimizedLog(`❌ Ошибка проверки слова "${word.english}":`, error);
                 return false;
             }
         }).length;
@@ -2424,6 +2441,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
