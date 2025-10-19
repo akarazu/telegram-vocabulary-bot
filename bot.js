@@ -1441,6 +1441,41 @@ bot.onText(/\/start/, async (msg) => {
     );
 });
 
+// ✅ КОМАНДА: Проверка дат повторения
+bot.onText(/\/debug_dates/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    try {
+        const datesInfo = await sheetsService.getReviewDatesInfo(chatId);
+        const now = new Date();
+        
+        let message = '📅 **Информация о датах повторения:**\n\n';
+        message += `Текущее время: ${now.toISOString()}\n\n`;
+        
+        if (datesInfo.length === 0) {
+            message += 'Нет слов для повторения';
+        } else {
+            datesInfo.forEach(info => {
+                if (info.error) {
+                    message += `❌ **${info.word}** - ошибка даты\n`;
+                } else {
+                    message += `**${info.word}**\n`;
+                    message += `• Следующее повторение: ${info.nextReview}\n`;
+                    message += `• Интервал: ${info.interval}д\n`;
+                    message += `• Через: ${info.daysUntil}д ${info.hoursUntil % 24}ч\n`;
+                    message += `• Готово: ${info.isDue ? '✅ ДА' : '❌ НЕТ'}\n\n`;
+                }
+            });
+        }
+        
+        await bot.sendMessage(chatId, message);
+        
+    } catch (error) {
+        console.error('Error in debug_dates:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при проверке дат.');
+    }
+});
+
 // ✅ КОМАНДА: Миграция существующих данных под новую структуру
 bot.onText(/\/migrate_structure/, async (msg) => {
     const chatId = msg.chat.id;
@@ -2440,6 +2475,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
