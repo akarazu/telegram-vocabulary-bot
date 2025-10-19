@@ -608,7 +608,7 @@ async function processCustomTranslationWithExample(chatId, userState, example) {
     await showMainMenu(chatId);
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
+// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
 async function hasWordsForReview(userId) {
     if (!sheetsService.initialized) {
         return false;
@@ -617,18 +617,16 @@ async function hasWordsForReview(userId) {
     try {
         const userWords = await sheetsService.getUserWords(userId);
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         
-        // ✅ ИСПРАВЛЕНИЕ: Включаем ВСЕ слова, готовые к повторению
+        // ✅ ИСПРАВЛЕНИЕ: Используем полную дату-время, а не только дату
         const hasReviewWords = userWords.some(word => {
             if (!word.nextReview || word.status !== 'active') return false;
             
             try {
                 const nextReviewDate = new Date(word.nextReview);
-                const reviewDate = new Date(nextReviewDate.getFullYear(), nextReviewDate.getMonth(), nextReviewDate.getDate());
                 
-                // Слово готово к повторению если его дата наступила
-                return reviewDate <= today;
+                // ✅ Слово готово к повторению если его время наступило
+                return nextReviewDate <= now;
             } catch (error) {
                 console.error(`❌ Error checking word "${word.english}"`);
                 return false;
@@ -2442,6 +2440,7 @@ setTimeout(() => {
 }, 5000);
 
 console.log('🤖 Бот запущен: Версия с обновленной логикой изучения слов!');
+
 
 
 
