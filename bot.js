@@ -33,37 +33,41 @@ function optimizedLog(message, data = null) {
     }
 }
 
-// ✅ ВОССТАНОВЛЕНО: Функция показа деталей перевода
+// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показа деталей перевода
 async function showTranslationDetails(chatId, translationIndex, userState) {
     try {
         const translation = userState.tempTranslations[translationIndex];
-        const meaning = userState.meanings.find(m => m.translation === translation);
+        
+        // Ищем соответствующий перевод в meanings
+        const meaning = userState.meanings.find(m => 
+            m.translation && m.translation.trim() === translation.trim()
+        );
 
         if (meaning) {
             let detailsMessage = `🔍 **Подробности перевода:**\n\n`;
             detailsMessage += `🇬🇧 **Слово:** ${userState.tempWord}\n`;
             detailsMessage += `🇷🇺 **Перевод:** ${translation}\n\n`;
 
-            if (meaning.englishDefinition) {
+            if (meaning.partOfSpeech && meaning.partOfSpeech.trim() !== '') {
+                detailsMessage += `🔤 **Часть речи:** ${meaning.partOfSpeech}\n\n`;
+            }
+
+            if (meaning.englishDefinition && meaning.englishDefinition.trim() !== '') {
                 detailsMessage += `📖 **Английское определение:**\n${meaning.englishDefinition}\n\n`;
             }
 
             if (meaning.examples && meaning.examples.length > 0) {
                 detailsMessage += `📝 **Примеры использования:**\n`;
                 meaning.examples.forEach((example, index) => {
-                    if (index < 3) {
+                    if (index < 3) { // Показываем максимум 3 примера
                         detailsMessage += `\n${index + 1}. ${example.english}`;
-                        if (example.russian) {
+                        if (example.russian && example.russian.trim() !== '') {
                             detailsMessage += `\n   ${example.russian}`;
                         }
                     }
                 });
             } else {
                 detailsMessage += `📝 **Примеры:** не найдены\n`;
-            }
-
-            if (meaning.partOfSpeech) {
-                detailsMessage += `\n🔤 **Часть речи:** ${meaning.partOfSpeech}`;
             }
 
             await bot.sendMessage(chatId, detailsMessage, {
@@ -76,7 +80,7 @@ async function showTranslationDetails(chatId, translationIndex, userState) {
         } else {
             await bot.sendMessage(chatId, 
                 `❌ Информация о переводе не найдена\n\n` +
-                `Перевод: ${translation}\n` +
+                `Перевод: "${translation}"\n` +
                 `Попробуйте выбрать другой перевод.`
             );
         }
@@ -403,7 +407,7 @@ function getExampleInputKeyboard() {
 // Клавиатура для выбора переводов с кнопкой "Подробнее" для всех переводов
 function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
     if (!translations || translations.length === 0) {
-        console.log('❌ No translations provided to keyboard function');
+        optimizedLog('❌ No translations provided to keyboard function');
         return {
             reply_markup: {
                 inline_keyboard: [
@@ -430,13 +434,27 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
             }
         ];
         
-        // Добавляем кнопку "Подробнее" только если есть детали
-        const hasDetails = meanings && meanings[index] && 
-                          (meanings[index].englishDefinition || meanings[index].examples?.length > 0);
+        // ✅ ИСПРАВЛЕНО: Правильное определение наличия деталей
+        // Ищем соответствующий перевод в meanings
+        const meaningForTranslation = meanings?.find(m => 
+            m.translation && m.translation.trim() === translation.trim()
+        );
+        
+        const hasDetails = meaningForTranslation && (
+            (meaningForTranslation.englishDefinition && meaningForTranslation.englishDefinition.trim() !== '') ||
+            (meaningForTranslation.examples && meaningForTranslation.examples.length > 0) ||
+            (meaningForTranslation.partOfSpeech && meaningForTranslation.partOfSpeech.trim() !== '')
+        );
+        
+        optimizedLog(`🔍 Translation "${translation}" has details: ${hasDetails}`, {
+            definition: meaningForTranslation?.englishDefinition,
+            examples: meaningForTranslation?.examples?.length,
+            partOfSpeech: meaningForTranslation?.partOfSpeech
+        });
         
         if (hasDetails) {
             row.push({ 
-                text: '🔍', 
+                text: '🔍 Подробнее',  // ✅ Добавляем текст "Подробнее"
                 callback_data: `details_${index}` 
             });
         }
@@ -2141,5 +2159,6 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
