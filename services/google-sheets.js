@@ -289,15 +289,19 @@ export class GoogleSheetsService {
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
 async getWordsForReview(chatId) {
     const userWords = await this.getUserWords(chatId);
-    const now = new Date();
     
     return userWords.filter(word => {
         if (!word.nextReview || word.status !== 'active') return false;
         
         try {
             const nextReview = new Date(word.nextReview);
-            // ✅ ИСПРАВЛЕНИЕ: Используем функцию с учетом часового пояса
-            return isReviewDue(word.nextReview);
+            const now = new Date();
+            
+            // ✅ ПРОСТОЕ ИСПРАВЛЕНИЕ: +3 часа для московского времени
+            const timezoneOffset = 3 * 60 * 60 * 1000;
+            const adjustedNow = new Date(now.getTime() + timezoneOffset);
+            
+            return nextReview <= adjustedNow;
         } catch (error) {
             console.error('Error checking review date:', error);
             return false;
@@ -993,4 +997,5 @@ async getWordsForReview(chatId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
