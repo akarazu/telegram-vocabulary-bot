@@ -1575,6 +1575,56 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
         
+        // ✅ ВОССТАНОВЛЕНО: Расписание повторений
+        const now = new Date();
+        const futureWords = activeWords.filter(word => {
+            if (!word.nextReview || word.interval === 1) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                return nextReview > now;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        // Группируем слова по дате повторения
+        const schedule = {};
+        futureWords.forEach(word => {
+            try {
+                const reviewDate = new Date(word.nextReview);
+                const dateKey = reviewDate.toISOString().slice(0, 16); // Группируем по дате и часу
+                
+                if (!schedule[dateKey]) {
+                    schedule[dateKey] = [];
+                }
+                schedule[dateKey].push(word);
+            } catch (e) {
+                // Пропускаем слова с некорректной датой
+            }
+        });
+        
+        // Сортируем даты и выбираем ближайшие
+        const sortedDates = Object.keys(schedule).sort();
+        const nearestDates = sortedDates.slice(0, 5); // Ближайшие 5 дат
+        
+        if (nearestDates.length > 0) {
+            const nearestDate = nearestDates[0];
+            const nearestReview = new Date(nearestDate);
+            
+            message += `\n⏰ **Ближайшее повторение:** ${formatConcreteDate(nearestReview)}\n\n`;
+            message += `📅 **Расписание повторений:**\n`;
+            
+            nearestDates.forEach(dateKey => {
+                const reviewDate = new Date(dateKey);
+                const wordCount = schedule[dateKey].length;
+                message += `• ${formatConcreteDate(reviewDate)}: ${wordCount} слов\n`;
+            });
+        } else if (reviewWordsCount > 0) {
+            message += `\n⏰ **Ближайшее повторение:** готово сейчас!\n`;
+        } else {
+            message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
+        }
+        
         // Дополнительная информация о новых словах
         if (newWordsCount > 0) {
             const wordsWithoutFirstLearned = unlearnedWords.filter(word => !word.firstLearnedDate || word.firstLearnedDate.trim() === '');
@@ -1584,8 +1634,6 @@ async function showUserStats(chatId) {
             message += `• С интервалом=1: ${wordsWithInterval1.length}\n`;
             message += `• Без FirstLearnedDate: ${wordsWithoutFirstLearned.length}\n`;
         }
-        
-        // ... остальная часть функции (расписание повторений и т.д.)
         
         await bot.sendMessage(chatId, message, getMainMenu());
         
@@ -2470,6 +2518,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
