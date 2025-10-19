@@ -1784,16 +1784,52 @@ bot.onText(/\/migrate_first_learned/, async (msg) => {
     const chatId = msg.chat.id;
     
     try {
-        await sheetsService.migrateFirstLearnedDates(chatId);
-        await bot.sendMessage(chatId, 
-            '✅ Миграция FirstLearnedDate завершена!\n\n' +
-            '💡 Теперь счетчик изученных слов сегодня будет работать правильно.'
-        );
+        await bot.sendMessage(chatId, '🔄 Начинаю миграцию FirstLearnedDate...\n\nПроверяю структуру таблицы...');
+        
+        // Сначала проверим, есть ли столбец FirstLearnedDate
+        const userWords = await getCachedUserWords(chatId);
+        const hasFirstLearnedColumn = userWords.some(word => word.hasOwnProperty('firstLearnedDate'));
+        
+        if (!hasFirstLearnedColumn) {
+            await bot.sendMessage(chatId, 
+                '❌ Столбец FirstLearnedDate не найден в данных!\n\n' +
+                '💡 Сначала обновите структуру таблицы в Google Sheets:\n' +
+                '1. Откройте таблицу\n' +
+                '2. Добавьте столбец K с заголовком "FirstLearnedDate"\n' +
+                '3. Запустите команду снова'
+            );
+            return;
+        }
+        
+        await bot.sendMessage(chatId, '✅ Столбец найден. Начинаю миграцию данных...');
+        
+        const success = await sheetsService.migrateFirstLearnedDates(chatId);
+        
+        if (success) {
+            // Обновляем кеш
+            const cacheKey = `words_${chatId}`;
+            cache.delete(cacheKey);
+            
+            await bot.sendMessage(chatId, 
+                '✅ Миграция FirstLearnedDate завершена!\n\n' +
+                '💡 Теперь счетчик изученных слов сегодня будет работать правильно.\n\n' +
+                '📊 Проверьте результат: /check_first_learned\n' +
+                '📈 Посмотрите статистику: /stats'
+            );
+        } else {
+            await bot.sendMessage(chatId, 
+                '❌ Ошибка при миграции данных.\n\n' +
+                '💡 Проверьте логи бота для подробной информации.'
+            );
+        }
     } catch (error) {
-        await bot.sendMessage(chatId, '❌ Ошибка при миграции данных.');
+        optimizedLog('❌ Migration command error:', error);
+        await bot.sendMessage(chatId, 
+            `❌ Критическая ошибка при миграции:\n${error.message}\n\n` +
+            '💡 Проверьте логи для подробной диагностики.'
+        );
     }
 });
-
 // ✅ ДОБАВЛЯЕМ КОМАНДУ: Диагностика статуса слов
 bot.onText(/\/debug_stats/, async (msg) => {
     const chatId = msg.chat.id;
@@ -2460,6 +2496,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
