@@ -4,166 +4,178 @@ const { fsrs, generatorParameters, createEmptyCard, Grade } = pkg;
 export class FSRSService {
     constructor() {
         try {
+            // ✅ ПРОСТЫЕ И ЧЕТКИЕ ПАРАМЕТРЫ
             this.parameters = generatorParameters({
-                request_retention: 0.85,
-                maximum_interval: 365,
-                enable_fuzz: true
+                request_retention: 0.9,    // Увеличим retention для лучших результатов
+                maximum_interval: 36500,   // Увеличим максимальный интервал
+                enable_fuzz: false         // Отключим fuzz для предсказуемости
             });
             
             this.scheduler = fsrs(this.parameters);
-            console.log('✅ REAL FSRS service initialized with ts-fsrs');
+            this.isInitialized = true;
+            console.log('✅ REAL FSRS service initialized successfully');
         } catch (error) {
-            console.error('❌ Error initializing REAL FSRS:', error);
+            console.error('❌ CRITICAL: FSRS initialization failed:', error);
+            this.isInitialized = false;
             this.scheduler = null;
         }
     }
 
-    // Основной метод для повторения карточки
+    // ✅ УПРОЩЕННЫЙ И НАДЕЖНЫЙ МЕТОД ДЛЯ ПОВТОРЕНИЯ
     reviewCard(cardData, rating) {
-        // ✅ СНАЧАЛА ПРОВЕРЯЕМ FSRS
-        if (!this.scheduler) {
-            console.log('🔄 FSRS not available, using fallback');
-            return this.fallbackRepeat(cardData, rating);
+        // ЕСЛИ FSRS НЕ РАБОТАЕТ - СРАЗУ FALLBACK
+        if (!this.isInitialized || !this.scheduler) {
+            console.log('🔄 FSRS not available, using immediate fallback');
+            return this.simpleFallback(cardData, rating);
         }
 
         try {
-            const card = this.createCardFromData(cardData);
-            const grade = this.convertRatingToGrade(rating);
+            console.log(`🎯 Starting FSRS review for rating: ${rating}`);
             
-            console.log(`🎯 FSRS review: rating=${rating}, grade=${grade}`);
-            
-            const result = this.scheduler.repeat(card, new Date(), grade);
+            // 1. СОЗДАЕМ КАРТОЧКУ ИЗ ДАННЫХ
+            const card = this.createSimpleCard(cardData);
+            console.log('📊 Card created:', {
+                due: card.due,
+                stability: card.stability,
+                difficulty: card.difficulty,
+                reps: card.reps
+            });
 
-            // ✅ ВАЖНО: ПРОВЕРЯЕМ РЕЗУЛЬТАТ
+            // 2. КОНВЕРТИРУЕМ РЕЙТИНГ
+            const grade = this.safeConvertRating(rating);
+            console.log(`📈 Rating: ${rating} -> Grade: ${grade}`);
+
+            // 3. ВЫЗЫВАЕМ FSRS
+            const now = new Date();
+            const result = this.scheduler.repeat(card, now, grade);
+            
+            console.log('🔍 FSRS raw result:', result);
+
+            // 4. ПРОВЕРЯЕМ РЕЗУЛЬТАТ
             if (!result || !result.card) {
-                console.error('❌ FSRS returned empty result, using fallback');
-                return this.fallbackRepeat(cardData, rating);
+                throw new Error('FSRS returned empty result');
             }
 
             const fsrsCard = result.card;
+            
+            // 5. ПРОВЕРЯЕМ КРИТИЧЕСКИЕ ПОЛЯ
+            if (!fsrsCard.scheduled_days || fsrsCard.scheduled_days <= 0) {
+                throw new Error('Invalid scheduled_days from FSRS');
+            }
 
-            // ✅ ВАЖНО: ПРОВЕРЯЕМ ВСЕ КРИТИЧЕСКИЕ ПОЛЯ
-            const interval = Math.max(1, Math.round(fsrsCard.scheduled_days || 1));
-            const due = fsrsCard.due || new Date(Date.now() + interval * 24 * 60 * 60 * 1000);
+            const interval = Math.max(1, Math.round(fsrsCard.scheduled_days));
+            const due = fsrsCard.due instanceof Date ? fsrsCard.due : new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
 
-            console.log(`✅ FSRS success: interval=${interval} days`);
+            console.log(`✅ FSRS SUCCESS: interval=${interval} days`);
 
             return {
-                due: due,
-                stability: fsrsCard.stability || 0.1,
-                difficulty: fsrsCard.difficulty || 5.0,
-                elapsed_days: fsrsCard.elapsed_days || 0,
-                scheduled_days: fsrsCard.scheduled_days || interval,
-                reps: fsrsCard.reps || 0,
-                lapses: fsrsCard.lapses || 0,
-                state: fsrsCard.state || 1,
-                last_review: new Date(),
+                card: {
+                    due: due,
+                    stability: fsrsCard.stability || 0.1,
+                    difficulty: fsrsCard.difficulty || 5.0,
+                    elapsed_days: fsrsCard.elapsed_days || 0,
+                    scheduled_days: interval,
+                    reps: fsrsCard.reps || 0,
+                    lapses: fsrsCard.lapses || 0,
+                    state: fsrsCard.state || 1,
+                    last_review: now
+                },
                 interval: interval
             };
 
         } catch (error) {
-            console.error('❌ Error in REAL FSRS review:', error);
-            return this.fallbackRepeat(cardData, rating);
+            console.error('❌ FSRS error:', error.message);
+            console.log('🔄 Falling back to simple algorithm');
+            return this.simpleFallback(cardData, rating);
         }
     }
 
-    // Конвертация наших рейтингов в FSRS Grade
-    convertRatingToGrade(rating) {
-        // ✅ ПРОСТАЯ И НАДЕЖНАЯ КОНВЕРТАЦИЯ
-        const ratingMap = {
-            'again': 1,
-            'review_again': 1,
-            'hard': 2,
-            'review_hard': 2,
-            'good': 3,
-            'review_good': 3,
-            'easy': 4,
-            'review_easy': 4
-        };
-        
-        return ratingMap[rating] || 3; // По умолчанию Good
-    }
-
-    // Создание карточки из данных
-    createCardFromData(cardData) {
+    // ✅ ПРОСТОЙ И НАДЕЖНЫЙ МЕТОД СОЗДАНИЯ КАРТОЧКИ
+    createSimpleCard(cardData) {
         const card = createEmptyCard();
+        const now = new Date();
         
-        // ✅ БЕЗОПАСНОЕ ЗАПОЛНЕНИЕ ПОЛЕЙ
-        if (cardData.due) {
-            try {
-                card.due = new Date(cardData.due);
-            } catch (e) {
-                card.due = new Date();
-            }
-        }
-        
-        if (cardData.stability) card.stability = cardData.stability;
-        if (cardData.difficulty) card.difficulty = cardData.difficulty;
-        if (cardData.elapsed_days) card.elapsed_days = cardData.elapsed_days;
-        if (cardData.scheduled_days) card.scheduled_days = cardData.scheduled_days;
-        if (cardData.reps) card.reps = cardData.reps;
-        if (cardData.lapses) card.lapses = cardData.lapses;
-        if (cardData.state) card.state = cardData.state;
-        
-        if (cardData.last_review) {
-            try {
-                card.last_review = new Date(cardData.last_review);
-            } catch (e) {
-                card.last_review = new Date();
-            }
-        }
+        // БАЗОВЫЕ ЗНАЧЕНИЯ
+        card.due = cardData.due ? new Date(cardData.due) : now;
+        card.stability = cardData.stability || 0.1;
+        card.difficulty = cardData.difficulty || 5.0;
+        card.elapsed_days = cardData.elapsed_days || 0;
+        card.scheduled_days = cardData.scheduled_days || 1;
+        card.reps = cardData.reps || 0;
+        card.lapses = cardData.lapses || 0;
+        card.state = cardData.state || 1;
+        card.last_review = cardData.last_review ? new Date(cardData.last_review) : now;
         
         return card;
     }
 
-    // ✅ НАДЕЖНЫЙ Fallback метод
-    fallbackRepeat(cardData, rating) {
+    // ✅ ПРОСТАЯ И БЕЗОПАСНАЯ КОНВЕРТАЦИЯ РЕЙТИНГА
+    safeConvertRating(rating) {
+        const ratingMap = {
+            'again': Grade.Again,
+            'review_again': Grade.Again,
+            'hard': Grade.Hard,
+            'review_hard': Grade.Hard,
+            'good': Grade.Good,
+            'review_good': Grade.Good,
+            'easy': Grade.Easy,
+            'review_easy': Grade.Easy
+        };
+        
+        return ratingMap[rating] || Grade.Good; // По умолчанию Good
+    }
+
+    // ✅ ПРОСТОЙ И ЭФФЕКТИВНЫЙ FALLBACK
+    simpleFallback(cardData, rating) {
         const now = new Date();
         let interval;
-
-        switch (rating) {
-            case 'again': 
-            case 'review_again': 
-                interval = 0.1; // 2.4 часа
-                break;
-            case 'hard': 
-            case 'review_hard': 
+        
+        switch(rating) {
+            case 'again':
+            case 'review_again':
                 interval = 1; // 1 день
                 break;
-            case 'good': 
-            case 'review_good': 
-                interval = 3; // 3 дня
+            case 'hard':
+            case 'review_hard':
+                interval = 2; // 2 дня
                 break;
-            case 'easy': 
-            case 'review_easy': 
+            case 'good':
+            case 'review_good':
+                interval = 4; // 4 дня
+                break;
+            case 'easy':
+            case 'review_easy':
                 interval = 7; // 7 дней
                 break;
-            default: 
-                interval = 1;
+            default:
+                interval = 3; // 3 дня по умолчанию
         }
 
-        console.log(`🔄 Fallback FSRS: ${rating} -> ${interval} days`);
+        console.log(`🔄 Simple fallback: ${rating} -> ${interval} days`);
 
         return {
-            due: new Date(now.getTime() + interval * 24 * 60 * 60 * 1000),
-            stability: interval,
-            difficulty: 5.0,
-            elapsed_days: interval,
-            scheduled_days: interval,
-            reps: (cardData.reps || 0) + 1,
-            lapses: rating.includes('again') ? (cardData.lapses || 0) + 1 : (cardData.lapses || 0),
-            state: 1,
-            last_review: now,
+            card: {
+                due: new Date(now.getTime() + interval * 24 * 60 * 60 * 1000),
+                stability: interval * 0.5,
+                difficulty: 5.0,
+                elapsed_days: interval,
+                scheduled_days: interval,
+                reps: (cardData.reps || 0) + 1,
+                lapses: rating.includes('again') ? (cardData.lapses || 0) + 1 : (cardData.lapses || 0),
+                state: 1,
+                last_review: now
+            },
             interval: interval
         };
     }
 
+    // ✅ ПРОСТОЙ МЕТОД ДЛЯ НОВЫХ КАРТОЧЕК
     createNewCard() {
         const now = new Date();
+        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         
-        // ✅ ПРОСТО ВСЕГДА ИСПОЛЬЗУЕМ FALLBACK ДЛЯ НОВЫХ КАРТОЧЕК
         return {
-            due: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+            due: tomorrow,
             stability: 0.1,
             difficulty: 5.0,
             elapsed_days: 0,
@@ -171,8 +183,7 @@ export class FSRSService {
             reps: 0,
             lapses: 0,
             state: 1,
-            last_review: now,
-            interval: 1
+            last_review: now
         };
     }
 }
