@@ -1675,17 +1675,17 @@ function formatTimeDetailed(date) {
     return `${day}.${month}.${year} ${hours}:${minutes}:${seconds} (${dayOfWeek})`;
 }
 
-// ✅ ФУНКЦИЯ: Конвертация в московское время
-function toMoscowTime(date) {
-    if (!date) return date;
+// // ✅ ФУНКЦИЯ: Конвертация в московское время
+// function toMoscowTime(date) {
+//     if (!date) return date;
     
-    try {
-        const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа для Москвы
-        return new Date(date.getTime() + moscowOffset);
-    } catch (error) {
-        return date;
-    }
-}
+//     try {
+//         const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа для Москвы
+//         return new Date(date.getTime() + moscowOffset);
+//     } catch (error) {
+//         return date;
+//     }
+// }
 
 // ✅ ФУНКЦИЯ: Форматирование времени с обратным отсчетом
 function formatTimeWithCountdown(date) {
@@ -2638,6 +2638,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
