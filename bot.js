@@ -1,9 +1,9 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { GoogleSheetsService } from './services/google-sheets.js';
-import { YandexDictionaryService } from './services/yandex-dictionary-service.js';
-import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
-import { FSRSService } from './services/fsrs-service.js';
-import { BatchSheetsService } from './services/batch-sheets-service.js';
+import { GoogleSheetsService } from './google-sheets.js';
+import { YandexDictionaryService } from './yandex-dictionary-service.js';
+import { CambridgeDictionaryService } from './cambridge-dictionary-service.js';
+import { FSRSService } from './fsrs-service.js';
+import { BatchSheetsService } from './batch-sheets-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
@@ -71,6 +71,7 @@ async function showTranslationDetails(chatId, translationIndex, userState) {
             }
 
             await bot.sendMessage(chatId, detailsMessage, {
+                parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: '🔙 Назад к выбору переводов', callback_data: 'back_to_translations' }]
@@ -128,9 +129,10 @@ async function backToTranslationSelection(chatId, userState, callbackQuery) {
         }
         translationMessage += '\n\n💡 Нажмите на перевод чтобы выбрать его, или 🔍 для подробностей';
 
-        await bot.sendMessage(chatId, translationMessage,
-            getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, userState.selectedTranslationIndices)
-        );
+        await bot.sendMessage(chatId, translationMessage, {
+            parse_mode: 'Markdown',
+            ...getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, userState.selectedTranslationIndices)
+        });
 
         try {
             await bot.deleteMessage(chatId, callbackQuery.message.message_id);
@@ -143,7 +145,7 @@ async function backToTranslationSelection(chatId, userState, callbackQuery) {
     }
 }
 
-// ✅ ВОССТАНОВЛЕНО: Обработка ошибок инициализации
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Инициализация сервисов с FSRS
 async function initializeServices() {
     if (servicesInitialized) return true;
     
@@ -172,7 +174,7 @@ async function initializeServices() {
         return true;
     } catch (error) {
         optimizedLog('❌ Ошибка инициализации сервисов:', error);
-        // ✅ ВОССТАНОВЛЕНО: Создаем заглушки чтобы бот не падал
+        // ✅ Создаем заглушки чтобы бот не падал
         sheetsService = { 
             initialized: false,
             hasWordsForReview: () => false,
@@ -182,18 +184,14 @@ async function initializeServices() {
             getNewWordsCount: () => 0,
             getAllActiveUsers: () => [],
             addWordWithMeanings: async () => false,
-            updateWordReview: async () => false,
-            updateCardAfterReview: async () => false,
+            updateWordAfterFSRSReview: async () => false,
             batchUpdateWords: async () => false,
-            // ✅ ВОССТАНОВЛЕНО: Критически важные методы
             resetUserProgress: async () => true
         };
         yandexService = { 
-            getTranscriptionAndAudio: () => ({ transcription: '', audioUrl: '' }),
             getTranscriptionAndAudio: async () => ({ transcription: '', audioUrl: '' })
         };
         cambridgeService = { 
-            getWordData: () => ({ meanings: [] }),
             getWordData: async () => ({ meanings: [] })
         };
         fsrsService = new FSRSService();
@@ -201,7 +199,7 @@ async function initializeServices() {
             updateWordReviewBatch: async () => true,
             flushAll: async () => {}
         };
-        servicesInitialized = true; // Все равно помечаем как инициализированные
+        servicesInitialized = true;
         return false;
     }
 }
@@ -294,7 +292,7 @@ function resetDailyLimit() {
     }
 }
 
-// ✅ ДОБАВЛЯЕМ: Функция проверки с учетом часового пояса
+// ✅ ФУНКЦИЯ: Проверка с учетом часового пояса
 function isReviewDue(nextReviewDate) {
     if (!nextReviewDate) return false;
     
@@ -343,19 +341,14 @@ async function getLearnedToday(chatId) {
             if (word.status !== 'active') return;
             
             // ✅ Учитываем ТОЛЬКО слова которые ПЕРВЫЙ РАЗ изучены сегодня
-            // Исключаем слова которые были изучены ранее (имеют FirstLearnedDate из прошлого)
             if (word.interval > 1 && word.firstLearnedDate && word.firstLearnedDate.trim() !== '') {
                 try {
                     const learnedDate = new Date(word.firstLearnedDate);
                     const moscowLearned = new Date(learnedDate.getTime() + moscowOffset);
                     
-                    // ✅ Считаем слово изученным сегодня ТОЛЬКО если FirstLearnedDate сегодня
-                    // И слово было изучено впервые (не возвращено на повторение)
                     if (moscowLearned >= todayStart && moscowLearned <= todayEnd) {
                         learnedToday++;
                         optimizedLog(`✅ Слово "${word.english}" изучено СЕГОДНЯ впервые: ${moscowLearned.toLocaleString('ru-RU')}`);
-                    } else {
-                        optimizedLog(`⏭️ Слово "${word.english}" изучено ранее: ${moscowLearned.toLocaleString('ru-RU')}`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
@@ -487,7 +480,6 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
         ];
         
         // ✅ ИСПРАВЛЕНО: Правильное определение наличия деталей
-        // Ищем соответствующий перевод в meanings
         const meaningForTranslation = meanings?.find(m => 
             m.translation && m.translation.trim() === translation.trim()
         );
@@ -498,15 +490,11 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
             (meaningForTranslation.partOfSpeech && meaningForTranslation.partOfSpeech.trim() !== '')
         );
         
-        optimizedLog(`🔍 Translation "${translation}" has details: ${hasDetails}`, {
-            definition: meaningForTranslation?.englishDefinition,
-            examples: meaningForTranslation?.examples?.length,
-            partOfSpeech: meaningForTranslation?.partOfSpeech
-        });
+        optimizedLog(`🔍 Translation "${translation}" has details: ${hasDetails}`);
         
         if (hasDetails) {
             row.push({ 
-                text: '🔍 Подробнее',  // ✅ Добавляем текст "Подробнее"
+                text: '🔍 Подробнее',
                 callback_data: `details_${index}` 
             });
         }
@@ -563,21 +551,21 @@ function getReviewKeyboard() {
                     { text: '🎉 Легко', callback_data: 'review_easy' }
                 ],
                 [
-                    { text: '✍️ Правописание', callback_data: 'spelling_train' } // ✅ ДОБАВЛЕНО
+                    { text: '✍️ Правописание', callback_data: 'spelling_train' }
                 ]
             ]
         }
     };
 }
 
-// ✅ ОБНОВЛЕННАЯ КЛАВИАТУРА: Заменяем "Следующее слово" на "Пропустить слово"
+// Клавиатура для новых слов
 function getNewWordsKeyboard() {
     return {
         reply_markup: {
             inline_keyboard: [
                 [{ text: '✅ Выучил', callback_data: 'learned_word' }],
                 [{ text: '🔄 Нужно повторить', callback_data: 'need_repeat_word' }],
-                [{ text: '✍️ Правописание', callback_data: 'spelling_train' }], // ✅ ДОБАВЛЕНО
+                [{ text: '✍️ Правописание', callback_data: 'spelling_train' }],
                 [{ text: '⏭️ Пропустить слово', callback_data: 'skip_new_word' }]
             ]
         }
@@ -588,7 +576,10 @@ function getNewWordsKeyboard() {
 async function showMainMenu(chatId, text = '') {
     try {
         if (text && text.trim() !== '') {
-            return await bot.sendMessage(chatId, text, getMainMenu());
+            return await bot.sendMessage(chatId, text, {
+                parse_mode: 'Markdown',
+                ...getMainMenu()
+            });
         } else {
             return await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
         }
@@ -602,7 +593,7 @@ async function showMainMenu(chatId, text = '') {
     }
 }
 
-// ✅ ФУНКЦИЯ: Сохранение с JSON структурой
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с FSRS карточкой
 async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
     optimizedLog('💾 Saving word with meanings:', { 
         word: userState.tempWord, 
@@ -657,6 +648,9 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
 
         optimizedLog('📝 Meanings data for JSON:', meaningsData);
 
+        // Создаем FSRS карточку для нового слова
+        const fsrsCard = fsrsService.createNewCard();
+        
         success = await sheetsService.addWordWithMeanings(
             chatId,
             userState.tempWord,
@@ -747,7 +741,7 @@ async function processCustomTranslationWithExample(chatId, userState, example) {
     await showMainMenu(chatId);
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
 async function hasWordsForReview(userId) {
     if (!servicesInitialized || !sheetsService.initialized) {
         return false;
@@ -809,7 +803,10 @@ async function sendReviewNotification(chatId) {
                 ]);
             }
             
-            await bot.sendMessage(chatId, message, keyboard);
+            await bot.sendMessage(chatId, message, {
+                parse_mode: 'Markdown',
+                ...keyboard
+            });
             
             optimizedLog(`✅ Sent notification to ${chatId}`);
             return true;
@@ -898,6 +895,7 @@ async function askSpellingQuestion(chatId, word) {
                    `✏️ Напишите английское слово:`;
 
     await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
         reply_markup: {
             keyboard: [['🔙 Назад к карточке']],
             resize_keyboard: true
@@ -990,7 +988,7 @@ function scheduleMorningNotification() {
     }, timeUntilMorning);
 }
 
-// ✅ ФУНКЦИЯ: Начало сессии повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Начало сессии повторения с FSRS
 async function startReviewSession(chatId) {
     await initializeServices();
     
@@ -1037,7 +1035,7 @@ async function startReviewSession(chatId) {
                 message += '⏰ Слова появятся для повторения согласно их интервалам';
             }
             
-            await bot.sendMessage(chatId, message);
+            await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
             return;
         }
 
@@ -1045,9 +1043,9 @@ async function startReviewSession(chatId) {
         userStates.set(chatId, {
             state: 'review_session',
             reviewWords: validReviewWords,
-            originalWordsCount: validReviewWords.length, // ✅ Сохраняем исходное количество
+            originalWordsCount: validReviewWords.length,
             currentReviewIndex: 0,
-            reviewedCount: 0, // ✅ Начинаем с 0
+            reviewedCount: 0,
             lastActivity: Date.now()
         });
 
@@ -1059,7 +1057,7 @@ async function startReviewSession(chatId) {
     }
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
 async function showNextReviewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') {
@@ -1069,14 +1067,12 @@ async function showNextReviewWord(chatId) {
 
     const { reviewWords } = userState;
     
-    // ✅ ПРОВЕРКА: если массив пуст
     if (!reviewWords || reviewWords.length === 0) {
         console.log('🎯 showNextReviewWord: массив reviewWords пуст, завершение сессии');
         await completeReviewSession(chatId, userState);
         return;
     }
     
-    // ✅ ПРОВЕРКА: если индекс вышел за границы
     if (userState.currentReviewIndex >= reviewWords.length) {
         console.log('🔄 showNextReviewWord: индекс вышел за границы, сбрасываем в 0');
         userState.currentReviewIndex = 0;
@@ -1084,10 +1080,8 @@ async function showNextReviewWord(chatId) {
 
     const word = reviewWords[userState.currentReviewIndex];
     
-    // ✅ ПРОВЕРКА: что слово существует
     if (!word) {
         console.log('❌ showNextReviewWord: слово не найдено по индексу', userState.currentReviewIndex);
-        // Удаляем битое слово и рекурсивно вызываем снова
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         userState.lastActivity = Date.now();
         await showNextReviewWord(chatId);
@@ -1106,6 +1100,7 @@ async function showNextReviewWord(chatId) {
     message += `\n💡 Вспомните перевод и нажмите "Показать ответ"`;
 
     await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [{ text: '👀 Показать ответ', callback_data: 'show_answer' }],
@@ -1116,7 +1111,7 @@ async function showNextReviewWord(chatId) {
     });
 }
 
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показать ответ для повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показать ответ для повторения
 async function showReviewAnswer(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') {
@@ -1164,10 +1159,13 @@ async function showReviewAnswer(chatId) {
         }
     }
 
-    await bot.sendMessage(chatId, message, getReviewKeyboard());
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...getReviewKeyboard()
+    });
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения с FSRS
 async function processReviewRating(chatId, rating) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') {
@@ -1189,6 +1187,7 @@ async function processReviewRating(chatId, rating) {
     }
 
     try {
+        // Подготавливаем данные карточки для FSRS
         const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
@@ -1201,21 +1200,10 @@ async function processReviewRating(chatId, rating) {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
-        const fsrsResult = fsrsService.reviewCard(cardData, rating);
+        // Используем FSRS для обновления карточки
+        const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, rating);
         
-        const finalInterval = fsrsResult.interval || fsrsResult.card?.scheduled_days || 1;
-        const nextReviewDate = fsrsResult.card?.due || new Date(Date.now() + finalInterval * 24 * 60 * 60 * 1000);
-        const lastReviewDate = new Date();
-
-        const success = await sheetsService.updateWordReview(
-            chatId,
-            word.english,
-            finalInterval,
-            nextReviewDate,
-            lastReviewDate
-        );
-
-        if (success) {
+        if (fsrsResult && fsrsResult.card) {
             userState.reviewedCount = (userState.reviewedCount || 0) + 1;
             userState.reviewWords.splice(userState.currentReviewIndex, 1);
             
@@ -1226,17 +1214,12 @@ async function processReviewRating(chatId, rating) {
                 await showNextReviewWord(chatId);
             }
         } else {
-            userState.reviewWords.splice(userState.currentReviewIndex, 1);
-            
-            if (userState.reviewWords.length === 0) {
-                await completeReviewSession(chatId, userState);
-            } else {
-                userState.lastActivity = Date.now();
-                await showNextReviewWord(chatId);
-            }
+            throw new Error('FSRS returned empty result');
         }
 
     } catch (error) {
+        optimizedLog('❌ Error processing review rating:', error);
+        // Fallback: просто удаляем слово из списка
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -1250,22 +1233,18 @@ async function processReviewRating(chatId, rating) {
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
-    // ✅ Сохраняем данные перед очисткой состояния
     const totalWordsAtStart = userState.originalWordsCount || userState.reviewWords?.length || 0;
     const reviewedCount = userState.reviewedCount || 0;
     const remainingWords = userState.reviewWords?.length || 0;
     
-    // ✅ ВАЖНО: Полностью очищаем состояние пользователя
     userStates.delete(chatId);
     
-    // ✅ Очищаем кеш для этого пользователя
     const cacheKeys = [
         `words_${chatId}`,
         `review_${chatId}`
     ];
     cacheKeys.forEach(key => cache.delete(key));
     
-    // ✅ ПРАВИЛЬНЫЙ РАСЧЕТ СТАТИСТИКИ
     const totalProcessed = reviewedCount + remainingWords;
     const actualReviewed = reviewedCount;
     
@@ -1278,7 +1257,6 @@ async function completeReviewSession(chatId, userState) {
         message += `• Пропущено/ошибок: ${remainingWords}\n`;
     }
     
-    // ✅ ИЗБЕГАЕМ ДЕЛЕНИЯ НА НОЛЬ
     if (totalProcessed > 0) {
         const progressPercentage = Math.round((actualReviewed / totalProcessed) * 100);
         message += `• Прогресс: ${progressPercentage}%\n\n`;
@@ -1286,7 +1264,6 @@ async function completeReviewSession(chatId, userState) {
         message += `\n`;
     }
     
-    // ✅ ПРОВЕРЯЕМ ЕСТЬ ЛИ ЕЩЕ СЛОВА ДЛЯ ПОВТОРЕНИЯ (с очисткой кеша)
     const hasMoreWords = await hasWordsForReview(chatId);
     if (hasMoreWords) {
         const remainingCount = await sheetsService.getReviewWordsCount(chatId);
@@ -1300,15 +1277,16 @@ async function completeReviewSession(chatId, userState) {
     message += `• Изучить новые слова\n`;
     message += `• Посмотреть статистику\n`;
     
-    await bot.sendMessage(chatId, message, getMainMenu());
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...getMainMenu()
+    });
 }
 
-
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Начало сессии изучения новых слов
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Начало сессии изучения новых слов
 async function startNewWordsSession(chatId) {
     await initializeServices();
     
-    // ✅ ПРОВЕРКА: Если уже есть активная сессия - завершаем ее
     const existingState = userStates.get(chatId);
     if (existingState && existingState.state === 'learning_new_words') {
         optimizedLog(`⚠️ Завершаем предыдущую сессию изучения для ${chatId}`);
@@ -1369,7 +1347,7 @@ async function startNewWordsSession(chatId) {
     }
 }
 
-// ✅ НОВАЯ ФУНКЦИЯ: Получение доступных новых слов на сегодня
+// ✅ ФУНКЦИЯ: Получение доступных новых слов на сегодня
 async function getAllUnlearnedWords(chatId) {
     if (!servicesInitialized || !sheetsService.initialized) {
         return [];
@@ -1382,28 +1360,17 @@ async function getAllUnlearnedWords(chatId) {
 
         const unlearnedWords = userWords.filter(word => {
             if (word.status !== 'active') {
-                optimizedLog(`⏭️ ${word.english} - статус не active: ${word.status}`);
                 return false;
             }
             
-            // ✅ Строгая проверка: Interval=1 И FirstLearnedDate отсутствует
             const hasFirstLearnedDate = word.firstLearnedDate && word.firstLearnedDate.trim() !== '';
             const isNewWord = word.interval === 1 && !hasFirstLearnedDate;
-            
-            if (isNewWord) {
-                optimizedLog(`✅ ${word.english} - НОВОЕ СЛОВО: interval=1, FirstLearnedDate отсутствует`);
-            } else if (word.interval === 1 && hasFirstLearnedDate) {
-                optimizedLog(`🚫 ${word.english} - Interval=1, но имеет FirstLearnedDate: ${word.firstLearnedDate}`);
-            } else if (word.interval > 1) {
-                optimizedLog(`⏭️ ${word.english} - изученное: interval=${word.interval}`);
-            }
             
             return isNewWord;
         });
 
         optimizedLog(`📊 Найдено новых слов: ${unlearnedWords.length}`);
         
-        // Сортируем по дате создания (новые в начале)
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
 
         return unlearnedWords;
@@ -1414,7 +1381,7 @@ async function getAllUnlearnedWords(chatId) {
     }
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показ следующего нового слова
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего нового слова
 async function showNextNewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -1439,7 +1406,6 @@ async function showNextNewWord(chatId) {
     const totalWords = newWords.length;
     const progress = `${currentPosition}/${totalWords}`;
     
-    // ✅ Определяем статус слова
     const wordStatus = word.firstLearnedDate ? 
         `🔄 Возвращено на повторение (изучено: ${formatMoscowDate(word.firstLearnedDate)})` : 
         `🆕 Новое слово`;
@@ -1476,10 +1442,13 @@ async function showNextNewWord(chatId) {
         }
     }
 
-    await bot.sendMessage(chatId, message, getNewWordsKeyboard());
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...getNewWordsKeyboard()
+    });
 }
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова с FSRS
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -1488,26 +1457,15 @@ async function processNewWordLearning(chatId, action) {
     
     try {
         if (action === 'learned') {
-            const newInterval = 2;
-            const nextReview = new Date(Date.now() + newInterval * 24 * 60 * 60 * 1000);
-            const today = new Date();
+            // Используем FSRS для обработки изучения нового слова
+            const cardData = fsrsService.createNewCard();
+            const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
             
-            optimizedLog(`💾 Сохранение слова "${word.english}" как изученного сегодня: ${today}`);
-            
-            const success = await batchSheetsService.updateWordReviewBatch(
-                chatId,
-                word.english,
-                newInterval,
-                nextReview,
-                today
-            );
-
-            if (success) {
+            if (fsrsResult && fsrsResult.card) {
                 userState.learnedCount++;
                 markWordAsLearned(chatId, word.english);
-                optimizedLog(`📚 Слово "${word.english}" изучено сегодня: ${today}`);
+                optimizedLog(`📚 Слово "${word.english}" изучено сегодня`);
                 
-                // ✅ УДАЛЯЕМ слово из списка
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
                 optimizedLog(`✅ Слово "${word.english}" удалено из списка. Осталось слов: ${userState.newWords.length}`);
@@ -1515,11 +1473,10 @@ async function processNewWordLearning(chatId, action) {
                 const currentLearnedToday = await getLearnedToday(chatId);
                 optimizedLog(`📈 После изучения "${word.english}": ${currentLearnedToday}/5 изучено сегодня`);
                 
-                // ✅ ПРОВЕРЯЕМ: если это было последнее слово - завершаем сессию
                 if (userState.newWords.length === 0) {
                     optimizedLog(`🎯 Все слова изучены, завершение сессии`);
                     await completeNewWordsSession(chatId, userState);
-                    return; // ✅ ВАЖНО: выходим из функции
+                    return;
                 }
                 
                 if (currentLearnedToday >= 5) {
@@ -1529,19 +1486,15 @@ async function processNewWordLearning(chatId, action) {
                         '💡 Возвращайтесь завтра для изучения новых слов.'
                     );
                     await completeNewWordsSession(chatId, userState);
-                    return; // ✅ ВАЖНО: выходим из функции
+                    return;
                 }
                 
-                // ✅ ЕСЛИ ЕСТЬ ЕЩЕ СЛОВА - продолжаем
-                // Сбрасываем индекс на 0, так как массив уменьшился
                 if (userState.currentWordIndex >= userState.newWords.length) {
                     userState.currentWordIndex = 0;
                 }
                 
             } else {
-                optimizedLog(`❌ Не удалось обновить интервал для слова "${word.english}"`);
-                await bot.sendMessage(chatId, '❌ Ошибка при сохранении прогресса слова.');
-                return;
+                throw new Error('FSRS returned empty result');
             }
             
         } else if (action === 'repeat') {
@@ -1556,14 +1509,12 @@ async function processNewWordLearning(chatId, action) {
             userState.lastActivity = Date.now();
         }
         
-        // ✅ ПРОВЕРЯЕМ: не осталось ли слов после действий
         if (userState.newWords.length === 0) {
             optimizedLog(`🎯 Все слова обработаны, завершение сессии`);
             await completeNewWordsSession(chatId, userState);
             return;
         }
         
-        // ✅ КОРРЕКТИРУЕМ ИНДЕКС если он вышел за границы
         if (userState.currentWordIndex >= userState.newWords.length) {
             userState.currentWordIndex = 0;
             optimizedLog(`🔄 Индекс сброшен в 0 (достигнут конец массива)`);
@@ -1580,9 +1531,9 @@ async function processNewWordLearning(chatId, action) {
         );
     }
 }
-// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Завершение сессии изучения новых слов
+
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии изучения новых слов
 async function completeNewWordsSession(chatId, userState) {
-    // ✅ ВАЖНО: Удаляем состояние пользователя ПЕРВЫМ ДЕЛОМ
     userStates.delete(chatId);
     
     const currentLearnedToday = await getLearnedToday(chatId);
@@ -1612,10 +1563,13 @@ async function completeNewWordsSession(chatId, userState) {
         message += `Можете начать повторение через меню!`;
     }
     
-    await bot.sendMessage(chatId, message, getMainMenu());
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...getMainMenu()
+    });
 }
 
-// ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Показ статистики с временем
+// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ статистики
 async function showUserStats(chatId) {
     await initializeServices();
     
@@ -1628,7 +1582,6 @@ async function showUserStats(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         
-        // Основная статистика
         const totalWordsCount = activeWords.length;
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
         const newWords = activeWords.filter(word => word.interval === 1);
@@ -1649,7 +1602,7 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
 
-        // ✅ ВОССТАНОВЛЕНО: Расписание с временем
+        // Расписание повторений
         const now = new Date();
         const futureWords = activeWords.filter(word => {
             if (!word.nextReview || word.interval === 1) return false;
@@ -1661,12 +1614,10 @@ async function showUserStats(chatId) {
             }
         });
         
-        // Группируем слова по дате и часу повторения
         const schedule = {};
         futureWords.forEach(word => {
             try {
                 const reviewDate = new Date(word.nextReview);
-                // Группируем по дате и часу (без минут)
                 const dateKey = reviewDate.toISOString().slice(0, 13) + ':00';
                 
                 if (!schedule[dateKey]) {
@@ -1678,9 +1629,8 @@ async function showUserStats(chatId) {
             }
         });
         
-        // Сортируем даты и выбираем ближайшие
         const sortedDates = Object.keys(schedule).sort();
-        const nearestDates = sortedDates.slice(0, 10); // Ближайшие 10 временных слотов
+        const nearestDates = sortedDates.slice(0, 10);
         
         if (nearestDates.length > 0) {
             const nearestDate = nearestDates[0];
@@ -1712,14 +1662,14 @@ async function showUserStats(chatId) {
             message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
         }
         
-        // Текущее время сервера и московское
+        // Время сервера
         const serverTime = new Date();
         const moscowTime = toMoscowTime(serverTime);
         
         message += `\n🕐 **Время сервера:** ${formatTimeDetailed(serverTime)}`;
         message += `\n🇷🇺 **Московское время:** ${formatTimeDetailed(moscowTime)}`;
         
-        // Дополнительная информация о новых словах
+        // Новые слова
         if (newWordsCount > 0) {
             const recentNewWords = newWords
                 .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
@@ -1732,14 +1682,17 @@ async function showUserStats(chatId) {
             });
         }
         
-        // Информация о прогрессе
+        // Прогресс
         const learnedWords = activeWords.filter(word => word.interval > 1);
         const progressPercentage = totalWordsCount > 0 ? Math.round((learnedWords.length / totalWordsCount) * 100) : 0;
         
         message += `\n🎓 **Общий прогресс:** ${progressPercentage}% изучено`;
         message += `\n   (${learnedWords.length} из ${totalWordsCount} слов)`;
         
-        await bot.sendMessage(chatId, message, getMainMenu());
+        await bot.sendMessage(chatId, message, {
+            parse_mode: 'Markdown',
+            ...getMainMenu()
+        });
         
     } catch (error) {
         optimizedLog('❌ Error showing stats:', error);
@@ -1764,24 +1717,11 @@ function formatTimeDetailed(date) {
     return `${day}.${month}.${year} ${hours}:${minutes}:${seconds} (${dayOfWeek})`;
 }
 
-// // ✅ ФУНКЦИЯ: Конвертация в московское время
-// function toMoscowTime(date) {
-//     if (!date) return date;
-    
-//     try {
-//         const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа для Москвы
-//         return new Date(date.getTime() + moscowOffset);
-//     } catch (error) {
-//         return date;
-//     }
-// }
-
 // ✅ ФУНКЦИЯ: Форматирование времени с обратным отсчетом
 function formatTimeWithCountdown(date) {
     const now = new Date();
     const targetDate = new Date(date);
     
-    // Используем московское время для расчетов
     const moscowOffset = 3 * 60 * 60 * 1000;
     const moscowNow = new Date(now.getTime() + moscowOffset);
     const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
@@ -1801,7 +1741,6 @@ function formatTimeWithCountdown(date) {
     
     let timeString = `${day}.${month} ${hours}:${minutes}`;
     
-    // Добавляем обратный отсчет
     if (diffDays === 0) {
         if (diffHours === 0) {
             timeString += ` (через ${diffMinutes} мин)`;
@@ -1819,45 +1758,115 @@ function formatTimeWithCountdown(date) {
     return timeString;
 }
 
-// ✅ ФУНКЦИЯ: Форматирование даты для расписания
-function formatScheduleDate(date) {
-    const now = new Date();
-    const targetDate = new Date(date);
+// ✅ КОМАНДА: Сброс прогресса
+bot.onText(/\/reset_progress/, async (msg) => {
+    const chatId = msg.chat.id;
     
-    // Используем московское время для расчетов
-    const moscowOffset = 3 * 60 * 60 * 1000;
-    const moscowNow = new Date(now.getTime() + moscowOffset);
-    const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
-    
-    const diffTime = moscowTarget - moscowNow;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    const day = moscowTarget.getDate().toString().padStart(2, '0');
-    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
-    const year = moscowTarget.getFullYear();
-    
-    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
-    
-    if (diffDays === 0) {
-        return `сегодня (${day}.${month}.${year})`;
-    } else if (diffDays === 1) {
-        return `завтра (${day}.${month}.${year})`;
-    } else if (diffDays === 2) {
-        return `послезавтра (${day}.${month}.${year})`;
-    } else if (diffDays <= 7) {
-        return `${day}.${month}.${year} (${dayOfWeek}, через ${diffDays} дн.)`;
-    } else {
-        return `${day}.${month}.${year} (${dayOfWeek})`;
+    if (!servicesInitialized || !sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        return;
     }
-}
 
-// ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Форматирование конкретной даты с временем
+    try {
+        dailyLearnedWords.delete(chatId);
+        learnedWords.delete(chatId);
+        userStates.delete(chatId);
+        
+        const success = await sheetsService.resetUserProgress(chatId);
+        
+        if (success) {
+            optimizedLog(`🔄 Полный сброс прогресса для пользователя ${chatId}`);
+            
+            await bot.sendMessage(chatId, 
+                '✅ **Весь прогресс полностью сброшен!**\n\n' +
+                '• Все интервалы сброшены\n' +
+                '• Дневной лимит очищен\n' + 
+                '• История изучения удалена\n' +
+                '• Все слова теперь "новые"\n\n' +
+                '💡 Теперь вы можете начать изучение заново!',
+                { parse_mode: 'Markdown' }
+            );
+        } else {
+            await bot.sendMessage(chatId, '❌ Не удалось сбросить прогресс в базе данных.');
+        }
+        
+    } catch (error) {
+        optimizedLog('❌ Error resetting progress:', error);
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при сбросе прогресса.\n' +
+            'Попробуйте еще раз.'
+        );
+    }
+});
+
+// ✅ КОМАНДА: Диагностика статуса слов
+bot.onText(/\/debug_stats/, async (msg) => {
+    const chatId = msg.chat.id;
+    await initializeServices();
+    
+    try {
+        const userWords = await getCachedUserWords(chatId);
+        const activeWords = userWords.filter(word => word.status === 'active');
+        const now = new Date();
+        
+        let message = '🔍 **Диагностика статуса слов:**\n\n';
+        
+        const reviewWords = activeWords.filter(word => {
+            if (!word.nextReview) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                return nextReview <= now;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        const futureWords = activeWords.filter(word => {
+            if (!word.nextReview) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                return nextReview > now;
+            } catch (e) {
+                return false;
+            }
+        });
+        
+        const newWords = activeWords.filter(word => word.interval === 1);
+        
+        message += `📊 Всего активных слов: ${activeWords.length}\n`;
+        message += `🔄 Готово к повторению: ${reviewWords.length}\n`;
+        message += `⏰ Ожидают повторения: ${futureWords.length}\n`;
+        message += `🆕 Новые слова: ${newWords.length}\n\n`;
+        
+        if (futureWords.length > 0) {
+            message += `📅 **Ближайшие повторения:**\n`;
+            const sorted = futureWords
+                .map(word => ({ 
+                    word: word.english, 
+                    date: new Date(word.nextReview),
+                    interval: word.interval 
+                }))
+                .sort((a, b) => a.date - b.date)
+                .slice(0, 3);
+                
+            sorted.forEach(item => {
+                message += `• ${item.word} (инт. ${item.interval}д): ${formatConcreteDate(item.date)}\n`;
+            });
+        }
+        
+        await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        
+    } catch (error) {
+        optimizedLog('❌ Debug stats error:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка диагностики.');
+    }
+});
+
+// ✅ ФУНКЦИЯ: Форматирование конкретной даты
 function formatConcreteDate(date) {
     const now = new Date();
     const targetDate = new Date(date);
     
-    // Используем московское время для расчетов
     const moscowNow = toMoscowTime(now);
     const moscowTarget = toMoscowTime(targetDate);
     
@@ -1894,49 +1903,7 @@ function formatConcreteDate(date) {
     }
 }
 
-// ✅ ВОССТАНОВЛЕНО: Критически важная команда сброса прогресса
-bot.onText(/\/reset_progress/, async (msg) => {
-    const chatId = msg.chat.id;
-    
-    if (!servicesInitialized || !sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
-        return;
-    }
-
-    try {
-        // Сбрасываем внутренние хранилища бота
-        dailyLearnedWords.delete(chatId);
-        learnedWords.delete(chatId);
-        userStates.delete(chatId);
-        
-        // ✅ ВОССТАНОВЛЕНО: Сбрасываем прогресс в Google Sheets
-        const success = await sheetsService.resetUserProgress(chatId);
-        
-        if (success) {
-            optimizedLog(`🔄 Полный сброс прогресса для пользователя ${chatId}`);
-            
-            await bot.sendMessage(chatId, 
-                '✅ **Весь прогресс полностью сброшен!**\n\n' +
-                '• Все интервалы сброшены\n' +
-                '• Дневной лимит очищен\n' + 
-                '• История изучения удалена\n' +
-                '• Все слова теперь "новые"\n\n' +
-                '💡 Теперь вы можете начать изучение заново!'
-            );
-        } else {
-            await bot.sendMessage(chatId, '❌ Не удалось сбросить прогресс в базе данных.');
-        }
-        
-    } catch (error) {
-        optimizedLog('❌ Error resetting progress:', error);
-        await bot.sendMessage(chatId, 
-            '❌ Ошибка при сбросе прогресса.\n' +
-            'Попробуйте еще раз.'
-        );
-    }
-});
-
-// Команды бота
+// Основные команды бота
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     await initializeServices();
@@ -1945,7 +1912,7 @@ bot.onText(/\/start/, async (msg) => {
         '🔤 С транскрипцией и произношением\n' +
         '🇬🇧 Британский вариант\n' +
         '📝 Каждое слово хранится с несколькими значениями\n' +
-        '🔄 **Умное интервальное повторение**\n' +
+        '🔄 **Умное интервальное повторение (FSRS)**\n' +
         '🔔 **Автоматические напоминания**\n\n' +
         '💡 **Как учить слова:**\n' +
         '1. ➕ Добавить новое слово\n' +
@@ -1970,142 +1937,6 @@ bot.onText(/\/new/, async (msg) => {
     await startNewWordsSession(chatId);
 });
 
-bot.onText(/\/migrate_first_learned/, async (msg) => {
-    const chatId = msg.chat.id;
-    
-    try {
-        await bot.sendMessage(chatId, '🔄 Начинаю миграцию FirstLearnedDate...\n\nПроверяю структуру таблицы...');
-        
-        // Сначала проверим, есть ли столбец FirstLearnedDate
-        const userWords = await getCachedUserWords(chatId);
-        const hasFirstLearnedColumn = userWords.some(word => word.hasOwnProperty('firstLearnedDate'));
-        
-        if (!hasFirstLearnedColumn) {
-            await bot.sendMessage(chatId, 
-                '❌ Столбец FirstLearnedDate не найден в данных!\n\n' +
-                '💡 Сначала обновите структуру таблицы в Google Sheets:\n' +
-                '1. Откройте таблицу\n' +
-                '2. Добавьте столбец K с заголовком "FirstLearnedDate"\n' +
-                '3. Запустите команду снова'
-            );
-            return;
-        }
-        
-        await bot.sendMessage(chatId, '✅ Столбец найден. Начинаю миграцию данных...');
-        
-        const success = await sheetsService.migrateFirstLearnedDates(chatId);
-        
-        if (success) {
-            // Обновляем кеш
-            const cacheKey = `words_${chatId}`;
-            cache.delete(cacheKey);
-            
-            await bot.sendMessage(chatId, 
-                '✅ Миграция FirstLearnedDate завершена!\n\n' +
-                '💡 Теперь счетчик изученных слов сегодня будет работать правильно.\n\n' +
-                '📊 Проверьте результат: /check_first_learned\n' +
-                '📈 Посмотрите статистику: /stats'
-            );
-        } else {
-            await bot.sendMessage(chatId, 
-                '❌ Ошибка при миграции данных.\n\n' +
-                '💡 Проверьте логи бота для подробной информации.'
-            );
-        }
-    } catch (error) {
-        optimizedLog('❌ Migration command error:', error);
-        await bot.sendMessage(chatId, 
-            `❌ Критическая ошибка при миграции:\n${error.message}\n\n` +
-            '💡 Проверьте логи для подробной диагностики.'
-        );
-    }
-});
-// ✅ ДОБАВЛЯЕМ КОМАНДУ: Диагностика статуса слов
-bot.onText(/\/debug_stats/, async (msg) => {
-    const chatId = msg.chat.id;
-    await initializeServices();
-    
-    try {
-        const userWords = await getCachedUserWords(chatId);
-        const activeWords = userWords.filter(word => word.status === 'active');
-        const now = new Date();
-        
-        let message = '🔍 **Диагностика статуса слов:**\n\n';
-        
-        // Слова для повторения
-        const reviewWords = activeWords.filter(word => {
-            if (!word.nextReview) return false;
-            try {
-                const nextReview = new Date(word.nextReview);
-                return nextReview <= now;
-            } catch (e) {
-                return false;
-            }
-        });
-        
-        // Слова в будущем
-        const futureWords = activeWords.filter(word => {
-            if (!word.nextReview) return false;
-            try {
-                const nextReview = new Date(word.nextReview);
-                return nextReview > now;
-            } catch (e) {
-                return false;
-            }
-        });
-        
-        // Новые слова
-        const newWords = activeWords.filter(word => word.interval === 1);
-        
-        message += `📊 Всего активных слов: ${activeWords.length}\n`;
-        message += `🔄 Готово к повторению: ${reviewWords.length}\n`;
-        message += `⏰ Ожидают повторения: ${futureWords.length}\n`;
-        message += `🆕 Новые слова: ${newWords.length}\n\n`;
-        
-        // Показываем ближайшие 3 слова для повторения
-        if (futureWords.length > 0) {
-            message += `📅 **Ближайшие повторения:**\n`;
-            const sorted = futureWords
-                .map(word => ({ 
-                    word: word.english, 
-                    date: new Date(word.nextReview),
-                    interval: word.interval 
-                }))
-                .sort((a, b) => a.date - b.date)
-                .slice(0, 3);
-                
-            sorted.forEach(item => {
-                message += `• ${item.word} (инт. ${item.interval}д): ${formatConcreteDate(item.date)}\n`;
-            });
-        }
-        
-        // Показываем слова которые ДОЛЖНЫ быть готовы
-        const shouldBeReady = activeWords.filter(word => {
-            if (!word.nextReview || word.interval === 1) return false;
-            try {
-                const nextReview = new Date(word.nextReview);
-                const yesterday = new Date(now);
-                yesterday.setDate(yesterday.getDate() - 1);
-                return nextReview <= yesterday;
-            } catch (e) {
-                return false;
-            }
-        });
-        
-        if (shouldBeReady.length > 0 && reviewWords.length === 0) {
-            message += `\n⚠️ **Проблема:** ${shouldBeReady.length} слов должны быть готовы к повторению!\n`;
-            message += `Возможно ошибка в датах. Используйте /reset_progress для сброса.`;
-        }
-        
-        await bot.sendMessage(chatId, message);
-        
-    } catch (error) {
-        optimizedLog('❌ Debug stats error:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка диагностики.');
-    }
-});
-
-// Обработка сообщений
 // Обработка сообщений
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -2162,7 +1993,6 @@ bot.on('message', async (msg) => {
             let meanings = [];
             let translations = [];
 
-            // Используем кешированные данные
             const cambridgeData = await getCachedWordData(englishWord);
             if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
                 optimizedLog(`✅ Cambridge успешно: ${cambridgeData.meanings.length} значений`);
@@ -2175,7 +2005,6 @@ bot.on('message', async (msg) => {
                 translations = [];
             }
 
-            // Яндекс транскрипция
             optimizedLog('🔤 Запрашиваем транскрипцию у Яндекс...');
             try {
                 const yandexData = await yandexService.getTranscriptionAndAudio(englishWord);
@@ -2248,7 +2077,6 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        // Сохраняем введенный перевод и переходим к вводу примера
         userStates.set(chatId, {
             ...userState,
             state: 'waiting_custom_example',
@@ -2265,7 +2093,6 @@ bot.on('message', async (msg) => {
     }
     else if (userState?.state === 'waiting_custom_example') {
         if (text === '⏭️ Пропустить' || text === '➕ Добавить новое слово') {
-            // Пропускаем ввод примера
             await processCustomTranslationWithoutExample(chatId, userState);
             return;
         }
@@ -2280,13 +2107,12 @@ bot.on('message', async (msg) => {
             await checkSpellingAnswer(chatId, text);
         }
     }
-    // Обработка других состояний
     else {
         await showMainMenu(chatId, 'Выберите действие из меню:');
     }
 });
 
-// Обработка callback_query (сокращена)
+// Обработка callback_query
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -2300,20 +2126,17 @@ bot.on('callback_query', async (callbackQuery) => {
     optimizedLog('🔍 Callback data:', data);
     optimizedLog('🔍 User state:', userState?.state);
 
-    // ✅ ВОССТАНОВЛЕНО: Обработка показа деталей перевода
     if (data.startsWith('details_')) {
         const translationIndex = parseInt(data.replace('details_', ''));
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
             await showTranslationDetails(chatId, translationIndex, userState);
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Обработка возврата к выбору переводов
     else if (data === 'back_to_translations') {
         if (userState?.state === 'choosing_translation') {
             await backToTranslationSelection(chatId, userState, callbackQuery);
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Обработка переключения выбора переводов
     else if (data.startsWith('toggle_translation_')) {
         const translationIndex = parseInt(data.replace('toggle_translation_', ''));
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
@@ -2340,7 +2163,6 @@ bot.on('callback_query', async (callbackQuery) => {
             }
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Сохранение выбранных переводов
     else if (data === 'save_selected_translations') {
         if (userState?.state === 'choosing_translation' && userState.selectedTranslationIndices.length > 0) {
             try {
@@ -2351,7 +2173,6 @@ bot.on('callback_query', async (callbackQuery) => {
                 
                 await saveWordWithMeanings(chatId, userState, selectedTranslations);
                 
-                // Удаляем сообщение с выбором переводов
                 try {
                     await bot.deleteMessage(chatId, callbackQuery.message.message_id);
                 } catch (deleteError) {
@@ -2365,7 +2186,6 @@ bot.on('callback_query', async (callbackQuery) => {
             await bot.sendMessage(chatId, '❌ Выберите хотя бы один перевод для сохранения');
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Добавление своего перевода
     else if (data === 'custom_translation') {
         if (userState?.state === 'choosing_translation') {
             try {
@@ -2389,7 +2209,6 @@ bot.on('callback_query', async (callbackQuery) => {
             }
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Отмена выбора переводов
     else if (data === 'cancel_translation') {
         if (userState) {
             try {
@@ -2417,48 +2236,37 @@ bot.on('callback_query', async (callbackQuery) => {
             }
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Показать ответ при повторении
     else if (data === 'show_answer') {
         await showReviewAnswer(chatId);
     }
-    // ✅ ВОССТАНОВЛЕНО: Обработка оценки при повторении
     else if (data.startsWith('review_')) {
         const rating = data.replace('review_', '');
         await processReviewRating(chatId, rating);
     }
-    // ✅ ВОССТАНОВЛЕНО: Пропуск слова при повторении
-else if (data === 'skip_review') {
-    const userState = userStates.get(chatId);
-    if (userState?.state === 'review_session') {
-        // ✅ ПРОПУСКАЕМ СЛОВО - перемещаем его в конец массива
-        const skippedWord = userState.reviewWords.splice(userState.currentReviewIndex, 1)[0];
-        userState.reviewWords.push(skippedWord);
-        
-        optimizedLog(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец`);
-        
-        userState.lastActivity = Date.now();
-        
-        // ✅ Не увеличиваем индекс, так как массив сдвинулся
-        // Текущий индекс теперь указывает на следующее слово
-        
-        await showNextReviewWord(chatId);
+    else if (data === 'skip_review') {
+        const userState = userStates.get(chatId);
+        if (userState?.state === 'review_session') {
+            const skippedWord = userState.reviewWords.splice(userState.currentReviewIndex, 1)[0];
+            userState.reviewWords.push(skippedWord);
+            
+            optimizedLog(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец`);
+            
+            userState.lastActivity = Date.now();
+            
+            await showNextReviewWord(chatId);
+        }
     }
-}
-    // ✅ ВОССТАНОВЛЕНО: Завершение сессии повторения
     else if (data === 'end_review') {
         if (userState?.state === 'review_session') {
             await completeReviewSession(chatId, userState);
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Отметка слова как изученного
     else if (data === 'learned_word') {
         await processNewWordLearning(chatId, 'learned');
     }
-    // ✅ ВОССТАНОВЛЕНО: Слово нужно повторить
     else if (data === 'need_repeat_word') {
         await processNewWordLearning(chatId, 'repeat');
     }
-    // ✅ ВОССТАНОВЛЕНО: Пропуск нового слова
     else if (data === 'skip_new_word') {
         const userState = userStates.get(chatId);
         if (userState?.state === 'learning_new_words') {
@@ -2468,24 +2276,14 @@ else if (data === 'skip_review') {
             await showNextNewWord(chatId);
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Завершение изучения новых слов
-    else if (data === 'end_learning') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'learning_new_words') {
-            await completeNewWordsSession(chatId, userState);
-        }
-    }
-    // ✅ ВОССТАНОВЛЕНО: Начало повторения из нотификации
     else if (data === 'start_review_from_notification') {
         await bot.deleteMessage(chatId, callbackQuery.message.message_id);
         await startReviewSession(chatId);
     }
-    // ✅ ВОССТАНОВЛЕНО: Начало изучения из нотификации
     else if (data === 'start_learning_from_notification') {
         await bot.deleteMessage(chatId, callbackQuery.message.message_id);
         await startNewWordsSession(chatId);
     }
-    // ✅ ВОССТАНОВЛЕНО: Прослушивание аудио
     else if (data.startsWith('audio_')) {
         const audioId = data.replace('audio_', '');
         const audioUrl = userState?.tempAudioUrl;
@@ -2509,13 +2307,11 @@ else if (data === 'skip_review') {
             await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Переход к выбору перевода
     else if (data === 'enter_translation') {
         optimizedLog('🔍 Processing enter_translation callback');
         
         if (userState?.state === 'showing_transcription') {
             try {
-                // Удаляем клавиатуру предыдущего сообщения
                 try {
                     await bot.editMessageReplyMarkup(
                         { inline_keyboard: [] },
@@ -2528,7 +2324,6 @@ else if (data === 'skip_review') {
                     optimizedLog('⚠️ Could not edit message markup, continuing...');
                 }
 
-                // Проверяем есть ли переводы
                 const hasTranslations = userState.tempTranslations && 
                                       userState.tempTranslations.length > 0;
                 
@@ -2550,19 +2345,20 @@ else if (data === 'skip_review') {
                     
                     translationMessage += '\n\n💡 Нажмите на номер перевода чтобы выбрать его';
 
-                    // Отправляем новое сообщение с выбором переводов
                     await bot.sendMessage(
                         chatId, 
                         translationMessage,
-                        getTranslationSelectionKeyboard(
-                            userState.tempTranslations, 
-                            userState.meanings, 
-                            []
-                        )
+                        {
+                            parse_mode: 'Markdown',
+                            ...getTranslationSelectionKeyboard(
+                                userState.tempTranslations, 
+                                userState.meanings, 
+                                []
+                            )
+                        }
                     );
                     
                 } else {
-                    // Если переводов нет, переходим к ручному вводу
                     userStates.set(chatId, {
                         ...userState,
                         state: 'waiting_custom_translation'
@@ -2577,7 +2373,7 @@ else if (data === 'skip_review') {
                     
                     translationMessage += '\n\n📝 Введите ваш вариант перевода:';
 
-                    await bot.sendMessage(chatId, translationMessage);
+                    await bot.sendMessage(chatId, translationMessage, { parse_mode: 'Markdown' });
                 }
                 
             } catch (error) {
@@ -2594,50 +2390,6 @@ else if (data === 'skip_review') {
             userStates.delete(chatId);
         }
     }
-    // ✅ ВОССТАНОВЛЕНО: Начало изучения из команды /new
-    else if (data === 'start_learning_from_command') {
-        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-        await startNewWordsSession(chatId);
-    }
-    // ✅ ВОССТАНОВЛЕНО: Показ статистики новых слов
-    else if (data === 'show_new_stats_only') {
-        const unlearnedWords = await getAllUnlearnedWords(chatId);
-        const count = unlearnedWords.length;
-        await bot.editMessageText(
-            `🆕 Новых слов для изучения: ${count}\n\n` +
-            '💡 Используйте кнопку "🆕 Новые слова" в меню чтобы начать изучение',
-            {
-                chat_id: chatId,
-                message_id: callbackQuery.message.message_id
-            }
-        );
-    }
-    // ✅ ВОССТАНОВЛЕНО: Отложить нотификацию
-    else if (data === 'snooze_notification') {
-        await bot.editMessageText(
-            '⏰ Хорошо, напомню позже!',
-            {
-                chat_id: chatId,
-                message_id: callbackQuery.message.message_id
-            }
-        );
-    }
-    // ✅ ВОССТАНОВЛЕНО: Отключить нотификации на сегодня
-    else if (data === 'disable_today') {
-        const today = new Date().toDateString();
-        notificationScheduler.set(chatId, {
-            date: today,
-            sent: true,
-            disabled: true
-        });
-        await bot.editMessageText(
-            '✅ Хорошо, не буду беспокоить до завтра! 😴',
-            {
-                chat_id: chatId,
-                message_id: callbackQuery.message.message_id
-            }
-        );
-    }   
     else if (data === 'spelling_train') {
         const userState = userStates.get(chatId);
         
@@ -2654,7 +2406,6 @@ else if (data === 'skip_review') {
             optimizedLog('⚠️ Cannot delete message');
         }
     }
-    // Обработка неизвестных callback данных
     else {
         optimizedLog(`❌ Unknown callback data: ${data}`);
         await bot.sendMessage(chatId, '❌ Неизвестная команда. Попробуйте еще раз.');
@@ -2689,42 +2440,4 @@ setTimeout(() => {
     startOptimizedNotifications();
 }, 5000);
 
-optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
