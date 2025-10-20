@@ -1265,6 +1265,13 @@ async function completeReviewSession(chatId, userState) {
 async function startNewWordsSession(chatId) {
     await initializeServices();
     
+    // ✅ ПРОВЕРКА: Если уже есть активная сессия - завершаем ее
+    const existingState = userStates.get(chatId);
+    if (existingState && existingState.state === 'learning_new_words') {
+        optimizedLog(`⚠️ Завершаем предыдущую сессию изучения для ${chatId}`);
+        await completeNewWordsSession(chatId, existingState);
+    }
+    
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
         return;
@@ -1287,11 +1294,8 @@ async function startNewWordsSession(chatId) {
             return;
         }
 
-        // ✅ ИСПРАВЛЕНИЕ: Используем правильную функцию для получения новых слов
         const availableNewWords = await getAllUnlearnedWords(chatId);
         
-        optimizedLog(`📊 Найдено новых слов для ${chatId}: ${availableNewWords.length}`);
-
         if (availableNewWords.length === 0) {
             await bot.sendMessage(chatId, 
                 `🎉 На сегодня новых слов для изучения нет!\n\n` +
@@ -1304,30 +1308,21 @@ async function startNewWordsSession(chatId) {
             return;
         }
 
-        // ✅ ИСПРАВЛЕНИЕ: Ограничиваем количество слов дневным лимитом
-        const wordsToLearn = availableNewWords.slice(0, DAILY_LIMIT - learnedToday);
-        
         userStates.set(chatId, {
             state: 'learning_new_words',
-            newWords: wordsToLearn,
+            newWords: availableNewWords,
             currentWordIndex: 0,
             learnedCount: 0,
-            originalWordsCount: wordsToLearn.length,
+            originalWordsCount: availableNewWords.length,
             lastActivity: Date.now()
         });
 
-        optimizedLog(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${wordsToLearn.length}`);
+        optimizedLog(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${availableNewWords.length}`);
         await showNextNewWord(chatId);
         
     } catch (error) {
         optimizedLog('❌ Error starting new words session:', error);
-        await bot.sendMessage(chatId, 
-            '❌ Ошибка при загрузке новых слов.\n\n' +
-            '💡 Попробуйте:\n' +
-            '• Проверить статистику: /stats\n' +
-            '• Диагностику: /debug_words\n' +
-            '• Добавить новое слово через меню'
-        );
+        await bot.sendMessage(chatId, '❌ Ошибка при загрузке новых слов.');
     }
 }
 
@@ -1456,7 +1451,6 @@ async function processNewWordLearning(chatId, action) {
             
             optimizedLog(`💾 Сохранение слова "${word.english}" как изученного сегодня: ${today}`);
             
-            // Оптимизация: используем батчинг для сохранения
             const success = await batchSheetsService.updateWordReviewBatch(
                 chatId,
                 word.english,
@@ -1470,12 +1464,20 @@ async function processNewWordLearning(chatId, action) {
                 markWordAsLearned(chatId, word.english);
                 optimizedLog(`📚 Слово "${word.english}" изучено сегодня: ${today}`);
                 
+                // ✅ УДАЛЯЕМ слово из списка
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
                 optimizedLog(`✅ Слово "${word.english}" удалено из списка. Осталось слов: ${userState.newWords.length}`);
                 
                 const currentLearnedToday = await getLearnedToday(chatId);
                 optimizedLog(`📈 После изучения "${word.english}": ${currentLearnedToday}/5 изучено сегодня`);
+                
+                // ✅ ПРОВЕРЯЕМ: если это было последнее слово - завершаем сессию
+                if (userState.newWords.length === 0) {
+                    optimizedLog(`🎯 Все слова изучены, завершение сессии`);
+                    await completeNewWordsSession(chatId, userState);
+                    return; // ✅ ВАЖНО: выходим из функции
+                }
                 
                 if (currentLearnedToday >= 5) {
                     await bot.sendMessage(chatId, 
@@ -1484,7 +1486,13 @@ async function processNewWordLearning(chatId, action) {
                         '💡 Возвращайтесь завтра для изучения новых слов.'
                     );
                     await completeNewWordsSession(chatId, userState);
-                    return;
+                    return; // ✅ ВАЖНО: выходим из функции
+                }
+                
+                // ✅ ЕСЛИ ЕСТЬ ЕЩЕ СЛОВА - продолжаем
+                // Сбрасываем индекс на 0, так как массив уменьшился
+                if (userState.currentWordIndex >= userState.newWords.length) {
+                    userState.currentWordIndex = 0;
                 }
                 
             } else {
@@ -1505,15 +1513,17 @@ async function processNewWordLearning(chatId, action) {
             userState.lastActivity = Date.now();
         }
         
-        if (userState.currentWordIndex >= userState.newWords.length) {
-            userState.currentWordIndex = 0;
-            optimizedLog(`🔄 Индекс сброшен в 0 (достигнут конец массива)`);
-        }
-        
+        // ✅ ПРОВЕРЯЕМ: не осталось ли слов после действий
         if (userState.newWords.length === 0) {
             optimizedLog(`🎯 Все слова обработаны, завершение сессии`);
             await completeNewWordsSession(chatId, userState);
             return;
+        }
+        
+        // ✅ КОРРЕКТИРУЕМ ИНДЕКС если он вышел за границы
+        if (userState.currentWordIndex >= userState.newWords.length) {
+            userState.currentWordIndex = 0;
+            optimizedLog(`🔄 Индекс сброшен в 0 (достигнут конец массива)`);
         }
         
         optimizedLog(`🔄 Переход к следующему слову. Текущий индекс: ${userState.currentWordIndex}, всего слов: ${userState.newWords.length}`);
@@ -1527,15 +1537,15 @@ async function processNewWordLearning(chatId, action) {
         );
     }
 }
-
 // ✅ ОБНОВЛЯЕМ ФУНКЦИЮ: Завершение сессии изучения новых слов
 async function completeNewWordsSession(chatId, userState) {
-    const currentLearnedToday = await getLearnedToday(chatId);
-    const originalWordsCount = userState.originalWordsCount || (userState.newWords ? userState.newWords.length + userState.learnedCount : userState.learnedCount);
-    const learnedCount = userState.learnedCount;
-    
+    // ✅ ВАЖНО: Удаляем состояние пользователя ПЕРВЫМ ДЕЛОМ
     userStates.delete(chatId);
-
+    
+    const currentLearnedToday = await getLearnedToday(chatId);
+    const originalWordsCount = userState.originalWordsCount || 0;
+    const learnedCount = userState.learnedCount || 0;
+    
     let message = '🎉 **Сессия изучения завершена!**\n\n';
     message += `📊 Результаты:\n`;
     message += `• Всего новых слов: ${originalWordsCount}\n`;
@@ -2674,6 +2684,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
