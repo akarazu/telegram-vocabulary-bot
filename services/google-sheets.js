@@ -317,23 +317,36 @@ export class GoogleSheetsService {
 }
     
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
-async getWordsForReview(chatId) {
-    const userWords = await this.getUserWords(chatId);
-    const now = new Date(); // ✅ ОРИГИНАЛЬНОЕ СЕРВЕРНОЕ ВРЕМЯ
+async getWordsForReview(userId) {
+    const userWords = await this.getUserWords(userId);
     
-    return userWords.filter(word => {
+    // ✅ Московское время для корректного сравнения
+    const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
+    const moscowNow = new Date(Date.now() + moscowOffset);
+    
+    optimizedLog(`🔍 Поиск слов для повторения для ${userId}`);
+    optimizedLog(`⏰ Московское время для сравнения: ${moscowNow.toISOString()}`);
+    
+    const reviewWords = userWords.filter(word => {
         if (!word.nextReview || word.status !== 'active' || word.interval === 1) {
             return false;
         }
         
         try {
             const nextReview = new Date(word.nextReview);
-            return nextReview <= now; // ✅ ОРИГИНАЛЬНАЯ ПРОВЕРКА
+            const isDue = nextReview <= moscowNow;
+            
+            optimizedLog(`🔍 ${word.english}: nextReview=${nextReview.toISOString()}, isDue=${isDue}`);
+            
+            return isDue;
         } catch (error) {
-            console.error('Error checking review date:', error);
+            console.error(`❌ Error checking review date for "${word.english}":`, error);
             return false;
         }
     });
+    
+    optimizedLog(`📊 Найдено слов для повторения: ${reviewWords.length}`);
+    return reviewWords;
 }
     
     // ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Получение новых слов с проверкой повторений
@@ -1143,6 +1156,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
