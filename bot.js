@@ -1169,37 +1169,17 @@ async function showReviewAnswer(chatId) {
 // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения
 async function processReviewRating(chatId, rating) {
     const userState = userStates.get(chatId);
-    if (!userState || userState.state !== 'review_session') {
-        console.log('❌ processReviewRating: Нет активной сессии повторения');
-        return;
-    }
-
-    // Проверка индекса
-    if (userState.currentReviewIndex >= userState.reviewWords.length) {
-        console.log('❌ processReviewRating: currentReviewIndex выходит за границы массива');
-        await completeReviewSession(chatId, userState);
-        return;
-    }
+    if (!userState || userState.state !== 'review_session') return;
 
     const word = userState.reviewWords[userState.currentReviewIndex];
-    if (!word) {
-        console.log('❌ processReviewRating: слово не найдено по индексу', userState.currentReviewIndex);
-        userState.reviewWords.splice(userState.currentReviewIndex, 1);
-        userState.lastActivity = Date.now();
-        await showNextReviewWord(chatId);
-        return;
-    }
+    if (!word) return;
 
-    console.log('🎯 ========== НАЧАЛО PROCESS REVIEW RATING ==========');
+    console.log('🎯 ========== PROCESS REVIEW RATING ==========');
     console.log(`🔧 Слово: ${word.english}`);
     console.log(`🔧 Оценка: ${rating}`);
-    console.log(`🔧 Текущий Interval: ${word.interval}`);
-    console.log(`🔧 Текущий LastReview: ${word.lastReview}`);
-    console.log(`🔧 Текущий NextReview: ${word.nextReview}`);
 
     try {
-        // 1. Подготовка данных для FSRS
-        console.log('📊 1. Подготовка FSRS данных...');
+        // 1. ПОДГОТОВКА ДАННЫХ ДЛЯ FSRS
         const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
@@ -1211,39 +1191,24 @@ async function processReviewRating(chatId, rating) {
             state: word.state || 1,
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
-        console.log('📊 FSRS входные данные:', cardData);
 
-        // 2. Расчет FSRS
-        console.log('📈 2. Расчет FSRS...');
-        const fsrsData = fsrsService.reviewCard(cardData, rating);
-        console.log('📈 FSRS результат:', {
-            interval: fsrsData.card.interval,
-            due: fsrsData.card.due,
-            stability: fsrsData.card.stability,
-            difficulty: fsrsData.card.difficulty
+        console.log('📊 FSRS input data:', cardData);
+
+        // 2. ВЫЗОВ FSRS
+        const fsrsResult = fsrsService.reviewCard(cardData, rating);
+        
+        // ✅ ИСПОЛЬЗУЕМ ПРАВИЛЬНУЮ СТРУКТУРУ ОТВЕТА
+        const finalInterval = fsrsResult.interval || fsrsResult.card.scheduled_days || 1;
+        const nextReviewDate = fsrsResult.card.due;
+        const lastReviewDate = new Date();
+
+        console.log('🔄 FSRS RESULT:', {
+            interval: finalInterval,
+            nextReview: nextReviewDate,
+            lastReview: lastReviewDate
         });
 
-        // 3. Корректировка интервала
-        console.log('🔧 3. Корректировка интервала...');
-        let finalInterval = fsrsData.card.interval;
-        if (rating === 'again' || rating === 'hard') {
-            finalInterval = Math.max(2, finalInterval);
-            console.log(`🔧 Плохая оценка "${rating}", интервал установлен: ${finalInterval}`);
-        }
-
-        // 4. Подготовка дат
-        console.log('📅 4. Подготовка новых дат...');
-        const nextReviewDate = new Date(Date.now() + finalInterval * 24 * 60 * 60 * 1000);
-        const lastReviewDate = new Date();
-        
-        console.log('🔄 НОВЫЕ ЗНАЧЕНИЯ:');
-        console.log(`   LastReview: ${lastReviewDate.toISOString()}`);
-        console.log(`   NextReview: ${nextReviewDate.toISOString()}`);
-        console.log(`   Interval: ${finalInterval}`);
-
-        // 5. ВЫЗОВ ФУНКЦИИ ОБНОВЛЕНИЯ
-        console.log('💾 5. ВЫЗОВ sheetsService.updateWordReview...');
-        
+        // 3. ОБНОВЛЕНИЕ В GOOGLE SHEETS
         const success = await sheetsService.updateWordReview(
             chatId,
             word.english,
@@ -1252,29 +1217,9 @@ async function processReviewRating(chatId, rating) {
             lastReviewDate
         );
 
-        console.log(`💾 РЕЗУЛЬТАТ updateWordReview: ${success}`);
-
         if (success) {
-            console.log('✅ Слово успешно обновлено в таблице');
+            console.log('✅ Word successfully updated in Google Sheets');
             userState.reviewedCount++;
-            
-            // ✅ УДАЛЯЕМ слово из массива
-            userState.reviewWords.splice(userState.currentReviewIndex, 1);
-            
-            console.log(`🗑️ Слово удалено из сессии. Осталось: ${userState.reviewWords.length}`);
-            
-            if (userState.reviewWords.length === 0) {
-                console.log('🎯 Все слова обработаны, завершение сессии');
-                await completeReviewSession(chatId, userState);
-                return;
-            }
-            
-            userState.lastActivity = Date.now();
-            await showNextReviewWord(chatId);
-            
-        } else {
-            console.log('❌ ОШИБКА: Не удалось обновить слово в таблице');
-            // ✅ ПРИ ОШИБКЕ ТОЖЕ УДАЛЯЕМ СЛОВО ИЗ СЕССИИ
             userState.reviewWords.splice(userState.currentReviewIndex, 1);
             
             if (userState.reviewWords.length === 0) {
@@ -1283,13 +1228,13 @@ async function processReviewRating(chatId, rating) {
                 userState.lastActivity = Date.now();
                 await showNextReviewWord(chatId);
             }
+        } else {
+            throw new Error('Failed to update Google Sheets');
         }
 
     } catch (error) {
-        console.log('❌ CRITICAL ERROR in processReviewRating:', error);
-        console.log('❌ Stack:', error.stack);
-        
-        // ✅ ПРИ ЛЮБОЙ ОШИБКЕ УДАЛЯЕМ СЛОВО ИЗ СЕССИИ
+        console.error('❌ Error in processReviewRating:', error);
+        // При ошибке удаляем слово из сессии и продолжаем
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -1300,9 +1245,8 @@ async function processReviewRating(chatId, rating) {
         }
     }
     
-    console.log('🎯 ========== КОНЕЦ PROCESS REVIEW RATING ==========');
+    console.log('🎯 ========== END PROCESS REVIEW RATING ==========');
 }
-
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
@@ -2780,6 +2724,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
