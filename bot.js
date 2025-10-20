@@ -1560,7 +1560,7 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
 
-        // ✅ ВОССТАНОВЛЕНО: Расписание повторений
+        // ✅ ВОССТАНОВЛЕНО: Расписание с временем
         const now = new Date();
         const futureWords = activeWords.filter(word => {
             if (!word.nextReview || word.interval === 1) return false;
@@ -1572,12 +1572,13 @@ async function showUserStats(chatId) {
             }
         });
         
-        // Группируем слова по дате повторения
+        // Группируем слова по дате и часу повторения
         const schedule = {};
         futureWords.forEach(word => {
             try {
                 const reviewDate = new Date(word.nextReview);
-                const dateKey = reviewDate.toISOString().split('T')[0]; // Группируем по дате (без времени)
+                // Группируем по дате и часу (без минут)
+                const dateKey = reviewDate.toISOString().slice(0, 13) + ':00';
                 
                 if (!schedule[dateKey]) {
                     schedule[dateKey] = [];
@@ -1590,7 +1591,7 @@ async function showUserStats(chatId) {
         
         // Сортируем даты и выбираем ближайшие
         const sortedDates = Object.keys(schedule).sort();
-        const nearestDates = sortedDates.slice(0, 7); // Ближайшие 7 дней
+        const nearestDates = sortedDates.slice(0, 10); // Ближайшие 10 временных слотов
         
         if (nearestDates.length > 0) {
             const nearestDate = nearestDates[0];
@@ -1598,29 +1599,36 @@ async function showUserStats(chatId) {
             const nearestCount = schedule[nearestDate].length;
             
             message += `\n⏰ **Ближайшее повторение:**\n`;
-            message += `• ${formatScheduleDate(nearestReview)}: ${nearestCount} слов\n`;
+            message += `• ${formatTimeWithCountdown(nearestReview)}: ${nearestCount} слов\n`;
             
             if (nearestDates.length > 1) {
-                message += `\n📅 **Расписание на неделю:**\n`;
+                message += `\n📅 **Ближайшие повторения:**\n`;
                 
                 nearestDates.slice(0, 5).forEach(dateKey => {
                     const reviewDate = new Date(dateKey);
                     const wordCount = schedule[dateKey].length;
-                    message += `• ${formatScheduleDate(reviewDate)}: ${wordCount} слов\n`;
+                    message += `• ${formatTimeWithCountdown(reviewDate)}: ${wordCount} слов\n`;
                 });
                 
                 if (nearestDates.length > 5) {
-                    const remainingDays = nearestDates.slice(5);
-                    const totalRemaining = remainingDays.reduce((total, date) => total + schedule[date].length, 0);
-                    message += `• ... и еще ${totalRemaining} слов в следующие дни\n`;
+                    const remainingSlots = nearestDates.slice(5);
+                    const totalRemaining = remainingSlots.reduce((total, date) => total + schedule[date].length, 0);
+                    message += `• ... и еще ${totalRemaining} слов в следующие часы\n`;
                 }
             }
         } else if (reviewWordsCount > 0) {
-            message += `\n⏰ **Ближайшее повторение:** готово сейчас!\n`;
+            message += `\n⏰ **Ближайшее повторение:** 🔔 ГОТОВО СЕЙЧАС!\n`;
             message += `🎯 Начните повторение через меню "📚 Повторить слова"\n`;
         } else {
             message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
         }
+        
+        // Текущее время сервера и московское
+        const serverTime = new Date();
+        const moscowTime = toMoscowTime(serverTime);
+        
+        message += `\n🕐 **Время сервера:** ${formatTimeDetailed(serverTime)}`;
+        message += `\n🇷🇺 **Московское время:** ${formatTimeDetailed(moscowTime)}`;
         
         // Дополнительная информация о новых словах
         if (newWordsCount > 0) {
@@ -1628,9 +1636,10 @@ async function showUserStats(chatId) {
                 .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
                 .slice(0, 3);
             
-            message += `\n🆕 **Последние новые слова:**\n`;
+            message += `\n\n🆕 **Последние новые слова:**\n`;
             recentNewWords.forEach(word => {
-                message += `• ${word.english} - ${word.meanings[0]?.translation || 'перевод'}\n`;
+                const timeAdded = formatMoscowDate(word.createdDate);
+                message += `• ${word.english} (добавлено: ${timeAdded})\n`;
             });
         }
         
@@ -1647,6 +1656,78 @@ async function showUserStats(chatId) {
         optimizedLog('❌ Error showing stats:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
     }
+}
+
+// ✅ ФУНКЦИЯ: Детальное форматирование времени
+function formatTimeDetailed(date) {
+    const moscowDate = toMoscowTime(date);
+    
+    const day = moscowDate.getDate().toString().padStart(2, '0');
+    const month = (moscowDate.getMonth() + 1).toString().padStart(2, '0');
+    const year = moscowDate.getFullYear();
+    const hours = moscowDate.getHours().toString().padStart(2, '0');
+    const minutes = moscowDate.getMinutes().toString().padStart(2, '0');
+    const seconds = moscowDate.getSeconds().toString().padStart(2, '0');
+    
+    const daysOfWeek = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+    const dayOfWeek = daysOfWeek[moscowDate.getDay()];
+    
+    return `${day}.${month}.${year} ${hours}:${minutes}:${seconds} (${dayOfWeek})`;
+}
+
+// ✅ ФУНКЦИЯ: Конвертация в московское время
+function toMoscowTime(date) {
+    if (!date) return date;
+    
+    try {
+        const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа для Москвы
+        return new Date(date.getTime() + moscowOffset);
+    } catch (error) {
+        return date;
+    }
+}
+
+// ✅ ФУНКЦИЯ: Форматирование времени с обратным отсчетом
+function formatTimeWithCountdown(date) {
+    const now = new Date();
+    const targetDate = new Date(date);
+    
+    // Используем московское время для расчетов
+    const moscowOffset = 3 * 60 * 60 * 1000;
+    const moscowNow = new Date(now.getTime() + moscowOffset);
+    const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
+    
+    const diffTime = moscowTarget - moscowNow;
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const diffMinutes = Math.floor((diffTime % (1000 * 60 * 60)) / (1000 * 60));
+    
+    const day = moscowTarget.getDate().toString().padStart(2, '0');
+    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
+    const hours = moscowTarget.getHours().toString().padStart(2, '0');
+    const minutes = moscowTarget.getMinutes().toString().padStart(2, '0');
+    
+    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
+    
+    let timeString = `${day}.${month} ${hours}:${minutes}`;
+    
+    // Добавляем обратный отсчет
+    if (diffDays === 0) {
+        if (diffHours === 0) {
+            timeString += ` (через ${diffMinutes} мин)`;
+        } else {
+            timeString += ` (через ${diffHours} ч ${diffMinutes} мин)`;
+        }
+    } else if (diffDays === 1) {
+        timeString += ` (завтра, через ${diffDays} дн)`;
+    } else if (diffDays <= 7) {
+        timeString += ` (${dayOfWeek}, через ${diffDays} дн)`;
+    } else {
+        timeString += ` (${dayOfWeek})`;
+    }
+    
+    return timeString;
 }
 
 // ✅ ФУНКЦИЯ: Форматирование даты для расписания
@@ -2557,6 +2638,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
