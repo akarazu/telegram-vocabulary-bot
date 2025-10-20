@@ -232,7 +232,81 @@ export class GoogleSheetsService {
         return words.filter(w => w.status === 'active' && w.nextReview && new Date(w.nextReview) <= now);
     }
 
-    // ======================= Batch Update =======================
+    // ======================= Get Review Words Count =======================
+    async getReviewWordsCount(userId) {
+        const reviewWords = await this.getWordsForReview(userId);
+        return reviewWords.length;
+    }
+
+    // ======================= Get New Words Count =======================
+    async getNewWordsCount(userId) {
+        const words = await this.getUserWords(userId);
+        return words.filter(w => w.status === 'active' && w.interval === 1).length;
+    }
+
+    // ======================= Get All Active Users =======================
+    async getAllActiveUsers() {
+        if (!this.initialized) return [];
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:O'
+            });
+
+            const rows = response.data.values || [];
+            const users = new Set();
+            
+            rows.slice(1).forEach(row => {
+                if (row[0] && (row[9] === 'active' || !row[9])) {
+                    users.add(row[0]);
+                }
+            });
+
+            return Array.from(users);
+        } catch (e) {
+            console.error('❌ Error getting active users:', e.message);
+            return [];
+        }
+    }
+
+    // ======================= Reset User Progress =======================
+    async resetUserProgress(userId) {
+        if (!this.initialized) return false;
+        try {
+            const words = await this.getUserWords(userId);
+            const updates = [];
+
+            for (const word of words) {
+                if (word.status === 'active') {
+                    updates.push({
+                        english: word.english,
+                        data: {
+                            lastReview: new Date(),
+                            nextReview: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                            interval: 1,
+                            firstLearnedDate: '',
+                            ease: 2.5,
+                            repetitions: 0,
+                            rating: 0
+                        }
+                    });
+                }
+            }
+
+            if (updates.length > 0) {
+                await this.batchUpdateWords(userId, updates);
+            }
+
+            this.cache.delete(`words_${userId}`);
+            this.cache.delete(`review_${userId}`);
+            return true;
+        } catch (e) {
+            console.error('❌ Error resetting user progress:', e.message);
+            return false;
+        }
+    }
+
+    // ======================= Batch Update Words =======================
     async batchUpdateWords(userId, updates) {
         if (!this.initialized) return false;
         try {
@@ -308,6 +382,43 @@ export class GoogleSheetsService {
             return true;
         } catch (e) {
             console.error('❌ Error adding meaning:', e.message);
+            return false;
+        }
+    }
+
+    // ======================= Migrate First Learned Dates =======================
+    async migrateFirstLearnedDates(userId) {
+        if (!this.initialized) return false;
+        try {
+            const words = await this.getUserWords(userId);
+            const updates = [];
+
+            for (const word of words) {
+                if (word.status === 'active' && word.interval > 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')) {
+                    // Если слово изучено (interval > 1) но нет FirstLearnedDate, устанавливаем его
+                    updates.push({
+                        english: word.english,
+                        data: {
+                            lastReview: word.lastReview ? new Date(word.lastReview) : new Date(),
+                            nextReview: word.nextReview ? new Date(word.nextReview) : new Date(),
+                            interval: word.interval,
+                            firstLearnedDate: word.createdDate || new Date().toISOString(),
+                            ease: word.ease || 2.5,
+                            repetitions: word.repetitions || 0,
+                            rating: word.rating || 0
+                        }
+                    });
+                }
+            }
+
+            if (updates.length > 0) {
+                await this.batchUpdateWords(userId, updates);
+                console.log(`✅ Migrated ${updates.length} first learned dates for user ${userId}`);
+            }
+
+            return true;
+        } catch (e) {
+            console.error('❌ Error migrating first learned dates:', e.message);
             return false;
         }
     }
