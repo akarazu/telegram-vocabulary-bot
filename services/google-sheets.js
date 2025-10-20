@@ -598,7 +598,7 @@ async batchUpdateWords(chatId, wordUpdates) {
 }
     
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
- async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
+async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
     if (!this.initialized) {
         return false;
     }
@@ -622,32 +622,26 @@ async batchUpdateWords(chatId, wordUpdates) {
         }
 
         if (rowIndex === -1) {
-            console.error('❌ Word not found for update:', english);
             return false;
         }
 
-        // ✅ ПРАВИЛЬНЫЕ СТОЛБЦЫ ДЛЯ ОБНОВЛЕНИЯ:
-        // G: LastReview, H: NextReview, I: Interval
         const currentRow = rows[rowIndex - 1];
         const currentFirstLearnedDate = currentRow[10] || '';
         
         let finalFirstLearnedDate = currentFirstLearnedDate;
         
-        // Если слово изучается впервые и у него нет FirstLearnedDate
         if ((!currentFirstLearnedDate || currentFirstLearnedDate === '') && newInterval > 1) {
             finalFirstLearnedDate = lastReview ? lastReview.toISOString() : new Date().toISOString();
-            console.log(`🎯 Установлен FirstLearnedDate для "${english}": ${finalFirstLearnedDate}`);
         }
 
         const updateData = [
-            lastReview ? lastReview.toISOString() : new Date().toISOString(), // LastReview (G)
-            nextReviewDate.toISOString(), // NextReview (H)
-            newInterval.toString(),        // Interval (I)
-            'active',                      // Status (J)
-            finalFirstLearnedDate          // FirstLearnedDate (K)
+            lastReview ? lastReview.toISOString() : new Date().toISOString(),
+            nextReviewDate.toISOString(),
+            newInterval.toString(),
+            'active',
+            finalFirstLearnedDate
         ];
 
-        // ✅ ПРАВИЛЬНЫЙ ДИАПАЗОН: G-K (LastReview до FirstLearnedDate)
         await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
             range: `Words!G${rowIndex}:K${rowIndex}`,
@@ -657,64 +651,14 @@ async batchUpdateWords(chatId, wordUpdates) {
             }
         });
 
-        // Инвалидируем кеш
         this.cache.delete(`words_${userId}`);
         this.cache.delete(`review_${userId}`);
-
-        console.log(`✅ Updated review for word "${english}":`);
-        console.log(`   📅 LastReview: ${updateData[0]}`);
-        console.log(`   🔄 NextReview: ${updateData[1]}`);
-        console.log(`   📊 Interval: ${updateData[2]}`);
-        console.log(`   🎓 FirstLearnedDate: ${updateData[4]}`);
         
         return true;
     } catch (error) {
-        console.error('❌ Error updating word review:', error.message);
         return false;
     }
 }
-    
-    // ✅ ДОБАВЛЕНА ФУНКЦИЯ: Получение информации о датах повторения (для отладки)
-    async getReviewDatesInfo(userId) {
-        if (!this.initialized) {
-            return [];
-        }
-        
-        try {
-            const userWords = await this.getUserWords(userId);
-            const now = new Date();
-            
-            const datesInfo = userWords
-                .filter(word => word.interval > 1)
-                .map(word => {
-                    try {
-                        const nextReview = new Date(word.nextReview);
-                        const timeDiff = nextReview - now;
-                        const hoursUntil = Math.floor(timeDiff / (1000 * 60 * 60));
-                        const daysUntil = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-                        
-                        return {
-                            word: word.english,
-                            nextReview: nextReview.toISOString(),
-                            interval: word.interval,
-                            isDue: nextReview <= now,
-                            hoursUntil: hoursUntil,
-                            daysUntil: daysUntil
-                        };
-                    } catch (error) {
-                        return {
-                            word: word.english,
-                            error: 'Invalid date'
-                        };
-                    }
-                });
-            
-            return datesInfo;
-        } catch (error) {
-            console.error('❌ Error getting review dates info:', error.message);
-            return [];
-        }
-    }
     
     // ✅ ФУНКЦИЯ: Добавление нового значения к существующему слову
    async addMeaningToWord(userId, english, newMeaning) {
@@ -1190,6 +1134,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
