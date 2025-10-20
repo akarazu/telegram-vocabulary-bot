@@ -123,14 +123,14 @@ export class GoogleSheetsService {
                         audioUrl || '',
                         meaningsJSON,
                         now.toISOString(),
-                        '',
-                        nextReview.toISOString(),
-                        1,
-                        'active',
-                        '',
-                        2.5,
-                        0,
-                        0
+                        '',                     // LastReview
+                        nextReview.toISOString(),// NextReview
+                        1,                       // Interval
+                        'active',                // Status
+                        '',                      // FirstLearnedDate
+                        2.5,                     // Ease
+                        0,                       // Repetitions
+                        0                        // Rating
                     ]]
                 }
             });
@@ -178,13 +178,13 @@ export class GoogleSheetsService {
         });
     }
 
-    // ======================= Update Word After Review =======================
-    async updateWordReview(userId, english, fsrsData, rating) {
+    // ======================= Update Word After FSRS Review =======================
+    async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
         if (!this.initialized) return false;
         try {
-            const userWords = await this.getUserWords(userId);
-            const currentWord = userWords.find(w => w.english.toLowerCase() === english.toLowerCase());
-            if (!currentWord) return false;
+            const words = await this.getUserWords(userId);
+            const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
+            if (!word) return false;
 
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
@@ -192,10 +192,11 @@ export class GoogleSheetsService {
             });
 
             const rows = response.data.values || [];
-            let rowIndex = rows.findIndex(row => row[0] === userId.toString() && row[1].toLowerCase() === english.toLowerCase()) + 1;
+            const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
             if (rowIndex === 0) return false;
 
-            const firstLearnedDate = currentWord.firstLearnedDate || (fsrsData.card.interval > 1 ? new Date().toISOString() : '');
+            // Устанавливаем FirstLearnedDate если ещё нет
+            const firstLearnedDate = word.firstLearnedDate || (fsrsCard.interval > 1 ? new Date().toISOString() : '');
 
             await this.sheets.spreadsheets.values.update({
                 spreadsheetId: this.spreadsheetId,
@@ -203,14 +204,14 @@ export class GoogleSheetsService {
                 valueInputOption: 'RAW',
                 resource: {
                     values: [[
-                        new Date().toISOString(),          // LastReview
-                        fsrsData.card.due.toISOString(),   // NextReview
-                        fsrsData.card.interval.toString(), // Interval
-                        'active',                          // Status
-                        firstLearnedDate,                  // FirstLearnedDate
-                        fsrsData.card.ease.toFixed(2),     // Ease
-                        fsrsData.card.repetitions.toString(), // Repetitions
-                        rating                              // Rating
+                        new Date().toISOString(),           // LastReview
+                        fsrsCard.due.toISOString(),         // NextReview
+                        fsrsCard.interval.toString(),       // Interval
+                        'active',                           // Status
+                        firstLearnedDate,                   // FirstLearnedDate
+                        fsrsCard.ease.toFixed(2),           // Ease
+                        fsrsCard.repetitions.toString(),    // Repetitions
+                        rating                               // Rating
                     ]]
                 }
             });
@@ -219,7 +220,7 @@ export class GoogleSheetsService {
             this.cache.delete(`review_${userId}`);
             return true;
         } catch (e) {
-            console.error('❌ Error updating word:', e.message);
+            console.error('❌ Error updating FSRS review:', e.message);
             return false;
         }
     }
@@ -232,47 +233,46 @@ export class GoogleSheetsService {
     }
 
     // ======================= Batch Update =======================
-    async batchUpdateWords(userId, updatesData) {
+    async batchUpdateWords(userId, updates) {
         if (!this.initialized) return false;
         try {
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
                 range: 'Words!A:O'
             });
-
             const rows = response.data.values || [];
-            const updates = [];
+            const batch = [];
 
-            for (const { english, data } of updatesData) {
-                const rowIndex = rows.findIndex(row => row[0] === userId.toString() && row[1].toLowerCase() === english.toLowerCase()) + 1;
-                if (rowIndex === 0) continue;
+            for (const update of updates) {
+                const idx = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === update.english.toLowerCase()) + 1;
+                if (idx === 0) continue;
 
-                updates.push({
-                    range: `Words!G${rowIndex}:O${rowIndex}`,
+                batch.push({
+                    range: `Words!G${idx}:O${idx}`,
                     values: [[
-                        data.lastReview.toISOString(),
-                        data.nextReview.toISOString(),
-                        data.interval.toString(),
+                        update.data.lastReview.toISOString(),
+                        update.data.nextReview.toISOString(),
+                        update.data.interval.toString(),
                         'active',
-                        data.firstLearnedDate || '',
-                        data.ease.toFixed(2),
-                        data.repetitions.toString(),
-                        data.rating
+                        update.data.firstLearnedDate || '',
+                        update.data.ease.toFixed(2),
+                        update.data.repetitions.toString(),
+                        update.data.rating
                     ]]
                 });
             }
 
-            if (updates.length > 0) {
+            if (batch.length > 0) {
                 await this.sheets.spreadsheets.values.batchUpdate({
                     spreadsheetId: this.spreadsheetId,
-                    resource: { valueInputOption: 'RAW', data: updates }
+                    resource: { valueInputOption: 'RAW', data: batch }
                 });
                 this.cache.delete(`words_${userId}`);
             }
 
             return true;
         } catch (e) {
-            console.error('❌ Batch update error:', e.message);
+            console.error('❌ Batch update FSRS error:', e.message);
             return false;
         }
     }
