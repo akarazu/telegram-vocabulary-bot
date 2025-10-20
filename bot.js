@@ -1169,7 +1169,8 @@ async function processReviewRating(chatId, rating) {
 
     const word = userState.reviewWords[userState.currentReviewIndex];
     
-    optimizedLog(`🔧 Processing rating: ${rating} for word: ${word.english}, current interval: ${word.interval}`);
+    optimizedLog(`🔧 Processing rating: ${rating} for word: ${word.english}`);
+    optimizedLog(`📊 Current state - Interval: ${word.interval}, LastReview: ${word.lastReview}, NextReview: ${word.nextReview}`);
     
     try {
         const cardData = {
@@ -1190,15 +1191,16 @@ async function processReviewRating(chatId, rating) {
         let finalInterval = fsrsData.card.interval;
         
         if (rating === 'again' || rating === 'hard') {
-            // Для плохих оценок устанавливаем МИНИМАЛЬНЫЙ интервал 2 дня
             finalInterval = Math.max(2, finalInterval);
-            optimizedLog(`🔧 Слово "${word.english}" - плохая оценка "${rating}", интервал установлен: ${finalInterval} дней`);
         }
 
         const nextReviewDate = new Date(Date.now() + finalInterval * 24 * 60 * 60 * 1000);
-        const lastReviewDate = new Date();
+        const lastReviewDate = new Date(); // ✅ Текущее время как LastReview
 
-        const success = await batchSheetsService.updateWordReviewBatch(
+        optimizedLog(`🔄 New values - Interval: ${finalInterval}, LastReview: ${lastReviewDate.toISOString()}, NextReview: ${nextReviewDate.toISOString()}`);
+
+        // ✅ ПРОБУЕМ ПРЯМОЙ ВЫЗОВ СНАЧАЛА
+        let success = await sheetsService.updateWordReview(
             chatId,
             word.english,
             finalInterval,
@@ -1206,37 +1208,50 @@ async function processReviewRating(chatId, rating) {
             lastReviewDate
         );
 
+        // ✅ ЕСЛИ НЕ СРАБОТАЛО - ПРОБУЕМ БАТЧ
+        if (!success) {
+            optimizedLog(`⚠️ sheetsService не сработал, пробуем batchSheetsService`);
+            success = await batchSheetsService.updateWordReviewBatch(
+                chatId,
+                word.english,
+                finalInterval,
+                nextReviewDate,
+                lastReviewDate
+            );
+        }
+
         if (success) {
             userState.reviewedCount++;
             
-            // ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: Удаляем слово из текущего массива reviewWords
-            // чтобы оно не показывалось снова в этой сессии
-            userState.reviewWords.splice(userState.currentReviewIndex, 1);
+            // ✅ ОЧИЩАЕМ КЕШ ДЛЯ ОБНОВЛЕНИЯ ДАННЫХ
+            const cacheKey = `words_${chatId}`;
+            cache.delete(cacheKey);
             
             optimizedLog(`✅ Слово "${word.english}" обновлено: rating=${rating}, interval=${finalInterval} дней`);
-            optimizedLog(`🗑️ Слово удалено из текущей сессии. Осталось слов: ${userState.reviewWords.length}`);
+            optimizedLog(`🗑️ Кеш очищен, LastReview должен обновиться`);
 
-            // ✅ ПРОВЕРЯЕМ: если слова закончились - завершаем сессию
+            // Удаляем слово из текущей сессии
+            userState.reviewWords.splice(userState.currentReviewIndex, 1);
+
             if (userState.reviewWords.length === 0) {
-                optimizedLog(`🎯 Все слова в сессии обработаны, завершение`);
                 await completeReviewSession(chatId, userState);
                 return;
             }
-            
-            // ✅ ЕСЛИ ЕСТЬ ЕЩЕ СЛОВА: 
-            // Не увеличиваем currentReviewIndex, так как мы удалили текущий элемент
-            // Массив сдвинулся, поэтому currentReviewIndex уже указывает на следующее слово
             
             userState.lastActivity = Date.now();
             await showNextReviewWord(chatId);
             
         } else {
-            await bot.sendMessage(chatId, '❌ Ошибка при сохранении.');
+            optimizedLog(`❌ ОШИБКА: Не удалось обновить слово "${word.english}"`);
+            await bot.sendMessage(chatId, 
+                '❌ Ошибка при сохранении прогресса.\n' +
+                'Попробуйте еще раз или используйте /clear_cache'
+            );
         }
 
     } catch (error) {
         optimizedLog('❌ Error processing review rating:', error);
-        // ✅ ПРИ ОШИБКЕ ТОЖЕ УДАЛЯЕМ СЛОВО ИЗ СЕССИИ
+        // При ошибке все равно удаляем слово из сессии
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -2723,6 +2738,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
