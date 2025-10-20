@@ -1174,7 +1174,7 @@ async function processReviewRating(chatId, rating) {
         return;
     }
 
-    // ✅ ПРОВЕРКА: что currentReviewIndex корректен и слово существует
+    // Проверка индекса
     if (userState.currentReviewIndex >= userState.reviewWords.length) {
         console.log('❌ processReviewRating: currentReviewIndex выходит за границы массива');
         await completeReviewSession(chatId, userState);
@@ -1182,11 +1182,8 @@ async function processReviewRating(chatId, rating) {
     }
 
     const word = userState.reviewWords[userState.currentReviewIndex];
-    
-    // ✅ ПРОВЕРКА: что слово существует
     if (!word) {
         console.log('❌ processReviewRating: слово не найдено по индексу', userState.currentReviewIndex);
-        // Удаляем битое слово и продолжаем
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         userState.lastActivity = Date.now();
         await showNextReviewWord(chatId);
@@ -1257,19 +1254,6 @@ async function processReviewRating(chatId, rating) {
 
         console.log(`💾 РЕЗУЛЬТАТ updateWordReview: ${success}`);
 
-        if (!success) {
-            console.log('⚠️ sheetsService не сработал, пробуем batchSheetsService...');
-            const batchSuccess = await batchSheetsService.updateWordReviewBatch(
-                chatId,
-                word.english,
-                finalInterval,
-                nextReviewDate,
-                lastReviewDate
-            );
-            console.log(`💾 РЕЗУЛЬТАТ batchSheetsService: ${batchSuccess}`);
-        }
-
-        // 6. Обработка результата
         if (success) {
             console.log('✅ Слово успешно обновлено в таблице');
             userState.reviewedCount++;
@@ -1278,8 +1262,6 @@ async function processReviewRating(chatId, rating) {
             userState.reviewWords.splice(userState.currentReviewIndex, 1);
             
             console.log(`🗑️ Слово удалено из сессии. Осталось: ${userState.reviewWords.length}`);
-            
-            // ✅ НЕ УВЕЛИЧИВАЕМ currentReviewIndex, так как массив сдвинулся
             
             if (userState.reviewWords.length === 0) {
                 console.log('🎯 Все слова обработаны, завершение сессии');
@@ -1320,6 +1302,7 @@ async function processReviewRating(chatId, rating) {
     
     console.log('🎯 ========== КОНЕЦ PROCESS REVIEW RATING ==========');
 }
+
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
@@ -2797,6 +2780,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
