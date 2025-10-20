@@ -1,5 +1,5 @@
 import pkg from 'ts-fsrs';
-import { sheetsService } from './GoogleSheetsService'; // твой сервис для Google Sheets
+
 const { fsrs, generatorParameters, createEmptyCard } = pkg;
 
 export class FSRSService {
@@ -13,6 +13,7 @@ export class FSRSService {
 
             this.scheduler = fsrs(this.parameters);
             this.isInitialized = true;
+            console.log('✅ FSRS initialized successfully');
         } catch (error) {
             console.error('❌ FSRS initialization failed:', error);
             this.scheduler = null;
@@ -20,9 +21,6 @@ export class FSRSService {
         }
     }
 
-    /**
-     * Создаёт новую карточку для слова
-     */
     createNewCard() {
         const now = new Date();
         const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -40,11 +38,8 @@ export class FSRSService {
         };
     }
 
-    /**
-     * Безопасное преобразование рейтинга
-     */
-    safeConvertRating(rating: string) {
-        const ratingMap: Record<string, number> = {
+    safeConvertRating(rating) {
+        const ratingMap = {
             'again': 1,
             'review_again': 1,
             'hard': 2,
@@ -57,10 +52,7 @@ export class FSRSService {
         return ratingMap[rating] || 3;
     }
 
-    /**
-     * Простое fallback обновление, если FSRS не работает
-     */
-    simpleFallback(cardData: any, rating: string) {
+    simpleFallback(cardData, rating) {
         const now = new Date();
         let interval;
         switch (rating) {
@@ -103,10 +95,7 @@ export class FSRSService {
         };
     }
 
-    /**
-     * Создаёт FSRS-карточку из данных
-     */
-    createCard(cardData: any) {
+    createCard(cardData) {
         const card = createEmptyCard();
         const now = new Date();
 
@@ -123,13 +112,9 @@ export class FSRSService {
         return card;
     }
 
-    /**
-     * Обновление слова после повторения
-     */
-    async reviewCard(userId: string | number, word: string, cardData: any, rating: string) {
+    async reviewCard(userId, word, cardData, rating) {
         if (!this.isInitialized || !this.scheduler) {
             const fallback = this.simpleFallback(cardData, rating);
-            await sheetsService.updateWordAfterReview(userId, word, fallback.card, fallback.rating);
             return fallback;
         }
 
@@ -163,14 +148,11 @@ export class FSRSService {
                 rating: rating
             };
 
-            await sheetsService.updateWordAfterReview(userId, word, updatedCard.card, rating);
-
             return updatedCard;
 
         } catch (error) {
             console.error('❌ FSRS review failed, fallback used:', error);
             const fallback = this.simpleFallback(cardData, rating);
-            await sheetsService.updateWordAfterReview(userId, word, fallback.card, fallback.rating);
             return fallback;
         }
     }
