@@ -1273,8 +1273,11 @@ async function startNewWordsSession(chatId) {
             return;
         }
 
-        const availableNewWords = await getAvailableNewWordsForToday(chatId, learnedToday);
+        // ✅ ИСПРАВЛЕНИЕ: Используем правильную функцию для получения новых слов
+        const availableNewWords = await getAllUnlearnedWords(chatId);
         
+        optimizedLog(`📊 Найдено новых слов для ${chatId}: ${availableNewWords.length}`);
+
         if (availableNewWords.length === 0) {
             await bot.sendMessage(chatId, 
                 `🎉 На сегодня новых слов для изучения нет!\n\n` +
@@ -1287,53 +1290,64 @@ async function startNewWordsSession(chatId) {
             return;
         }
 
+        // ✅ ИСПРАВЛЕНИЕ: Ограничиваем количество слов дневным лимитом
+        const wordsToLearn = availableNewWords.slice(0, DAILY_LIMIT - learnedToday);
+        
         userStates.set(chatId, {
             state: 'learning_new_words',
-            newWords: availableNewWords,
+            newWords: wordsToLearn,
             currentWordIndex: 0,
             learnedCount: 0,
-            originalWordsCount: availableNewWords.length,
+            originalWordsCount: wordsToLearn.length,
             lastActivity: Date.now()
         });
 
-        optimizedLog(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${availableNewWords.length}`);
+        optimizedLog(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${wordsToLearn.length}`);
         await showNextNewWord(chatId);
         
     } catch (error) {
         optimizedLog('❌ Error starting new words session:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при загрузке новых слов.');
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при загрузке новых слов.\n\n' +
+            '💡 Попробуйте:\n' +
+            '• Проверить статистику: /stats\n' +
+            '• Диагностику: /debug_words\n' +
+            '• Добавить новое слово через меню'
+        );
     }
 }
 
 // ✅ НОВАЯ ФУНКЦИЯ: Получение доступных новых слов на сегодня
 async function getAllUnlearnedWords(chatId) {
     if (!servicesInitialized || !sheetsService.initialized) {
+        optimizedLog('❌ Сервисы не инициализированы в getAllUnlearnedWords');
         return [];
     }
     
     try {
         const userWords = await getCachedUserWords(chatId);
         
-        optimizedLog(`🔍 Поиск ВСЕХ не изученных слов для ${chatId}`);
+        optimizedLog(`🔍 Поиск не изученных слов для ${chatId}, всего слов: ${userWords.length}`);
 
         const unlearnedWords = userWords.filter(word => {
-            if (!word.nextReview || word.status !== 'active') return false;
-            
-            try {
-                // ✅ Слово считается не изученным если:
-                // 1. Интервал = 1 (новое слово)
-                // 2. ИЛИ FirstLearnedDate отсутствует (никогда не изучалось)
-                const isNewWord = word.interval === 1 || !word.firstLearnedDate || word.firstLearnedDate.trim() === '';
-                const isNotLearned = !isWordLearned(chatId, word.english);
-                
-                return isNewWord && isNotLearned;
-            } catch (error) {
-                optimizedLog(`❌ Ошибка проверки слова "${word.english}"`);
+            if (word.status !== 'active') {
+                optimizedLog(`⏭️ Слово "${word.english}" не активно: status=${word.status}`);
                 return false;
             }
+            
+            // ✅ Слово считается не изученным если Interval = 1
+            const isUnlearned = word.interval === 1;
+            
+            if (isUnlearned) {
+                optimizedLog(`✅ Слово "${word.english}" - новое: interval=${word.interval}`);
+            } else {
+                optimizedLog(`⏭️ Слово "${word.english}" - изученное: interval=${word.interval}`);
+            }
+            
+            return isUnlearned;
         });
 
-        optimizedLog(`📊 Найдено всех не изученных слов: ${unlearnedWords.length}`);
+        optimizedLog(`📊 Найдено не изученных слов: ${unlearnedWords.length}`);
         
         // Сортируем по дате создания (новые слова в начале)
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
@@ -2638,6 +2652,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
