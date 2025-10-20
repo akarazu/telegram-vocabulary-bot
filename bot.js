@@ -1539,17 +1539,11 @@ async function showUserStats(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         
-        // ✅ ВСЕ активные слова (вне зависимости от FirstLearnedDate)
+        // Основная статистика
         const totalWordsCount = activeWords.length;
-        
-        // Слова для повторения
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
-        
-        // ✅ НОВЫЕ слова - все с Interval = 1 (FirstLearnedDate не важен)
         const newWords = activeWords.filter(word => word.interval === 1);
         const newWordsCount = newWords.length;
-        
-        // ✅ ИЗУЧЕННЫЕ СЕГОДНЯ - только слова с FirstLearnedDate сегодня
         const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
@@ -1565,19 +1559,126 @@ async function showUserStats(chatId) {
         } else {
             message += `✅ Дневной лимит достигнут!\n`;
         }
+
+        // ✅ ВОССТАНОВЛЕНО: Расписание повторений
+        const now = new Date();
+        const futureWords = activeWords.filter(word => {
+            if (!word.nextReview || word.interval === 1) return false;
+            try {
+                const nextReview = new Date(word.nextReview);
+                return nextReview > now;
+            } catch (e) {
+                return false;
+            }
+        });
         
-        // Дополнительная информация
+        // Группируем слова по дате повторения
+        const schedule = {};
+        futureWords.forEach(word => {
+            try {
+                const reviewDate = new Date(word.nextReview);
+                const dateKey = reviewDate.toISOString().split('T')[0]; // Группируем по дате (без времени)
+                
+                if (!schedule[dateKey]) {
+                    schedule[dateKey] = [];
+                }
+                schedule[dateKey].push(word);
+            } catch (e) {
+                // Пропускаем слова с некорректной датой
+            }
+        });
+        
+        // Сортируем даты и выбираем ближайшие
+        const sortedDates = Object.keys(schedule).sort();
+        const nearestDates = sortedDates.slice(0, 7); // Ближайшие 7 дней
+        
+        if (nearestDates.length > 0) {
+            const nearestDate = nearestDates[0];
+            const nearestReview = new Date(nearestDate);
+            const nearestCount = schedule[nearestDate].length;
+            
+            message += `\n⏰ **Ближайшее повторение:**\n`;
+            message += `• ${formatScheduleDate(nearestReview)}: ${nearestCount} слов\n`;
+            
+            if (nearestDates.length > 1) {
+                message += `\n📅 **Расписание на неделю:**\n`;
+                
+                nearestDates.slice(0, 5).forEach(dateKey => {
+                    const reviewDate = new Date(dateKey);
+                    const wordCount = schedule[dateKey].length;
+                    message += `• ${formatScheduleDate(reviewDate)}: ${wordCount} слов\n`;
+                });
+                
+                if (nearestDates.length > 5) {
+                    const remainingDays = nearestDates.slice(5);
+                    const totalRemaining = remainingDays.reduce((total, date) => total + schedule[date].length, 0);
+                    message += `• ... и еще ${totalRemaining} слов в следующие дни\n`;
+                }
+            }
+        } else if (reviewWordsCount > 0) {
+            message += `\n⏰ **Ближайшее повторение:** готово сейчас!\n`;
+            message += `🎯 Начните повторение через меню "📚 Повторить слова"\n`;
+        } else {
+            message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
+        }
+        
+        // Дополнительная информация о новых словах
+        if (newWordsCount > 0) {
+            const recentNewWords = newWords
+                .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
+                .slice(0, 3);
+            
+            message += `\n🆕 **Последние новые слова:**\n`;
+            recentNewWords.forEach(word => {
+                message += `• ${word.english} - ${word.meanings[0]?.translation || 'перевод'}\n`;
+            });
+        }
+        
+        // Информация о прогрессе
         const learnedWords = activeWords.filter(word => word.interval > 1);
+        const progressPercentage = totalWordsCount > 0 ? Math.round((learnedWords.length / totalWordsCount) * 100) : 0;
         
-        message += `\n🔍 **Детали:**\n`;
-        message += `• Изученных слов: ${learnedWords.length}\n`;
-        message += `• Новых слов: ${newWordsCount}\n`;
+        message += `\n🎓 **Общий прогресс:** ${progressPercentage}% изучено`;
+        message += `\n   (${learnedWords.length} из ${totalWordsCount} слов)`;
         
         await bot.sendMessage(chatId, message, getMainMenu());
         
     } catch (error) {
         optimizedLog('❌ Error showing stats:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
+    }
+}
+
+// ✅ ФУНКЦИЯ: Форматирование даты для расписания
+function formatScheduleDate(date) {
+    const now = new Date();
+    const targetDate = new Date(date);
+    
+    // Используем московское время для расчетов
+    const moscowOffset = 3 * 60 * 60 * 1000;
+    const moscowNow = new Date(now.getTime() + moscowOffset);
+    const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
+    
+    const diffTime = moscowTarget - moscowNow;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    const day = moscowTarget.getDate().toString().padStart(2, '0');
+    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
+    const year = moscowTarget.getFullYear();
+    
+    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
+    
+    if (diffDays === 0) {
+        return `сегодня (${day}.${month}.${year})`;
+    } else if (diffDays === 1) {
+        return `завтра (${day}.${month}.${year})`;
+    } else if (diffDays === 2) {
+        return `послезавтра (${day}.${month}.${year})`;
+    } else if (diffDays <= 7) {
+        return `${day}.${month}.${year} (${dayOfWeek}, через ${diffDays} дн.)`;
+    } else {
+        return `${day}.${month}.${year} (${dayOfWeek})`;
     }
 }
 
@@ -2456,6 +2557,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
