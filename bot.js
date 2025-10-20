@@ -994,6 +994,17 @@ function scheduleMorningNotification() {
 async function startReviewSession(chatId) {
     await initializeServices();
     
+    // ✅ ПРЕЖДЕ ЧЕМ НАЧАТЬ: Очищаем предыдущее состояние
+    const existingState = userStates.get(chatId);
+    if (existingState) {
+        optimizedLog(`⚠️ Очищаем предыдущее состояние для ${chatId}: ${existingState.state}`);
+        userStates.delete(chatId);
+        
+        // Очищаем кеш
+        const cacheKey = `words_${chatId}`;
+        cache.delete(cacheKey);
+    }
+    
     if (!sheetsService.initialized) {
         await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
         return;
@@ -1030,6 +1041,7 @@ async function startReviewSession(chatId) {
             return;
         }
 
+        // ✅ СОЗДАЕМ НОВОЕ СОСТОЯНИЕ
         userStates.set(chatId, {
             state: 'review_session',
             reviewWords: validReviewWords,
@@ -1237,12 +1249,20 @@ async function processReviewRating(chatId, rating) {
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
-    const totalWords = userState.reviewWords.length;
-    const reviewedCount = userState.reviewedCount;
+    // ✅ ВАЖНО: Полностью очищаем состояние пользователя
+    userStates.delete(chatId);
+    
+    // ✅ Очищаем кеш для этого пользователя
+    const cacheKeys = [
+        `words_${chatId}`,
+        `review_${chatId}`
+    ];
+    cacheKeys.forEach(key => cache.delete(key));
+    
+    const totalWords = userState?.reviewWords?.length || 0;
+    const reviewedCount = userState?.reviewedCount || 0;
     const skippedCount = totalWords - reviewedCount;
     
-    userStates.delete(chatId);
-
     let message = '🎉 **Сессия повторения завершена!**\n\n';
     message += `📊 Результаты:\n`;
     message += `• Всего слов: ${totalWords}\n`;
@@ -1259,17 +1279,19 @@ async function completeReviewSession(chatId, userState) {
         message += `\n`;
     }
     
-    message += `💡 Вы можете:\n`;
-    message += `• Начать новую сессию повторения\n`;
-    message += `• Изучить новые слова\n`;
-    message += `• Посмотреть статистику\n`;
-    
-    // ✅ ПРОВЕРЯЕМ ЕСТЬ ЛИ ЕЩЕ СЛОВА ДЛЯ ПОВТОРЕНИЯ
+    // ✅ ПРОВЕРЯЕМ ЕСТЬ ЛИ ЕЩЕ СЛОВА ДЛЯ ПОВТОРЕНИЯ (с очисткой кеша)
     const hasMoreWords = await hasWordsForReview(chatId);
     if (hasMoreWords) {
         const remainingCount = await sheetsService.getReviewWordsCount(chatId);
-        message += `\n📚 Осталось слов для повторения: ${remainingCount}`;
+        message += `📚 Осталось слов для повторения: ${remainingCount}\n`;
+    } else {
+        message += `✅ Все слова повторены!\n`;
     }
+    
+    message += `\n💡 Вы можете:\n`;
+    message += `• Начать новую сессию повторения\n`;
+    message += `• Изучить новые слова\n`;
+    message += `• Посмотреть статистику\n`;
     
     await bot.sendMessage(chatId, message, getMainMenu());
 }
@@ -2701,6 +2723,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
