@@ -229,7 +229,7 @@ export class GoogleSheetsService {
 }
 
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение слов пользователя с новой структурой
- async getUserWords(userId) {
+async getUserWords(userId) {
     if (!this.initialized) {
         return [];
     }
@@ -252,9 +252,9 @@ export class GoogleSheetsService {
             );
 
             return userWords.map(row => {
-                // ✅ ПРАВИЛЬНЫЕ ИНДЕКСЫ СТОЛБЦОВ:
+                // ✅ ПРАВИЛЬНЫЕ ИНДЕКСЫ СТОЛБЦОВ для вашей таблицы:
                 // A=0: UserID, B=1: English, C=2: Transcription, D=3: AudioURL
-                // E=4: MeaningsJSON, F=5: CreatedDate, G=6: LastReview
+                // E=4: Data (MeaningsJSON), F=5: Date (CreatedDate), G=6: LastReview
                 // H=7: NextReview, I=8: Interval, J=9: Status, K=10: FirstLearnedDate
                 
                 const userId = row[0] || '';
@@ -263,11 +263,11 @@ export class GoogleSheetsService {
                 const audioUrl = row[3] || '';
                 const meaningsJSON = row[4] || '[]';
                 const createdDate = row[5] || new Date().toISOString();
-                const lastReview = row[6] || '';
-                const nextReview = row[7] || new Date().toISOString();
-                const interval = parseInt(row[8]) || 1;
+                const lastReview = row[6] || '';        // ✅ СТОЛБЕЦ G
+                const nextReview = row[7] || new Date().toISOString(); // ✅ СТОЛБЕЦ H
+                const interval = parseInt(row[8]) || 1; // ✅ СТОЛБЕЦ I
                 const status = row[9] || 'active';
-                const firstLearnedDate = row[10] || ''; // ✅ СТОЛБЕЦ K - индекс 10
+                const firstLearnedDate = row[10] || ''; // ✅ СТОЛБЕЦ K
 
                 let meanings = [];
                 
@@ -302,11 +302,11 @@ export class GoogleSheetsService {
                     audioUrl,
                     meanings,
                     createdDate,
-                    lastReview,
-                    nextReview,
-                    interval,
+                    lastReview,        // ✅ ПРАВИЛЬНОЕ ПОЛЕ
+                    nextReview,        // ✅ ПРАВИЛЬНОЕ ПОЛЕ  
+                    interval,          // ✅ ПРАВИЛЬНОЕ ПОЛЕ
                     status,
-                    firstLearnedDate // ✅ ПРАВИЛЬНОЕ ПОЛЕ
+                    firstLearnedDate   // ✅ ПРАВИЛЬНОЕ ПОЛЕ
                 };
             });
         } catch (error) {
@@ -315,6 +315,7 @@ export class GoogleSheetsService {
         }
     });
 }
+
     
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Получение слов для повторения
 async getWordsForReview(userId) {
@@ -474,7 +475,7 @@ async batchUpdateWords(chatId, wordUpdates) {
 
             if (rowIndex !== -1) {
                 const currentRow = rows[rowIndex - 1];
-                const currentFirstLearnedDate = currentRow[10] || ''; // ✅ СТОЛБЕЦ K - индекс 10
+                const currentFirstLearnedDate = currentRow[10] || '';
                 
                 let firstLearnedDate = currentFirstLearnedDate;
                 if ((!currentFirstLearnedDate || currentFirstLearnedDate === '') && 
@@ -483,14 +484,15 @@ async batchUpdateWords(chatId, wordUpdates) {
                     console.log(`🎯 Установлен FirstLearnedDate для "${english}": ${firstLearnedDate}`);
                 }
 
+                // ✅ ПРАВИЛЬНЫЙ ДИАПАЗОН: G-K
                 updates.push({
-                    range: `Words!G${rowIndex}:K${rowIndex}`, // ✅ G-K (LastReview до FirstLearnedDate)
+                    range: `Words!G${rowIndex}:K${rowIndex}`,
                     values: [[
-                        data.lastReview ? data.lastReview.toISOString() : new Date().toISOString(),
-                        data.nextReview.toISOString(),
-                        data.interval.toString(),
-                        'active',
-                        firstLearnedDate // ✅ СТОЛБЕЦ K
+                        data.lastReview ? data.lastReview.toISOString() : new Date().toISOString(), // G: LastReview
+                        data.nextReview.toISOString(), // H: NextReview
+                        data.interval.toString(),      // I: Interval
+                        'active',                      // J: Status
+                        firstLearnedDate               // K: FirstLearnedDate
                     ]]
                 });
             }
@@ -596,16 +598,15 @@ async batchUpdateWords(chatId, wordUpdates) {
 }
     
     // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обновление повторения с новой структурой
- async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null, firstLearnedDate = null) {
+ async updateWordReview(userId, english, newInterval, nextReviewDate, lastReview = null) {
     if (!this.initialized) {
         return false;
     }
     
     try {
-        // ✅ ИСПРАВЛЕНИЕ: Ищем в правильном диапазоне A:K (11 столбцов)
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:K', // ✅ БЫЛО: A:J, СТАЛО: A:K
+            range: 'Words!A:K',
         });
         
         const rows = response.data.values || [];
@@ -625,11 +626,12 @@ async batchUpdateWords(chatId, wordUpdates) {
             return false;
         }
 
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем столбцы с правильными данными
+        // ✅ ПРАВИЛЬНЫЕ СТОЛБЦЫ ДЛЯ ОБНОВЛЕНИЯ:
+        // G: LastReview, H: NextReview, I: Interval
         const currentRow = rows[rowIndex - 1];
-        const currentFirstLearnedDate = currentRow[10] || ''; // Столбец K
+        const currentFirstLearnedDate = currentRow[10] || '';
         
-        let finalFirstLearnedDate = firstLearnedDate ? firstLearnedDate.toISOString() : currentFirstLearnedDate;
+        let finalFirstLearnedDate = currentFirstLearnedDate;
         
         // Если слово изучается впервые и у него нет FirstLearnedDate
         if ((!currentFirstLearnedDate || currentFirstLearnedDate === '') && newInterval > 1) {
@@ -645,10 +647,10 @@ async batchUpdateWords(chatId, wordUpdates) {
             finalFirstLearnedDate          // FirstLearnedDate (K)
         ];
 
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем диапазон G:K (5 столбцов)
+        // ✅ ПРАВИЛЬНЫЙ ДИАПАЗОН: G-K (LastReview до FirstLearnedDate)
         await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
-            range: `Words!G${rowIndex}:K${rowIndex}`, // ✅ БЫЛО: G:I, СТАЛО: G:K
+            range: `Words!G${rowIndex}:K${rowIndex}`,
             valueInputOption: 'RAW',
             resource: {
                 values: [updateData]
@@ -1188,6 +1190,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
