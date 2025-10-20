@@ -324,8 +324,8 @@ async getWordsForReview(userId) {
     const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
     const moscowNow = new Date(Date.now() + moscowOffset);
     
-    optimizedLog(`🔍 Поиск слов для повторения для ${userId}`);
-    optimizedLog(`⏰ Московское время для сравнения: ${moscowNow.toISOString()}`);
+    console.log(`🔍 Поиск слов для повторения для ${userId}`);
+    console.log(`⏰ Московское время для сравнения: ${moscowNow.toISOString()}`);
     
     const reviewWords = userWords.filter(word => {
         if (!word.nextReview || word.status !== 'active' || word.interval === 1) {
@@ -336,7 +336,7 @@ async getWordsForReview(userId) {
             const nextReview = new Date(word.nextReview);
             const isDue = nextReview <= moscowNow;
             
-            optimizedLog(`🔍 ${word.english}: nextReview=${nextReview.toISOString()}, isDue=${isDue}`);
+            console.log(`🔍 ${word.english}: nextReview=${nextReview.toISOString()}, isDue=${isDue}`);
             
             return isDue;
         } catch (error) {
@@ -345,7 +345,7 @@ async getWordsForReview(userId) {
         }
     });
     
-    optimizedLog(`📊 Найдено слов для повторения: ${reviewWords.length}`);
+    console.log(`📊 Найдено слов для повторения: ${reviewWords.length}`);
     return reviewWords;
 }
     
@@ -1156,6 +1156,7 @@ async migrateFirstLearnedDates(userId) {
 // Запускаем сервис при импорте
 const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
