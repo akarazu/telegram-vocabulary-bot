@@ -1340,28 +1340,32 @@ async function getAllUnlearnedWords(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
         
-        optimizedLog(`🔍 Поиск НОВЫХ слов для ${chatId}`);
+        optimizedLog(`🔍 Поиск новых слов для ${chatId}, всего слов: ${userWords.length}`);
 
         const unlearnedWords = userWords.filter(word => {
-            if (word.status !== 'active') return false;
-            
-            // ✅ Слово считается новым ТОЛЬКО если:
-            // 1. Interval = 1 
-            // 2. И FirstLearnedDate ОТСУТСТВУЕТ (никогда не изучалось)
-            const isTrulyNew = word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
-            
-            if (isTrulyNew) {
-                optimizedLog(`🆕 Слово "${word.english}" - НОВОЕ (никогда не изучалось)`);
-            } else if (word.interval === 1 && word.firstLearnedDate) {
-                optimizedLog(`🚫 Слово "${word.english}" - Interval=1, но имеет FirstLearnedDate - ЭТО ОШИБКА!`);
+            if (word.status !== 'active') {
+                optimizedLog(`⏭️ ${word.english} - статус не active: ${word.status}`);
+                return false;
             }
             
-            return isTrulyNew;
+            // ✅ Строгая проверка: Interval=1 И FirstLearnedDate отсутствует
+            const hasFirstLearnedDate = word.firstLearnedDate && word.firstLearnedDate.trim() !== '';
+            const isNewWord = word.interval === 1 && !hasFirstLearnedDate;
+            
+            if (isNewWord) {
+                optimizedLog(`✅ ${word.english} - НОВОЕ СЛОВО: interval=1, FirstLearnedDate отсутствует`);
+            } else if (word.interval === 1 && hasFirstLearnedDate) {
+                optimizedLog(`🚫 ${word.english} - Interval=1, но имеет FirstLearnedDate: ${word.firstLearnedDate}`);
+            } else if (word.interval > 1) {
+                optimizedLog(`⏭️ ${word.english} - изученное: interval=${word.interval}`);
+            }
+            
+            return isNewWord;
         });
 
         optimizedLog(`📊 Найдено новых слов: ${unlearnedWords.length}`);
         
-        // Сортируем по дате создания
+        // Сортируем по дате создания (новые в начале)
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
 
         return unlearnedWords;
@@ -2670,6 +2674,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
