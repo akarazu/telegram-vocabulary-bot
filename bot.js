@@ -1165,14 +1165,23 @@ async function showReviewAnswer(chatId) {
 // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения
 async function processReviewRating(chatId, rating) {
     const userState = userStates.get(chatId);
-    if (!userState || userState.state !== 'review_session') return;
+    if (!userState || userState.state !== 'review_session') {
+        console.log('❌ processReviewRating: Нет активной сессии повторения');
+        return;
+    }
 
     const word = userState.reviewWords[userState.currentReviewIndex];
     
-    optimizedLog(`🔧 Processing rating: ${rating} for word: ${word.english}`);
-    optimizedLog(`📊 Current state - Interval: ${word.interval}, LastReview: ${word.lastReview}, NextReview: ${word.nextReview}`);
-    
+    console.log('🎯 ========== НАЧАЛО PROCESS REVIEW RATING ==========');
+    console.log(`🔧 Слово: ${word.english}`);
+    console.log(`🔧 Оценка: ${rating}`);
+    console.log(`🔧 Текущий Interval: ${word.interval}`);
+    console.log(`🔧 Текущий LastReview: ${word.lastReview}`);
+    console.log(`🔧 Текущий NextReview: ${word.nextReview}`);
+
     try {
+        // 1. Подготовка данных для FSRS
+        console.log('📊 1. Подготовка FSRS данных...');
         const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
@@ -1184,23 +1193,40 @@ async function processReviewRating(chatId, rating) {
             state: word.state || 1,
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
+        console.log('📊 FSRS входные данные:', cardData);
 
+        // 2. Расчет FSRS
+        console.log('📈 2. Расчет FSRS...');
         const fsrsData = fsrsService.reviewCard(cardData, rating);
+        console.log('📈 FSRS результат:', {
+            interval: fsrsData.card.interval,
+            due: fsrsData.card.due,
+            stability: fsrsData.card.stability,
+            difficulty: fsrsData.card.difficulty
+        });
 
-        // ✅ ПРОВЕРКА: Не позволяем интервалу стать 1 для изученных слов
+        // 3. Корректировка интервала
+        console.log('🔧 3. Корректировка интервала...');
         let finalInterval = fsrsData.card.interval;
-        
         if (rating === 'again' || rating === 'hard') {
             finalInterval = Math.max(2, finalInterval);
+            console.log(`🔧 Плохая оценка "${rating}", интервал установлен: ${finalInterval}`);
         }
 
+        // 4. Подготовка дат
+        console.log('📅 4. Подготовка новых дат...');
         const nextReviewDate = new Date(Date.now() + finalInterval * 24 * 60 * 60 * 1000);
-        const lastReviewDate = new Date(); // ✅ Текущее время как LastReview
+        const lastReviewDate = new Date();
+        
+        console.log('🔄 НОВЫЕ ЗНАЧЕНИЯ:');
+        console.log(`   LastReview: ${lastReviewDate.toISOString()}`);
+        console.log(`   NextReview: ${nextReviewDate.toISOString()}`);
+        console.log(`   Interval: ${finalInterval}`);
 
-        optimizedLog(`🔄 New values - Interval: ${finalInterval}, LastReview: ${lastReviewDate.toISOString()}, NextReview: ${nextReviewDate.toISOString()}`);
-
-        // ✅ ПРОБУЕМ ПРЯМОЙ ВЫЗОВ СНАЧАЛА
-        let success = await sheetsService.updateWordReview(
+        // 5. ВЫЗОВ ФУНКЦИИ ОБНОВЛЕНИЯ
+        console.log('💾 5. ВЫЗОВ sheetsService.updateWordReview...');
+        
+        const success = await sheetsService.updateWordReview(
             chatId,
             word.english,
             finalInterval,
@@ -1208,32 +1234,30 @@ async function processReviewRating(chatId, rating) {
             lastReviewDate
         );
 
-        // ✅ ЕСЛИ НЕ СРАБОТАЛО - ПРОБУЕМ БАТЧ
+        console.log(`💾 РЕЗУЛЬТАТ updateWordReview: ${success}`);
+
         if (!success) {
-            optimizedLog(`⚠️ sheetsService не сработал, пробуем batchSheetsService`);
-            success = await batchSheetsService.updateWordReviewBatch(
+            console.log('⚠️ sheetsService не сработал, пробуем batchSheetsService...');
+            const batchSuccess = await batchSheetsService.updateWordReviewBatch(
                 chatId,
                 word.english,
                 finalInterval,
                 nextReviewDate,
                 lastReviewDate
             );
+            console.log(`💾 РЕЗУЛЬТАТ batchSheetsService: ${batchSuccess}`);
         }
 
+        // 6. Обработка результата
         if (success) {
+            console.log('✅ Слово успешно обновлено в таблице');
             userState.reviewedCount++;
-            
-            // ✅ ОЧИЩАЕМ КЕШ ДЛЯ ОБНОВЛЕНИЯ ДАННЫХ
-            const cacheKey = `words_${chatId}`;
-            cache.delete(cacheKey);
-            
-            optimizedLog(`✅ Слово "${word.english}" обновлено: rating=${rating}, interval=${finalInterval} дней`);
-            optimizedLog(`🗑️ Кеш очищен, LastReview должен обновиться`);
-
-            // Удаляем слово из текущей сессии
             userState.reviewWords.splice(userState.currentReviewIndex, 1);
-
+            
+            console.log(`🗑️ Слово удалено из сессии. Осталось: ${userState.reviewWords.length}`);
+            
             if (userState.reviewWords.length === 0) {
+                console.log('🎯 Все слова обработаны, завершение сессии');
                 await completeReviewSession(chatId, userState);
                 return;
             }
@@ -1242,24 +1266,19 @@ async function processReviewRating(chatId, rating) {
             await showNextReviewWord(chatId);
             
         } else {
-            optimizedLog(`❌ ОШИБКА: Не удалось обновить слово "${word.english}"`);
+            console.log('❌ ОШИБКА: Не удалось обновить слово в таблице');
             await bot.sendMessage(chatId, 
                 '❌ Ошибка при сохранении прогресса.\n' +
-                'Попробуйте еще раз или используйте /clear_cache'
+                'Данные не сохранились в таблице.'
             );
         }
 
     } catch (error) {
-        optimizedLog('❌ Error processing review rating:', error);
-        // При ошибке все равно удаляем слово из сессии
-        userState.reviewWords.splice(userState.currentReviewIndex, 1);
-        
-        if (userState.reviewWords.length === 0) {
-            await completeReviewSession(chatId, userState);
-        } else {
-            await showNextReviewWord(chatId);
-        }
+        console.log('❌ CRITICAL ERROR in processReviewRating:', error);
+        console.log('❌ Stack:', error.stack);
     }
+    
+    console.log('🎯 ========== КОНЕЦ PROCESS REVIEW RATING ==========');
 }
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
@@ -2738,6 +2757,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
