@@ -1066,30 +1066,34 @@ async function showNextReviewWord(chatId) {
         return;
     }
 
-    const { reviewWords, currentReviewIndex, reviewedCount } = userState;
+    const { reviewWords } = userState;
     
+    // ✅ ПРОВЕРКА: если массив пуст
     if (!reviewWords || reviewWords.length === 0) {
-        await bot.sendMessage(chatId, '🎉 Все слова повторены! Сессия завершена.');
-        userStates.delete(chatId);
+        console.log('🎯 showNextReviewWord: массив reviewWords пуст, завершение сессии');
+        await completeReviewSession(chatId, userState);
         return;
     }
     
-    // ✅ ПРОВЕРКА: если индекс вышел за границы (после удаления слов)
-    if (currentReviewIndex >= reviewWords.length) {
-        userState.currentReviewIndex = 0; // Сбрасываем на начало
+    // ✅ ПРОВЕРКА: если индекс вышел за границы
+    if (userState.currentReviewIndex >= reviewWords.length) {
+        console.log('🔄 showNextReviewWord: индекс вышел за границы, сбрасываем в 0');
+        userState.currentReviewIndex = 0;
     }
 
     const word = reviewWords[userState.currentReviewIndex];
     
+    // ✅ ПРОВЕРКА: что слово существует
     if (!word) {
-        optimizedLog(`❌ Word not found at index ${userState.currentReviewIndex}`);
-        userState.reviewWords.splice(userState.currentReviewIndex, 1); // Удаляем битое слово
+        console.log('❌ showNextReviewWord: слово не найдено по индексу', userState.currentReviewIndex);
+        // Удаляем битое слово и рекурсивно вызываем снова
+        userState.reviewWords.splice(userState.currentReviewIndex, 1);
         userState.lastActivity = Date.now();
         await showNextReviewWord(chatId);
         return;
     }
     
-    const progress = `${userState.currentReviewIndex + 1}/${reviewWords.length} (${reviewedCount} оценено)`;
+    const progress = `${userState.currentReviewIndex + 1}/${reviewWords.length} (${userState.reviewedCount} оценено)`;
     
     let message = `📚 Повторение слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -1170,8 +1174,25 @@ async function processReviewRating(chatId, rating) {
         return;
     }
 
+    // ✅ ПРОВЕРКА: что currentReviewIndex корректен и слово существует
+    if (userState.currentReviewIndex >= userState.reviewWords.length) {
+        console.log('❌ processReviewRating: currentReviewIndex выходит за границы массива');
+        await completeReviewSession(chatId, userState);
+        return;
+    }
+
     const word = userState.reviewWords[userState.currentReviewIndex];
     
+    // ✅ ПРОВЕРКА: что слово существует
+    if (!word) {
+        console.log('❌ processReviewRating: слово не найдено по индексу', userState.currentReviewIndex);
+        // Удаляем битое слово и продолжаем
+        userState.reviewWords.splice(userState.currentReviewIndex, 1);
+        userState.lastActivity = Date.now();
+        await showNextReviewWord(chatId);
+        return;
+    }
+
     console.log('🎯 ========== НАЧАЛО PROCESS REVIEW RATING ==========');
     console.log(`🔧 Слово: ${word.english}`);
     console.log(`🔧 Оценка: ${rating}`);
@@ -1252,9 +1273,13 @@ async function processReviewRating(chatId, rating) {
         if (success) {
             console.log('✅ Слово успешно обновлено в таблице');
             userState.reviewedCount++;
+            
+            // ✅ УДАЛЯЕМ слово из массива
             userState.reviewWords.splice(userState.currentReviewIndex, 1);
             
             console.log(`🗑️ Слово удалено из сессии. Осталось: ${userState.reviewWords.length}`);
+            
+            // ✅ НЕ УВЕЛИЧИВАЕМ currentReviewIndex, так как массив сдвинулся
             
             if (userState.reviewWords.length === 0) {
                 console.log('🎯 Все слова обработаны, завершение сессии');
@@ -1267,15 +1292,30 @@ async function processReviewRating(chatId, rating) {
             
         } else {
             console.log('❌ ОШИБКА: Не удалось обновить слово в таблице');
-            await bot.sendMessage(chatId, 
-                '❌ Ошибка при сохранении прогресса.\n' +
-                'Данные не сохранились в таблице.'
-            );
+            // ✅ ПРИ ОШИБКЕ ТОЖЕ УДАЛЯЕМ СЛОВО ИЗ СЕССИИ
+            userState.reviewWords.splice(userState.currentReviewIndex, 1);
+            
+            if (userState.reviewWords.length === 0) {
+                await completeReviewSession(chatId, userState);
+            } else {
+                userState.lastActivity = Date.now();
+                await showNextReviewWord(chatId);
+            }
         }
 
     } catch (error) {
         console.log('❌ CRITICAL ERROR in processReviewRating:', error);
         console.log('❌ Stack:', error.stack);
+        
+        // ✅ ПРИ ЛЮБОЙ ОШИБКЕ УДАЛЯЕМ СЛОВО ИЗ СЕССИИ
+        userState.reviewWords.splice(userState.currentReviewIndex, 1);
+        
+        if (userState.reviewWords.length === 0) {
+            await completeReviewSession(chatId, userState);
+        } else {
+            userState.lastActivity = Date.now();
+            await showNextReviewWord(chatId);
+        }
     }
     
     console.log('🎯 ========== КОНЕЦ PROCESS REVIEW RATING ==========');
@@ -2757,6 +2797,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
