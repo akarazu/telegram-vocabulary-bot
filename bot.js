@@ -342,14 +342,20 @@ async function getLearnedToday(chatId) {
         userWords.forEach(word => {
             if (word.status !== 'active') return;
             
-            // ✅ Учитываем ТОЛЬКО изученные слова (Interval > 1) с FirstLearnedDate сегодня
+            // ✅ Учитываем ТОЛЬКО слова которые ПЕРВЫЙ РАЗ изучены сегодня
+            // Исключаем слова которые были изучены ранее (имеют FirstLearnedDate из прошлого)
             if (word.interval > 1 && word.firstLearnedDate && word.firstLearnedDate.trim() !== '') {
                 try {
                     const learnedDate = new Date(word.firstLearnedDate);
                     const moscowLearned = new Date(learnedDate.getTime() + moscowOffset);
                     
+                    // ✅ Считаем слово изученным сегодня ТОЛЬКО если FirstLearnedDate сегодня
+                    // И слово было изучено впервые (не возвращено на повторение)
                     if (moscowLearned >= todayStart && moscowLearned <= todayEnd) {
                         learnedToday++;
+                        optimizedLog(`✅ Слово "${word.english}" изучено СЕГОДНЯ впервые: ${moscowLearned.toLocaleString('ru-RU')}`);
+                    } else {
+                        optimizedLog(`⏭️ Слово "${word.english}" изучено ранее: ${moscowLearned.toLocaleString('ru-RU')}`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
@@ -1152,7 +1158,7 @@ async function processReviewRating(chatId, rating) {
 
     const word = userState.reviewWords[userState.currentReviewIndex];
     
-    optimizedLog(`🔧 Processing rating: ${rating} for word: ${word.english}, index: ${userState.currentReviewIndex}/${userState.reviewWords.length}`);
+    optimizedLog(`🔧 Processing rating: ${rating} for word: ${word.english}, current interval: ${word.interval}`);
     
     try {
         const cardData = {
@@ -1169,26 +1175,35 @@ async function processReviewRating(chatId, rating) {
 
         const fsrsData = fsrsService.reviewCard(cardData, rating);
 
+        // ✅ ПРОВЕРКА: Не позволяем интервалу стать 1 для изученных слов
+        let finalInterval = fsrsData.card.interval;
+        
+        if (rating === 'again' || rating === 'hard') {
+            // Для плохих оценок устанавливаем МИНИМАЛЬНЫЙ интервал 2 дня
+            finalInterval = Math.max(2, finalInterval);
+            optimizedLog(`🔧 Слово "${word.english}" - плохая оценка "${rating}", интервал установлен: ${finalInterval} дней`);
+        }
+
+        const nextReviewDate = new Date(Date.now() + finalInterval * 24 * 60 * 60 * 1000);
+        const lastReviewDate = new Date();
+
         const success = await batchSheetsService.updateWordReviewBatch(
             chatId,
             word.english,
-            fsrsData.interval,
-            fsrsData.due,
-            new Date()
+            finalInterval,
+            nextReviewDate,
+            lastReviewDate
         );
 
         if (success) {
             userState.reviewedCount++;
-            userState.currentReviewIndex++; // ✅ Увеличиваем индекс
+            userState.currentReviewIndex++;
             
-            optimizedLog(`🔧 After rating: index=${userState.currentReviewIndex}, total=${userState.reviewWords.length}`);
+            optimizedLog(`✅ Слово "${word.english}" обновлено: rating=${rating}, interval=${finalInterval} дней`);
 
-            // ✅ ПРОВЕРЯЕМ ЗАВЕРШЕНИЕ СЕССИИ
             if (userState.currentReviewIndex >= userState.reviewWords.length) {
-                optimizedLog(`🎯 Session completed: ${userState.reviewedCount} words reviewed`);
                 await completeReviewSession(chatId, userState);
             } else {
-                // ✅ ПРОДОЛЖАЕМ СЛЕДУЮЩЕЕ СЛОВО
                 userState.lastActivity = Date.now();
                 await showNextReviewWord(chatId);
             }
@@ -1198,7 +1213,6 @@ async function processReviewRating(chatId, rating) {
 
     } catch (error) {
         optimizedLog('❌ Error processing review rating:', error);
-        // ✅ ПРИ ОШИБКЕ ТОЖЕ ПРОДОЛЖАЕМ
         userState.currentReviewIndex++;
         if (userState.currentReviewIndex >= userState.reviewWords.length) {
             await completeReviewSession(chatId, userState);
@@ -1320,42 +1334,40 @@ async function startNewWordsSession(chatId) {
 // ✅ НОВАЯ ФУНКЦИЯ: Получение доступных новых слов на сегодня
 async function getAllUnlearnedWords(chatId) {
     if (!servicesInitialized || !sheetsService.initialized) {
-        optimizedLog('❌ Сервисы не инициализированы в getAllUnlearnedWords');
         return [];
     }
     
     try {
         const userWords = await getCachedUserWords(chatId);
         
-        optimizedLog(`🔍 Поиск не изученных слов для ${chatId}, всего слов: ${userWords.length}`);
+        optimizedLog(`🔍 Поиск НОВЫХ слов для ${chatId}`);
 
         const unlearnedWords = userWords.filter(word => {
-            if (word.status !== 'active') {
-                optimizedLog(`⏭️ Слово "${word.english}" не активно: status=${word.status}`);
-                return false;
+            if (word.status !== 'active') return false;
+            
+            // ✅ Слово считается новым ТОЛЬКО если:
+            // 1. Interval = 1 
+            // 2. И FirstLearnedDate ОТСУТСТВУЕТ (никогда не изучалось)
+            const isTrulyNew = word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
+            
+            if (isTrulyNew) {
+                optimizedLog(`🆕 Слово "${word.english}" - НОВОЕ (никогда не изучалось)`);
+            } else if (word.interval === 1 && word.firstLearnedDate) {
+                optimizedLog(`🚫 Слово "${word.english}" - Interval=1, но имеет FirstLearnedDate - ЭТО ОШИБКА!`);
             }
             
-            // ✅ Слово считается не изученным если Interval = 1
-            const isUnlearned = word.interval === 1;
-            
-            if (isUnlearned) {
-                optimizedLog(`✅ Слово "${word.english}" - новое: interval=${word.interval}`);
-            } else {
-                optimizedLog(`⏭️ Слово "${word.english}" - изученное: interval=${word.interval}`);
-            }
-            
-            return isUnlearned;
+            return isTrulyNew;
         });
 
-        optimizedLog(`📊 Найдено не изученных слов: ${unlearnedWords.length}`);
+        optimizedLog(`📊 Найдено новых слов: ${unlearnedWords.length}`);
         
-        // Сортируем по дате создания (новые слова в начале)
+        // Сортируем по дате создания
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
 
         return unlearnedWords;
         
     } catch (error) {
-        optimizedLog('❌ Error getting all unlearned words:', error);
+        optimizedLog('❌ Error getting unlearned words:', error);
         return [];
     }
 }
@@ -1385,8 +1397,14 @@ async function showNextNewWord(chatId) {
     const totalWords = newWords.length;
     const progress = `${currentPosition}/${totalWords}`;
     
-    let message = `🆕 Изучение новых слов ${progress}\n\n`;
-    message += `📊 Изучено сегодня: ${currentLearnedToday}/5\n\n`;
+    // ✅ Определяем статус слова
+    const wordStatus = word.firstLearnedDate ? 
+        `🔄 Возвращено на повторение (изучено: ${formatMoscowDate(word.firstLearnedDate)})` : 
+        `🆕 Новое слово`;
+    
+    let message = `🎯 Изучение слов ${progress}\n\n`;
+    message += `📊 Изучено сегодня: ${currentLearnedToday}/5\n`;
+    message += `📝 Статус: ${wordStatus}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
     
     if (word.transcription) {
@@ -2652,6 +2670,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
