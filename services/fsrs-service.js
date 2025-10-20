@@ -1,14 +1,14 @@
 import pkg from 'ts-fsrs';
-const { fsrs, generatorParameters, createEmptyCard, Grade } = pkg;
+const { fsrs, generatorParameters, createEmptyCard } = pkg;
 
 export class FSRSService {
     constructor() {
         try {
             // ✅ ПРОСТЫЕ И ЧЕТКИЕ ПАРАМЕТРЫ
             this.parameters = generatorParameters({
-                request_retention: 0.9,    // Увеличим retention для лучших результатов
-                maximum_interval: 36500,   // Увеличим максимальный интервал
-                enable_fuzz: false         // Отключим fuzz для предсказуемости
+                request_retention: 0.9,
+                maximum_interval: 36500,
+                enable_fuzz: false
             });
             
             this.scheduler = fsrs(this.parameters);
@@ -41,7 +41,7 @@ export class FSRSService {
                 reps: card.reps
             });
 
-            // 2. КОНВЕРТИРУЕМ РЕЙТИНГ
+            // 2. КОНВЕРТИРУЕМ РЕЙТИНГ (ИСПОЛЬЗУЕМ ЧИСЛА ВМЕСТО Grade)
             const grade = this.safeConvertRating(rating);
             console.log(`📈 Rating: ${rating} -> Grade: ${grade}`);
 
@@ -109,20 +109,21 @@ export class FSRSService {
         return card;
     }
 
-    // ✅ ПРОСТАЯ И БЕЗОПАСНАЯ КОНВЕРТАЦИЯ РЕЙТИНГА
+    // ✅ ПРОСТАЯ И БЕЗОПАСНАЯ КОНВЕРТАЦИЯ РЕЙТИНГА (ИСПОЛЬЗУЕМ ЧИСЛА)
     safeConvertRating(rating) {
+        // FSRS Grades: 1=Again, 2=Hard, 3=Good, 4=Easy
         const ratingMap = {
-            'again': Grade.Again,
-            'review_again': Grade.Again,
-            'hard': Grade.Hard,
-            'review_hard': Grade.Hard,
-            'good': Grade.Good,
-            'review_good': Grade.Good,
-            'easy': Grade.Easy,
-            'review_easy': Grade.Easy
+            'again': 1,
+            'review_again': 1,
+            'hard': 2,
+            'review_hard': 2,
+            'good': 3,
+            'review_good': 3,
+            'easy': 4,
+            'review_easy': 4
         };
         
-        return ratingMap[rating] || Grade.Good; // По умолчанию Good
+        return ratingMap[rating] || 3; // По умолчанию Good (3)
     }
 
     // ✅ ПРОСТОЙ И ЭФФЕКТИВНЫЙ FALLBACK
@@ -153,7 +154,7 @@ export class FSRSService {
 
         console.log(`🔄 Simple fallback: ${rating} -> ${interval} days`);
 
-        return {
+        const result = {
             card: {
                 due: new Date(now.getTime() + interval * 24 * 60 * 60 * 1000),
                 stability: interval * 0.5,
@@ -167,6 +168,9 @@ export class FSRSService {
             },
             interval: interval
         };
+
+        console.log('📊 Fallback result:', result);
+        return result;
     }
 
     // ✅ ПРОСТОЙ МЕТОД ДЛЯ НОВЫХ КАРТОЧЕК
