@@ -1041,12 +1041,13 @@ async function startReviewSession(chatId) {
             return;
         }
 
-        // ✅ СОЗДАЕМ НОВОЕ СОСТОЯНИЕ
+        // ✅ СОЗДАЕМ НОВОЕ СОСТОЯНИЕ С ПРАВИЛЬНЫМИ СЧЕТЧИКАМИ
         userStates.set(chatId, {
             state: 'review_session',
             reviewWords: validReviewWords,
+            originalWordsCount: validReviewWords.length, // ✅ Сохраняем исходное количество
             currentReviewIndex: 0,
-            reviewedCount: 0,
+            reviewedCount: 0, // ✅ Начинаем с 0
             lastActivity: Date.now()
         });
 
@@ -1169,17 +1170,25 @@ async function showReviewAnswer(chatId) {
 // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения
 async function processReviewRating(chatId, rating) {
     const userState = userStates.get(chatId);
-    if (!userState || userState.state !== 'review_session') return;
+    if (!userState || userState.state !== 'review_session') {
+        return;
+    }
+
+    if (userState.currentReviewIndex >= userState.reviewWords.length) {
+        await completeReviewSession(chatId, userState);
+        return;
+    }
 
     const word = userState.reviewWords[userState.currentReviewIndex];
-    if (!word) return;
-
-    console.log('🎯 ========== PROCESS REVIEW RATING ==========');
-    console.log(`🔧 Слово: ${word.english}`);
-    console.log(`🔧 Оценка: ${rating}`);
+    
+    if (!word) {
+        userState.reviewWords.splice(userState.currentReviewIndex, 1);
+        userState.lastActivity = Date.now();
+        await showNextReviewWord(chatId);
+        return;
+    }
 
     try {
-        // 1. ПОДГОТОВКА ДАННЫХ ДЛЯ FSRS
         const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
@@ -1192,23 +1201,12 @@ async function processReviewRating(chatId, rating) {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
-        console.log('📊 FSRS input data:', cardData);
-
-        // 2. ВЫЗОВ FSRS
         const fsrsResult = fsrsService.reviewCard(cardData, rating);
         
-        // ✅ ИСПОЛЬЗУЕМ ПРАВИЛЬНУЮ СТРУКТУРУ ОТВЕТА
-        const finalInterval = fsrsResult.interval || fsrsResult.card.scheduled_days || 1;
-        const nextReviewDate = fsrsResult.card.due;
+        const finalInterval = fsrsResult.interval || fsrsResult.card?.scheduled_days || 1;
+        const nextReviewDate = fsrsResult.card?.due || new Date(Date.now() + finalInterval * 24 * 60 * 60 * 1000);
         const lastReviewDate = new Date();
 
-        console.log('🔄 FSRS RESULT:', {
-            interval: finalInterval,
-            nextReview: nextReviewDate,
-            lastReview: lastReviewDate
-        });
-
-        // 3. ОБНОВЛЕНИЕ В GOOGLE SHEETS
         const success = await sheetsService.updateWordReview(
             chatId,
             word.english,
@@ -1218,8 +1216,7 @@ async function processReviewRating(chatId, rating) {
         );
 
         if (success) {
-            console.log('✅ Word successfully updated in Google Sheets');
-            userState.reviewedCount++;
+            userState.reviewedCount = (userState.reviewedCount || 0) + 1;
             userState.reviewWords.splice(userState.currentReviewIndex, 1);
             
             if (userState.reviewWords.length === 0) {
@@ -1229,12 +1226,17 @@ async function processReviewRating(chatId, rating) {
                 await showNextReviewWord(chatId);
             }
         } else {
-            throw new Error('Failed to update Google Sheets');
+            userState.reviewWords.splice(userState.currentReviewIndex, 1);
+            
+            if (userState.reviewWords.length === 0) {
+                await completeReviewSession(chatId, userState);
+            } else {
+                userState.lastActivity = Date.now();
+                await showNextReviewWord(chatId);
+            }
         }
 
     } catch (error) {
-        console.error('❌ Error in processReviewRating:', error);
-        // При ошибке удаляем слово из сессии и продолжаем
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -1244,12 +1246,15 @@ async function processReviewRating(chatId, rating) {
             await showNextReviewWord(chatId);
         }
     }
-    
-    console.log('🎯 ========== END PROCESS REVIEW RATING ==========');
 }
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
+    // ✅ Сохраняем данные перед очисткой состояния
+    const totalWordsAtStart = userState.originalWordsCount || userState.reviewWords?.length || 0;
+    const reviewedCount = userState.reviewedCount || 0;
+    const remainingWords = userState.reviewWords?.length || 0;
+    
     // ✅ ВАЖНО: Полностью очищаем состояние пользователя
     userStates.delete(chatId);
     
@@ -1260,21 +1265,22 @@ async function completeReviewSession(chatId, userState) {
     ];
     cacheKeys.forEach(key => cache.delete(key));
     
-    const totalWords = userState?.reviewWords?.length || 0;
-    const reviewedCount = userState?.reviewedCount || 0;
-    const skippedCount = totalWords - reviewedCount;
+    // ✅ ПРАВИЛЬНЫЙ РАСЧЕТ СТАТИСТИКИ
+    const totalProcessed = reviewedCount + remainingWords;
+    const actualReviewed = reviewedCount;
     
     let message = '🎉 **Сессия повторения завершена!**\n\n';
     message += `📊 Результаты:\n`;
-    message += `• Всего слов: ${totalWords}\n`;
-    message += `• Повторено: ${reviewedCount}\n`;
+    message += `• Всего слов в сессии: ${totalProcessed}\n`;
+    message += `• Успешно повторено: ${actualReviewed}\n`;
     
-    if (skippedCount > 0) {
-        message += `• Пропущено: ${skippedCount}\n`;
+    if (remainingWords > 0) {
+        message += `• Пропущено/ошибок: ${remainingWords}\n`;
     }
     
-    if (reviewedCount > 0) {
-        const progressPercentage = Math.round((reviewedCount / totalWords) * 100);
+    // ✅ ИЗБЕГАЕМ ДЕЛЕНИЯ НА НОЛЬ
+    if (totalProcessed > 0) {
+        const progressPercentage = Math.round((actualReviewed / totalProcessed) * 100);
         message += `• Прогресс: ${progressPercentage}%\n\n`;
     } else {
         message += `\n`;
@@ -1296,6 +1302,7 @@ async function completeReviewSession(chatId, userState) {
     
     await bot.sendMessage(chatId, message, getMainMenu());
 }
+
 
 // ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Начало сессии изучения новых слов
 async function startNewWordsSession(chatId) {
@@ -1886,47 +1893,6 @@ function formatConcreteDate(date) {
         return `${day}.${month}.${year} ${hours}:${minutes} (${dayOfWeek})`;
     }
 }
-
-// // ✅ ДОБАВЛЯЕМ ФУНКЦИЮ: Получение ВСЕХ не изученных слов (без учета лимита)
-// async function getAllUnlearnedWords(chatId) {
-//     if (!servicesInitialized || !sheetsService.initialized) {
-//         return [];
-//     }
-    
-//     try {
-//         const userWords = await getCachedUserWords(chatId);
-        
-//         optimizedLog(`🔍 Поиск ВСЕХ не изученных слов для ${chatId}`);
-
-//         const unlearnedWords = userWords.filter(word => {
-//             if (!word.nextReview || word.status !== 'active') return false;
-            
-//             try {
-//                 // ✅ Слово считается не изученным если:
-//                 // 1. Интервал = 1 (новое слово)
-//                 // 2. ИЛИ FirstLearnedDate отсутствует (никогда не изучалось)
-//                 const isNewWord = word.interval === 1 || !word.firstLearnedDate || word.firstLearnedDate.trim() === '';
-//                 const isNotLearned = !isWordLearned(chatId, word.english);
-                
-//                 return isNewWord && isNotLearned;
-//             } catch (error) {
-//                 optimizedLog(`❌ Ошибка проверки слова "${word.english}"`);
-//                 return false;
-//             }
-//         });
-
-//         optimizedLog(`📊 Найдено всех не изученных слов: ${unlearnedWords.length}`);
-        
-//         // Сортируем по дате создания (новые слова в начале)
-//         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
-
-//         return unlearnedWords;
-        
-//     } catch (error) {
-//         optimizedLog('❌ Error getting all unlearned words:', error);
-//         return [];
-//     }
-// }
 
 // ✅ ВОССТАНОВЛЕНО: Критически важная команда сброса прогресса
 bot.onText(/\/reset_progress/, async (msg) => {
@@ -2724,6 +2690,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
