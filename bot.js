@@ -1,9 +1,9 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { GoogleSheetsService } from './google-sheets.js';
-import { YandexDictionaryService } from './yandex-dictionary-service.js';
-import { CambridgeDictionaryService } from './cambridge-dictionary-service.js';
-import { FSRSService } from './fsrs-service.js';
-import { BatchSheetsService } from './batch-sheets-service.js';
+import { GoogleSheetsService } from './services/google-sheets.js';
+import { YandexDictionaryService } from './services/yandex-dictionary-service.js';
+import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
+import { FSRSService } from './services/fsrs-service.js';
+import { BatchSheetsService } from './services/batch-sheets-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
@@ -2441,3 +2441,4 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
