@@ -329,51 +329,35 @@ async function getLearnedToday(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const now = new Date();
         
-        // Московское время для корректного определения "сегодня"
-        const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
+        // Московское время
+        const moscowOffset = 3 * 60 * 60 * 1000;
         const moscowNow = new Date(now.getTime() + moscowOffset);
         const todayStart = new Date(moscowNow);
         todayStart.setHours(0, 0, 0, 0);
         const todayEnd = new Date(moscowNow);
         todayEnd.setHours(23, 59, 59, 999);
         
-        optimizedLog(`🔍 getLearnedToday проверка для ${chatId}`);
-        optimizedLog(`📅 Московское время: ${moscowNow.toLocaleString('ru-RU')}`);
-        optimizedLog(`⏰ Сегодня: с ${todayStart.toLocaleString('ru-RU')} по ${todayEnd.toLocaleString('ru-RU')}`);
-
         let learnedToday = 0;
-        let debugWords = [];
 
         userWords.forEach(word => {
             if (word.status !== 'active') return;
             
-            // ✅ ИСПОЛЬЗУЕМ ТОЛЬКО FirstLearnedDate для определения дня изучения
-            const firstLearnedDate = word.firstLearnedDate;
-            
-            if (firstLearnedDate && firstLearnedDate.trim() !== '') {
+            // ✅ Учитываем ТОЛЬКО изученные слова (Interval > 1) с FirstLearnedDate сегодня
+            if (word.interval > 1 && word.firstLearnedDate && word.firstLearnedDate.trim() !== '') {
                 try {
-                    const learnedDate = new Date(firstLearnedDate);
+                    const learnedDate = new Date(word.firstLearnedDate);
                     const moscowLearned = new Date(learnedDate.getTime() + moscowOffset);
                     
-                    optimizedLog(`🔍 Слово "${word.english}": FirstLearnedDate=${firstLearnedDate}, MoscowTime=${moscowLearned.toLocaleString('ru-RU')}`);
-                    
-                    // ✅ Считаем слово изученным сегодня если FirstLearnedDate попадает в сегодняшний день
                     if (moscowLearned >= todayStart && moscowLearned <= todayEnd) {
                         learnedToday++;
-                        debugWords.push(`${word.english} (изучено: ${moscowLearned.toLocaleString('ru-RU')})`);
-                        optimizedLog(`✅ Слово "${word.english}" изучено сегодня!`);
                     }
                 } catch (error) {
                     optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
                 }
-            } else {
-                optimizedLog(`⏭️ Слово "${word.english}" не имеет FirstLearnedDate`);
             }
         });
 
         optimizedLog(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday}`);
-        optimizedLog(`📝 Слова: ${debugWords.join(', ')}`);
-        
         return learnedToday;
         
     } catch (error) {
@@ -381,6 +365,7 @@ async function getLearnedToday(chatId) {
         return 0;
     }
 }
+
 // Оптимизация: кеширование данных словарей
 const dictionaryCache = new Map();
 
@@ -1553,18 +1538,24 @@ async function showUserStats(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
+        
+        // ✅ ВСЕ активные слова (вне зависимости от FirstLearnedDate)
+        const totalWordsCount = activeWords.length;
+        
+        // Слова для повторения
         const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
         
-        // ✅ ИСПОЛЬЗУЕМ ОБНОВЛЕННУЮ ФУНКЦИЮ ДЛЯ НОВЫХ СЛОВ
-        const unlearnedWords = await getAllUnlearnedWords(chatId);
-        const newWordsCount = unlearnedWords.length;
+        // ✅ НОВЫЕ слова - все с Interval = 1 (FirstLearnedDate не важен)
+        const newWords = activeWords.filter(word => word.interval === 1);
+        const newWordsCount = newWords.length;
         
+        // ✅ ИЗУЧЕННЫЕ СЕГОДНЯ - только слова с FirstLearnedDate сегодня
         const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
         
         let message = '📊 **Ваша статистика:**\n\n';
-        message += `📚 Всего слов в словаре: ${activeWords.length}\n`;
+        message += `📚 Всего слов в словаре: ${totalWordsCount}\n`;
         message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
         message += `🆕 Новых слов доступно: ${newWordsCount}\n`;
         message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
@@ -1575,65 +1566,12 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
         
-        // ✅ ВОССТАНОВЛЕНО: Расписание повторений
-        const now = new Date();
-        const futureWords = activeWords.filter(word => {
-            if (!word.nextReview || word.interval === 1) return false;
-            try {
-                const nextReview = new Date(word.nextReview);
-                return nextReview > now;
-            } catch (e) {
-                return false;
-            }
-        });
+        // Дополнительная информация
+        const learnedWords = activeWords.filter(word => word.interval > 1);
         
-        // Группируем слова по дате повторения
-        const schedule = {};
-        futureWords.forEach(word => {
-            try {
-                const reviewDate = new Date(word.nextReview);
-                const dateKey = reviewDate.toISOString().slice(0, 16); // Группируем по дате и часу
-                
-                if (!schedule[dateKey]) {
-                    schedule[dateKey] = [];
-                }
-                schedule[dateKey].push(word);
-            } catch (e) {
-                // Пропускаем слова с некорректной датой
-            }
-        });
-        
-        // Сортируем даты и выбираем ближайшие
-        const sortedDates = Object.keys(schedule).sort();
-        const nearestDates = sortedDates.slice(0, 5); // Ближайшие 5 дат
-        
-        if (nearestDates.length > 0) {
-            const nearestDate = nearestDates[0];
-            const nearestReview = new Date(nearestDate);
-            
-            message += `\n⏰ **Ближайшее повторение:** ${formatConcreteDate(nearestReview)}\n\n`;
-            message += `📅 **Расписание повторений:**\n`;
-            
-            nearestDates.forEach(dateKey => {
-                const reviewDate = new Date(dateKey);
-                const wordCount = schedule[dateKey].length;
-                message += `• ${formatConcreteDate(reviewDate)}: ${wordCount} слов\n`;
-            });
-        } else if (reviewWordsCount > 0) {
-            message += `\n⏰ **Ближайшее повторение:** готово сейчас!\n`;
-        } else {
-            message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
-        }
-        
-        // Дополнительная информация о новых словах
-        if (newWordsCount > 0) {
-            const wordsWithoutFirstLearned = unlearnedWords.filter(word => !word.firstLearnedDate || word.firstLearnedDate.trim() === '');
-            const wordsWithInterval1 = unlearnedWords.filter(word => word.interval === 1);
-            
-            message += `\n🔍 **Новые слова:**\n`;
-            message += `• С интервалом=1: ${wordsWithInterval1.length}\n`;
-            message += `• Без FirstLearnedDate: ${wordsWithoutFirstLearned.length}\n`;
-        }
+        message += `\n🔍 **Детали:**\n`;
+        message += `• Изученных слов: ${learnedWords.length}\n`;
+        message += `• Новых слов: ${newWordsCount}\n`;
         
         await bot.sendMessage(chatId, message, getMainMenu());
         
@@ -2518,6 +2456,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
