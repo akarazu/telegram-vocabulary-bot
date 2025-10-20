@@ -1057,28 +1057,27 @@ async function showNextReviewWord(chatId) {
     const { reviewWords, currentReviewIndex, reviewedCount } = userState;
     
     if (!reviewWords || reviewWords.length === 0) {
-        await bot.sendMessage(chatId, '❌ Нет слов для повторения.');
+        await bot.sendMessage(chatId, '🎉 Все слова повторены! Сессия завершена.');
         userStates.delete(chatId);
         return;
     }
     
-    // ✅ ПРОВЕРКА: если дошли до конца массива
+    // ✅ ПРОВЕРКА: если индекс вышел за границы (после удаления слов)
     if (currentReviewIndex >= reviewWords.length) {
-        optimizedLog(`🎯 All words reviewed, completing session`);
-        await completeReviewSession(chatId, userState);
-        return;
+        userState.currentReviewIndex = 0; // Сбрасываем на начало
     }
 
-    const word = reviewWords[currentReviewIndex];
+    const word = reviewWords[userState.currentReviewIndex];
     
     if (!word) {
-        optimizedLog(`❌ Word not found at index ${currentReviewIndex}`);
-        userState.currentReviewIndex++;
+        optimizedLog(`❌ Word not found at index ${userState.currentReviewIndex}`);
+        userState.reviewWords.splice(userState.currentReviewIndex, 1); // Удаляем битое слово
+        userState.lastActivity = Date.now();
         await showNextReviewWord(chatId);
         return;
     }
     
-    const progress = `${currentReviewIndex + 1}/${reviewWords.length} (${reviewedCount} оценено)`;
+    const progress = `${userState.currentReviewIndex + 1}/${reviewWords.length} (${reviewedCount} оценено)`;
     
     let message = `📚 Повторение слов ${progress}\n\n`;
     message += `🇬🇧 **${word.english}**\n`;
@@ -1197,24 +1196,38 @@ async function processReviewRating(chatId, rating) {
 
         if (success) {
             userState.reviewedCount++;
-            userState.currentReviewIndex++;
+            
+            // ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: Удаляем слово из текущего массива reviewWords
+            // чтобы оно не показывалось снова в этой сессии
+            userState.reviewWords.splice(userState.currentReviewIndex, 1);
             
             optimizedLog(`✅ Слово "${word.english}" обновлено: rating=${rating}, interval=${finalInterval} дней`);
+            optimizedLog(`🗑️ Слово удалено из текущей сессии. Осталось слов: ${userState.reviewWords.length}`);
 
-            if (userState.currentReviewIndex >= userState.reviewWords.length) {
+            // ✅ ПРОВЕРЯЕМ: если слова закончились - завершаем сессию
+            if (userState.reviewWords.length === 0) {
+                optimizedLog(`🎯 Все слова в сессии обработаны, завершение`);
                 await completeReviewSession(chatId, userState);
-            } else {
-                userState.lastActivity = Date.now();
-                await showNextReviewWord(chatId);
+                return;
             }
+            
+            // ✅ ЕСЛИ ЕСТЬ ЕЩЕ СЛОВА: 
+            // Не увеличиваем currentReviewIndex, так как мы удалили текущий элемент
+            // Массив сдвинулся, поэтому currentReviewIndex уже указывает на следующее слово
+            
+            userState.lastActivity = Date.now();
+            await showNextReviewWord(chatId);
+            
         } else {
             await bot.sendMessage(chatId, '❌ Ошибка при сохранении.');
         }
 
     } catch (error) {
         optimizedLog('❌ Error processing review rating:', error);
-        userState.currentReviewIndex++;
-        if (userState.currentReviewIndex >= userState.reviewWords.length) {
+        // ✅ ПРИ ОШИБКЕ ТОЖЕ УДАЛЯЕМ СЛОВО ИЗ СЕССИИ
+        userState.reviewWords.splice(userState.currentReviewIndex, 1);
+        
+        if (userState.reviewWords.length === 0) {
             await completeReviewSession(chatId, userState);
         } else {
             await showNextReviewWord(chatId);
@@ -2425,19 +2438,23 @@ bot.on('callback_query', async (callbackQuery) => {
         await processReviewRating(chatId, rating);
     }
     // ✅ ВОССТАНОВЛЕНО: Пропуск слова при повторении
-    else if (data === 'skip_review') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'review_session') {
-            userState.currentReviewIndex++;
-            userState.lastActivity = Date.now();
-            
-            if (userState.currentReviewIndex >= userState.reviewWords.length) {
-                userState.currentReviewIndex = 0;
-            }
-            
-            await showNextReviewWord(chatId);
-        }
+else if (data === 'skip_review') {
+    const userState = userStates.get(chatId);
+    if (userState?.state === 'review_session') {
+        // ✅ ПРОПУСКАЕМ СЛОВО - перемещаем его в конец массива
+        const skippedWord = userState.reviewWords.splice(userState.currentReviewIndex, 1)[0];
+        userState.reviewWords.push(skippedWord);
+        
+        optimizedLog(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец`);
+        
+        userState.lastActivity = Date.now();
+        
+        // ✅ Не увеличиваем индекс, так как массив сдвинулся
+        // Текущий индекс теперь указывает на следующее слово
+        
+        await showNextReviewWord(chatId);
     }
+}
     // ✅ ВОССТАНОВЛЕНО: Завершение сессии повторения
     else if (data === 'end_review') {
         if (userState?.state === 'review_session') {
@@ -2684,6 +2701,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Оптимизированная версия для Railways!');
+
 
 
 
