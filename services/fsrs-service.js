@@ -112,69 +112,87 @@ export class FSRSService {
         return card;
     }
 
-    async reviewCard(userId, word, cardData, rating) {
-        console.log('🔄 FSRS reviewCard called:', { 
-            userId, 
-            word, 
-            rating,
-            hasScheduler: !!this.scheduler,
-            isInitialized: this.isInitialized
-        });
+   async reviewCard(userId, word, cardData, rating) {
+    console.log('🔄 FSRS reviewCard called:', { 
+        userId, 
+        word, 
+        rating,
+        hasScheduler: !!this.scheduler,
+        isInitialized: this.isInitialized
+    });
 
-        if (!this.isInitialized || !this.scheduler) {
-            console.log('❌ FSRS not initialized, using fallback');
-            const fallback = this.simpleFallback(cardData, rating);
-            return fallback.card; // Возвращаем только card для единообразия
+    if (!this.isInitialized || !this.scheduler) {
+        console.log('❌ FSRS not initialized, using fallback');
+        const fallback = this.simpleFallback(cardData, rating);
+        return fallback.card;
+    }
+
+    try {
+        const card = this.createCard(cardData);
+        const grade = this.safeConvertRating(rating);
+        const now = new Date();
+
+        console.log('📝 Card data before FSRS:', card);
+        console.log('🎯 Grade:', grade);
+
+        // ПРАВИЛЬНЫЙ ВЫЗОВ FSRS
+        const schedulingCards = this.scheduler.repeat(card, now);
+        console.log('📊 FSRS scheduling cards:', schedulingCards);
+
+        // Преобразуем grade в строковый ключ
+        const gradeKey = {
+            1: 'again',
+            2: 'hard', 
+            3: 'good',
+            4: 'easy'
+        }[grade];
+
+        console.log('🔑 Grade key:', gradeKey);
+
+        const fsrsCard = schedulingCards[gradeKey];
+        console.log('🎯 Selected FSRS card:', fsrsCard);
+
+        if (!fsrsCard) {
+            console.log('❌ No FSRS card for grade:', grade);
+            throw new Error(`No FSRS card for grade ${grade}`);
         }
 
-        try {
-            const card = this.createCard(cardData);
-            const grade = this.safeConvertRating(rating);
-            const now = new Date();
+        const interval = Math.max(1, Math.round(fsrsCard.scheduled_days));
 
-            console.log('📝 Card data before FSRS:', card);
-            console.log('🎯 Grade:', grade);
-
-            // ПРАВИЛЬНЫЙ ВЫЗОВ FSRS
-            const schedulingCards = this.scheduler.repeat(card, now);
-            console.log('📊 FSRS scheduling cards:', schedulingCards);
-
-            // Выбираем карту по рейтингу (grade от 1 до 4)
-            const fsrsCard = schedulingCards[grade];
-            console.log('🎯 Selected FSRS card:', fsrsCard);
-
-            if (!fsrsCard) {
-                console.log('❌ No FSRS card for grade:', grade);
-                throw new Error(`No FSRS card for grade ${grade}`);
-            }
-
-            const interval = Math.max(1, Math.round(fsrsCard.scheduled_days));
-
-            // ПРОСТАЯ И ПОНЯТНАЯ СТРУКТУРА
-            const updatedCard = {
-                due: fsrsCard.due,
-                stability: fsrsCard.stability || 0.1,
-                difficulty: fsrsCard.difficulty || 5.0,
-                elapsed_days: fsrsCard.elapsed_days || 0,
-                scheduled_days: interval,
-                reps: fsrsCard.reps || 0,
-                lapses: fsrsCard.lapses || 0,
-                state: fsrsCard.state || 1,
-                last_review: now,
-                // Поля для Google Sheets
-                interval: interval,
-                ease: fsrsCard.stability || 0.1,
-                repetitions: fsrsCard.reps || 0
-            };
-
-            console.log('✅ Final updated card:', updatedCard);
-            return updatedCard;
-
-        } catch (error) {
-            console.error('❌ FSRS review failed:', error);
-            console.log('🔄 Using fallback');
-            const fallback = this.simpleFallback(cardData, rating);
-            return fallback.card; // Возвращаем только card для единообразия
+        // ✅ ГАРАНТИРУЕМ, что due всегда установлен
+        let dueDate;
+        if (fsrsCard.due && fsrsCard.due instanceof Date) {
+            dueDate = fsrsCard.due;
+        } else {
+            // Fallback: устанавливаем due на основе интервала
+            dueDate = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
+            console.log('⚠️ Using fallback due date:', dueDate);
         }
+
+        // ПРОСТАЯ И ПОНЯТНАЯ СТРУКТУРА
+        const updatedCard = {
+            due: dueDate, // ✅ Гарантированно Date объект
+            stability: fsrsCard.stability || 0.1,
+            difficulty: fsrsCard.difficulty || 5.0,
+            elapsed_days: fsrsCard.elapsed_days || 0,
+            scheduled_days: interval,
+            reps: fsrsCard.reps || 0,
+            lapses: fsrsCard.lapses || 0,
+            state: fsrsCard.state || 1,
+            last_review: now,
+            // Поля для Google Sheets
+            interval: interval,
+            ease: fsrsCard.stability || 0.1,
+            repetitions: fsrsCard.reps || 0
+        };
+
+        console.log('✅ Final updated card:', updatedCard);
+        return updatedCard;
+
+    } catch (error) {
+        console.error('❌ FSRS review failed:', error);
+        console.log('🔄 Using fallback');
+        const fallback = this.simpleFallback(cardData, rating);
+        return fallback.card;
     }
 }
