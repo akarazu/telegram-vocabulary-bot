@@ -137,7 +137,7 @@ export class FSRSService {
 
             // ПРАВИЛЬНЫЙ ВЫЗОВ FSRS
             const schedulingCards = this.scheduler.repeat(card, now);
-            console.log('📊 FSRS scheduling cards:', schedulingCards);
+            console.log('📊 FSRS scheduling cards RAW:', schedulingCards);
 
             // Проверяем, что schedulingCards существует
             if (!schedulingCards) {
@@ -159,33 +159,48 @@ export class FSRSService {
                 return fallback.card;
             }
 
-            const interval = Math.max(1, Math.round(fsrsCard.scheduled_days));
+            // ✅ ИСПРАВЛЕНИЕ: Извлекаем данные из правильного места
+            // FSRS возвращает { card: {...}, log: {...} }, нам нужен card
+            const fsrsCardData = fsrsCard.card || fsrsCard;
+            console.log('🎯 Extracted FSRS card data:', fsrsCardData);
 
-            // ✅ ГАРАНТИРУЕМ, что due всегда установлен
+            // ✅ ИСПРАВЛЕНИЕ: Обрабатываем scheduled_days и due
+            let scheduled_days = fsrsCardData.scheduled_days;
+            let interval = Math.max(1, Math.round(scheduled_days));
+            
+            // Если scheduled_days = 0, устанавливаем минимальный интервал
+            if (scheduled_days === 0 || isNaN(scheduled_days)) {
+                console.log('⚠️ scheduled_days is 0 or NaN, setting to 1');
+                scheduled_days = 1;
+                interval = 1;
+            }
+
+            // ✅ ИСПРАВЛЕНИЕ: Обрабатываем due date
             let dueDate;
-            if (fsrsCard.due && fsrsCard.due instanceof Date) {
-                dueDate = fsrsCard.due;
+            if (fsrsCardData.due && fsrsCardData.due instanceof Date && !isNaN(fsrsCardData.due.getTime())) {
+                dueDate = fsrsCardData.due;
+                console.log('✅ Using FSRS due date:', dueDate);
             } else {
                 // Fallback: устанавливаем due на основе интервала
                 dueDate = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
-                console.log('⚠️ Using fallback due date:', dueDate);
+                console.log('⚠️ Using calculated due date:', dueDate);
             }
 
             // ПРОСТАЯ И ПОНЯТНАЯ СТРУКТУРА
             const updatedCard = {
-                due: dueDate, // ✅ Гарантированно Date объект
-                stability: fsrsCard.stability || 0.1,
-                difficulty: fsrsCard.difficulty || 5.0,
-                elapsed_days: fsrsCard.elapsed_days || 0,
-                scheduled_days: interval,
-                reps: fsrsCard.reps || 0,
-                lapses: fsrsCard.lapses || 0,
-                state: fsrsCard.state || 1,
+                due: dueDate,
+                stability: fsrsCardData.stability || 0.1,
+                difficulty: fsrsCardData.difficulty || 5.0,
+                elapsed_days: fsrsCardData.elapsed_days || 0,
+                scheduled_days: scheduled_days,
+                reps: fsrsCardData.reps || 0,
+                lapses: fsrsCardData.lapses || 0,
+                state: fsrsCardData.state || 1,
                 last_review: now,
                 // Поля для Google Sheets
                 interval: interval,
-                ease: fsrsCard.stability || 0.1,
-                repetitions: fsrsCard.reps || 0
+                ease: fsrsCardData.stability || 0.1,
+                repetitions: fsrsCardData.reps || 0
             };
 
             console.log('✅ Final updated card:', updatedCard);
