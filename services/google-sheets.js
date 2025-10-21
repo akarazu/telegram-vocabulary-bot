@@ -265,10 +265,16 @@ export class GoogleSheetsService {
     }
 
     // ======================= Get New Words Count =======================
-    async getNewWordsCount(userId) {
-        const words = await this.getUserWords(userId);
-        return words.filter(w => w.status === 'active' && w.interval === 1).length;
-    }
+   async getNewWordsCount(userId) {
+    const words = await this.getUserWords(userId);
+    
+    // ✅ ИСПРАВЛЕНИЕ: Только новые слова (interval = 1) без даты первого изучения
+    return words.filter(w => 
+        w.status === 'active' && 
+        w.interval === 1 && 
+        (!w.firstLearnedDate || w.firstLearnedDate.trim() === '')
+    ).length;
+}
 
     // ======================= Get All Active Users =======================
     async getAllActiveUsers() {
@@ -453,6 +459,7 @@ export class GoogleSheetsService {
 // ======================= Initialize =======================
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
