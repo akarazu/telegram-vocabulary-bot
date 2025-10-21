@@ -253,10 +253,28 @@ export class GoogleSheetsService {
 
     // ======================= Get Words For Review =======================
     async getWordsForReview(userId) {
-        const words = await this.getUserWords(userId);
-        const now = new Date();
-        return words.filter(w => w.status === 'active' && w.nextReview && new Date(w.nextReview) <= now);
-    }
+    const words = await this.getUserWords(userId);
+    const now = new Date();
+    
+    // ✅ ИСПРАВЛЕНИЕ: Правильный фильтр для слов повторения
+    return words.filter(w => {
+        if (w.status !== 'active') return false;
+        if (w.interval <= 1) return false; // Только изученные слова
+        if (!w.nextReview) return false;
+        
+        try {
+            const nextReviewDate = new Date(w.nextReview);
+            // ✅ Используем московское время для сравнения
+            const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
+            const moscowNow = new Date(now.getTime() + moscowOffset);
+            const moscowReview = new Date(nextReviewDate.getTime() + moscowOffset);
+            
+            return moscowReview <= moscowNow;
+        } catch (e) {
+            return false;
+        }
+    });
+}
 
     // ======================= Get Review Words Count =======================
     async getReviewWordsCount(userId) {
@@ -459,6 +477,7 @@ export class GoogleSheetsService {
 // ======================= Initialize =======================
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
