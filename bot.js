@@ -1622,18 +1622,34 @@ async function showUserStats(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         
-        const totalWordsCount = activeWords.length;
-        const reviewWordsCount = await sheetsService.getReviewWordsCount(chatId);
-        const newWords = activeWords.filter(word => word.interval === 1);
+        // ✅ ИСПРАВЛЕНИЕ: Правильный подсчет новых слов
+        const newWords = activeWords.filter(word => 
+            word.interval === 1 && 
+            (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')
+        );
         const newWordsCount = newWords.length;
+        
+        // ✅ ИСПРАВЛЕНИЕ: Правильный подсчет слов для повторения
+        const reviewWords = await sheetsService.getWordsForReview(chatId);
+        const reviewWordsCount = reviewWords.length;
+        
+        const totalWordsCount = activeWords.length;
         const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
         
+        // ✅ ИСПРАВЛЕНИЕ: Правильный подсчет изученных слов
+        const learnedWords = activeWords.filter(word => 
+            word.interval > 1 || 
+            (word.firstLearnedDate && word.firstLearnedDate.trim() !== '')
+        );
+        const learnedWordsCount = learnedWords.length;
+        
         let message = '📊 **Ваша статистика:**\n\n';
         message += `📚 Всего слов в словаре: ${totalWordsCount}\n`;
-        message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
+        message += `🎓 Изучено слов: ${learnedWordsCount}\n`;
         message += `🆕 Новых слов доступно: ${newWordsCount}\n`;
+        message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
         message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
         
         if (remainingToday > 0) {
@@ -1642,7 +1658,7 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
 
-        // Расписание повторений
+        // ✅ ИСПРАВЛЕНИЕ: Правильное расписание повторений
         const now = new Date();
         const futureWords = activeWords.filter(word => {
             if (!word.nextReview || word.interval === 1) return false;
@@ -1658,7 +1674,8 @@ async function showUserStats(chatId) {
         futureWords.forEach(word => {
             try {
                 const reviewDate = new Date(word.nextReview);
-                const dateKey = reviewDate.toISOString().slice(0, 13) + ':00';
+                // Группируем по дате (без времени)
+                const dateKey = reviewDate.toISOString().split('T')[0];
                 
                 if (!schedule[dateKey]) {
                     schedule[dateKey] = [];
@@ -1670,7 +1687,7 @@ async function showUserStats(chatId) {
         });
         
         const sortedDates = Object.keys(schedule).sort();
-        const nearestDates = sortedDates.slice(0, 10);
+        const nearestDates = sortedDates.slice(0, 5); // Берем ближайшие 5 дат
         
         if (nearestDates.length > 0) {
             const nearestDate = nearestDates[0];
@@ -1678,21 +1695,21 @@ async function showUserStats(chatId) {
             const nearestCount = schedule[nearestDate].length;
             
             message += `\n⏰ **Ближайшее повторение:**\n`;
-            message += `• ${formatTimeWithCountdown(nearestReview)}: ${nearestCount} слов\n`;
+            message += `• ${formatDateWithCountdown(nearestReview)}: ${nearestCount} слов\n`;
             
             if (nearestDates.length > 1) {
                 message += `\n📅 **Ближайшие повторения:**\n`;
                 
-                nearestDates.slice(0, 5).forEach(dateKey => {
+                nearestDates.slice(1, 4).forEach(dateKey => {
                     const reviewDate = new Date(dateKey);
                     const wordCount = schedule[dateKey].length;
-                    message += `• ${formatTimeWithCountdown(reviewDate)}: ${wordCount} слов\n`;
+                    message += `• ${formatDateWithCountdown(reviewDate)}: ${wordCount} слов\n`;
                 });
                 
-                if (nearestDates.length > 5) {
-                    const remainingSlots = nearestDates.slice(5);
-                    const totalRemaining = remainingSlots.reduce((total, date) => total + schedule[date].length, 0);
-                    message += `• ... и еще ${totalRemaining} слов в следующие часы\n`;
+                if (nearestDates.length > 4) {
+                    const remainingDates = nearestDates.slice(4);
+                    const totalRemaining = remainingDates.reduce((total, date) => total + schedule[date].length, 0);
+                    message += `• ... и еще ${totalRemaining} слов в следующие дни\n`;
                 }
             }
         } else if (reviewWordsCount > 0) {
@@ -1709,25 +1726,27 @@ async function showUserStats(chatId) {
         message += `\n🕐 **Время сервера:** ${formatTimeDetailed(serverTime)}`;
         message += `\n🇷🇺 **Московское время:** ${formatTimeDetailed(moscowTime)}`;
         
-        // Новые слова
-        if (newWordsCount > 0) {
-            const recentNewWords = newWords
-                .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
-                .slice(0, 3);
-            
-            message += `\n\n🆕 **Последние новые слова:**\n`;
-            recentNewWords.forEach(word => {
+        // ✅ ИСПРАВЛЕНИЕ: Правильные последние добавленные слова
+        const recentAddedWords = activeWords
+            .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
+            .slice(0, 3);
+        
+        if (recentAddedWords.length > 0) {
+            message += `\n\n📥 **Последние добавленные слова:**\n`;
+            recentAddedWords.forEach(word => {
                 const timeAdded = formatMoscowDate(word.createdDate);
-                message += `• ${word.english} (добавлено: ${timeAdded})\n`;
+                const status = word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '') 
+                    ? '🆕' 
+                    : '🎓';
+                message += `• ${status} ${word.english} (${timeAdded})\n`;
             });
         }
-        
+
         // Прогресс
-        const learnedWords = activeWords.filter(word => word.interval > 1);
-        const progressPercentage = totalWordsCount > 0 ? Math.round((learnedWords.length / totalWordsCount) * 100) : 0;
+        const progressPercentage = totalWordsCount > 0 ? Math.round((learnedWordsCount / totalWordsCount) * 100) : 0;
         
-        message += `\n🎓 **Общий прогресс:** ${progressPercentage}% изучено`;
-        message += `\n   (${learnedWords.length} из ${totalWordsCount} слов)`;
+        message += `\n📈 **Общий прогресс:** ${progressPercentage}% изучено`;
+        message += `\n   (${learnedWordsCount} из ${totalWordsCount} слов)`;
         
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
@@ -1737,6 +1756,44 @@ async function showUserStats(chatId) {
     } catch (error) {
         optimizedLog('❌ Error showing stats:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
+    }
+}
+
+// ✅ ФУНКЦИЯ: Форматирование даты с обратным отсчетом
+function formatDateWithCountdown(date) {
+    const now = new Date();
+    const targetDate = new Date(date);
+    
+    const moscowOffset = 3 * 60 * 60 * 1000;
+    const moscowNow = new Date(now.getTime() + moscowOffset);
+    const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
+    
+    // Устанавливаем время на начало дня для сравнения дат
+    const todayStart = new Date(moscowNow);
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const targetDayStart = new Date(moscowTarget);
+    targetDayStart.setHours(0, 0, 0, 0);
+    
+    const diffTime = targetDayStart - todayStart;
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    
+    const day = targetDayStart.getDate().toString().padStart(2, '0');
+    const month = (targetDayStart.getMonth() + 1).toString().padStart(2, '0');
+    
+    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    const dayOfWeek = daysOfWeek[targetDayStart.getDay()];
+    
+    if (diffDays === 0) {
+        return `сегодня (${dayOfWeek})`;
+    } else if (diffDays === 1) {
+        return `завтра (${dayOfWeek})`;
+    } else if (diffDays === 2) {
+        return `послезавтра (${dayOfWeek})`;
+    } else if (diffDays > 2 && diffDays <= 7) {
+        return `${day}.${month} (${dayOfWeek})`;
+    } else {
+        return `${day}.${month} (${dayOfWeek})`;
     }
 }
 
@@ -2481,6 +2538,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
