@@ -207,18 +207,21 @@ export class GoogleSheetsService {
         const ease = fsrsCard.ease ? fsrsCard.ease.toFixed(2) : '2.50';
         const repetitions = fsrsCard.repetitions ? fsrsCard.repetitions.toString() : '1';
 
-        // ✅ ИСПРАВЛЕННАЯ ЛОГИКА ДЛЯ FirstLearnedDate
-        // Если слово изучается впервые (interval становится >1) и FirstLearnedDate не установлен
-        let firstLearnedDate = word.firstLearnedDate;
-        if ((!firstLearnedDate || firstLearnedDate.trim() === '') && fsrsCard.interval > 1) {
+        // ✅ УЛУЧШЕННАЯ ЛОГИКА ДЛЯ FirstLearnedDate
+        // Используем переданный firstLearnedDate из fsrsCard или существующий
+        let firstLearnedDate = fsrsCard.firstLearnedDate || word.firstLearnedDate;
+        
+        // Если слово изучается впервые (было новым) и firstLearnedDate не установлен
+        if ((!firstLearnedDate || firstLearnedDate.trim() === '') && word.interval === 1) {
             firstLearnedDate = new Date().toISOString();
-            console.log('✅ Setting FirstLearnedDate:', firstLearnedDate);
+            console.log('✅ Setting FirstLearnedDate for first learning:', firstLearnedDate);
         }
 
-        console.log('🔍 DEBUG FirstLearnedDate:', {
+        console.log('🔍 DEBUG FirstLearnedDate logic:', {
             existingFirstLearnedDate: word.firstLearnedDate,
             newFirstLearnedDate: firstLearnedDate,
-            condition: fsrsCard.interval > 1
+            wasNewWord: word.interval === 1,
+            newInterval: interval
         });
 
         await this.sheets.spreadsheets.values.update({
@@ -231,7 +234,7 @@ export class GoogleSheetsService {
                     dueDate,                            // NextReview
                     interval,                           // Interval
                     'active',                           // Status
-                    firstLearnedDate || '',             // FirstLearnedDate (исправлено)
+                    firstLearnedDate || '',             // FirstLearnedDate
                     ease,                               // Ease
                     repetitions,                        // Repetitions
                     rating                              // Rating
@@ -450,5 +453,6 @@ export class GoogleSheetsService {
 // ======================= Initialize =======================
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
