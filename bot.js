@@ -1011,8 +1011,9 @@ async function startReviewSession(chatId) {
     try {
         const wordsToReview = await sheetsService.getWordsForReview(chatId);
         
-        // ✅ ДОПОЛНИТЕЛЬНЫЙ ФИЛЬТР: только изученные слова
-        const validReviewWords = wordsToReview.filter(word => word.interval > 1);
+        // ✅ ИСПРАВЛЕНИЕ: УБИРАЕМ фильтр по interval > 1
+        // Теперь берем ВСЕ слова, которые вернул getWordsForReview
+        const validReviewWords = wordsToReview;
         
         optimizedLog(`🔍 Review session for ${chatId}: ${validReviewWords.length} valid words`);
         
@@ -1020,8 +1021,14 @@ async function startReviewSession(chatId) {
             // Показываем детальную информацию
             const userWords = await getCachedUserWords(chatId);
             const activeWords = userWords.filter(word => word.status === 'active');
-            const learnedWords = activeWords.filter(word => word.interval > 1);
-            const newWords = activeWords.filter(word => word.interval === 1);
+            const learnedWords = activeWords.filter(word => 
+                word.interval > 1 || 
+                (word.firstLearnedDate && word.firstLearnedDate.trim() !== '')
+            );
+            const newWords = activeWords.filter(word => 
+                word.interval === 1 && 
+                (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')
+            );
             
             let message = '📊 **Статус повторений:**\n\n';
             message += `• Всего активных слов: ${activeWords.length}\n`;
@@ -2505,6 +2512,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
