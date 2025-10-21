@@ -1200,26 +1200,42 @@ async function processReviewRating(chatId, rating) {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
+        console.log('🔄 Processing review for word:', word.english, 'rating:', rating);
+        console.log('📝 Card data:', cardData);
+
         // Используем FSRS для обновления карточки
         const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, rating);
         
-        if (fsrsResult && fsrsResult.card) {
-            userState.reviewedCount = (userState.reviewedCount || 0) + 1;
-            userState.reviewWords.splice(userState.currentReviewIndex, 1);
+        if (fsrsResult) {
+            console.log('✅ FSRS result received:', fsrsResult);
             
-            if (userState.reviewWords.length === 0) {
-                await completeReviewSession(chatId, userState);
+            const success = await sheetsService.updateWordAfterFSRSReview(
+                chatId,
+                word.english,
+                fsrsResult,
+                rating
+            );
+            
+            if (success) {
+                userState.reviewedCount = (userState.reviewedCount || 0) + 1;
+                userState.reviewWords.splice(userState.currentReviewIndex, 1);
+                
+                if (userState.reviewWords.length === 0) {
+                    await completeReviewSession(chatId, userState);
+                } else {
+                    userState.lastActivity = Date.now();
+                    await showNextReviewWord(chatId);
+                }
             } else {
-                userState.lastActivity = Date.now();
-                await showNextReviewWord(chatId);
+                throw new Error('Failed to save to Google Sheets');
             }
         } else {
             throw new Error('FSRS returned empty result');
         }
 
     } catch (error) {
-        optimizedLog('❌ Error processing review rating:', error);
-        // Fallback: просто удаляем слово из списка
+        console.error('❌ Error processing review rating:', error);
+        // Fallback: просто удаляем слово из списка и продолжаем
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -2456,6 +2472,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
