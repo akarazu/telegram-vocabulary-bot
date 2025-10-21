@@ -1466,30 +1466,39 @@ async function showNextNewWord(chatId) {
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова с FSRS
 async function processNewWordLearning(chatId, action) {
-   const userState = userStates.get(chatId);
+    const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
 
     const word = userState.newWords[userState.currentWordIndex];
     
- try {
+    try {
         if (action === 'learned') {
             console.log('🎯 Processing word learning:', word.english);
             
             // Используем FSRS для обработки изучения нового слова
             const cardData = fsrsService.createNewCard();
             const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
-             console.log('📊 FSRS result:', fsrsResult);
+            console.log('📊 FSRS result:', fsrsResult);
             
- if (fsrsResult) {
-                // ✅ Теперь передаем fsrsResult напрямую (он уже плоская структура)
+            if (fsrsResult) {
+                // ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: Устанавливаем firstLearnedDate для новых слов
+                // Если слово изучается впервые (было новым словом), устанавливаем дату
+                const shouldSetFirstLearnedDate = word.interval === 1 && 
+                                                (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
+                
+                if (shouldSetFirstLearnedDate) {
+                    fsrsResult.firstLearnedDate = new Date().toISOString();
+                    console.log('✅ Setting firstLearnedDate for new word:', fsrsResult.firstLearnedDate);
+                }
+
                 const success = await sheetsService.updateWordAfterFSRSReview(
                     chatId,
                     word.english,
-                    fsrsResult,  // ← плоская структура
+                    fsrsResult,
                     'good'
                 );
      
- if (!success) {
+                if (!success) {
                     throw new Error('Failed to save word progress to Google Sheets');
                 }
 
@@ -2472,6 +2481,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
