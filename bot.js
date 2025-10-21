@@ -1450,33 +1450,36 @@ async function showNextNewWord(chatId) {
 
 // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова с FSRS
 async function processNewWordLearning(chatId, action) {
-    const userState = userStates.get(chatId);
+   const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
 
     const word = userState.newWords[userState.currentWordIndex];
     
-    try {
+ try {
         if (action === 'learned') {
+            console.log('🎯 Processing word learning:', word.english);
+            
             // Используем FSRS для обработки изучения нового слова
             const cardData = fsrsService.createNewCard();
             const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
+             console.log('📊 FSRS result:', fsrsResult);
             
-            if (fsrsResult && fsrsResult.card) {
-                // ✅ КРИТИЧЕСКИ ВАЖНО: Сохраняем результат в Google Sheets
+ if (fsrsResult) {
+                // ✅ Теперь передаем fsrsResult напрямую (он уже плоская структура)
                 const success = await sheetsService.updateWordAfterFSRSReview(
                     chatId,
                     word.english,
-                    fsrsResult.card,
+                    fsrsResult,  // ← плоская структура
                     'good'
                 );
-
-                if (!success) {
+     
+ if (!success) {
                     throw new Error('Failed to save word progress to Google Sheets');
                 }
 
                 userState.learnedCount++;
                 markWordAsLearned(chatId, word.english);
-                optimizedLog(`📚 Слово "${word.english}" изучено сегодня. Interval: ${fsrsResult.card.interval}`);
+                optimizedLog(`📚 Слово "${word.english}" изучено сегодня. Interval: ${fsrsResult.interval}`);
                 
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
@@ -2453,6 +2456,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
