@@ -139,28 +139,21 @@ export class FSRSService {
             const schedulingCards = this.scheduler.repeat(card, now);
             console.log('📊 FSRS scheduling cards:', schedulingCards);
 
-            // Проверяем, что schedulingCards существует и имеет нужные ключи
+            // Проверяем, что schedulingCards существует
             if (!schedulingCards) {
                 console.log('❌ schedulingCards is undefined');
                 throw new Error('FSRS returned undefined scheduling cards');
             }
 
-            // Преобразуем grade в строковый ключ
-            const gradeKey = {
-                1: 'again',
-                2: 'hard', 
-                3: 'good',
-                4: 'easy'
-            }[grade];
-
-            console.log('🔑 Grade key:', gradeKey);
+            // ✅ ИСПРАВЛЕНИЕ: FSRS возвращает объект с ЧИСЛОВЫМИ ключами (1, 2, 3, 4)
             console.log('🔑 Available keys in schedulingCards:', Object.keys(schedulingCards));
-
-            const fsrsCard = schedulingCards[gradeKey];
-            console.log('🎯 Selected FSRS card:', fsrsCard);
+            
+            // Используем числовой ключ напрямую
+            const fsrsCard = schedulingCards[grade];
+            console.log('🎯 Selected FSRS card (using numeric key):', fsrsCard);
 
             if (!fsrsCard) {
-                console.log('❌ No FSRS card for grade:', grade, 'key:', gradeKey);
+                console.log('❌ No FSRS card for numeric grade:', grade);
                 console.log('🔄 Using fallback instead');
                 const fallback = this.simpleFallback(cardData, rating);
                 return fallback.card;
