@@ -139,6 +139,12 @@ export class FSRSService {
             const schedulingCards = this.scheduler.repeat(card, now);
             console.log('📊 FSRS scheduling cards:', schedulingCards);
 
+            // Проверяем, что schedulingCards существует и имеет нужные ключи
+            if (!schedulingCards) {
+                console.log('❌ schedulingCards is undefined');
+                throw new Error('FSRS returned undefined scheduling cards');
+            }
+
             // Преобразуем grade в строковый ключ
             const gradeKey = {
                 1: 'again',
@@ -148,13 +154,16 @@ export class FSRSService {
             }[grade];
 
             console.log('🔑 Grade key:', gradeKey);
+            console.log('🔑 Available keys in schedulingCards:', Object.keys(schedulingCards));
 
             const fsrsCard = schedulingCards[gradeKey];
             console.log('🎯 Selected FSRS card:', fsrsCard);
 
             if (!fsrsCard) {
-                console.log('❌ No FSRS card for grade:', grade);
-                throw new Error(`No FSRS card for grade ${grade}`);
+                console.log('❌ No FSRS card for grade:', grade, 'key:', gradeKey);
+                console.log('🔄 Using fallback instead');
+                const fallback = this.simpleFallback(cardData, rating);
+                return fallback.card;
             }
 
             const interval = Math.max(1, Math.round(fsrsCard.scheduled_days));
