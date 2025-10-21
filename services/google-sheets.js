@@ -179,12 +179,18 @@ export class GoogleSheetsService {
     }
 
     // ======================= Update Word After FSRS Review =======================
-    async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
+  async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
     if (!this.initialized) return false;
     try {
         const words = await this.getUserWords(userId);
         const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
         if (!word) return false;
+
+        console.log('🔍 DEBUG updateWordAfterFSRSReview:', {
+            existingWord: word,
+            fsrsCard: fsrsCard,
+            rating: rating
+        });
 
         const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: this.spreadsheetId,
@@ -201,8 +207,19 @@ export class GoogleSheetsService {
         const ease = fsrsCard.ease ? fsrsCard.ease.toFixed(2) : '2.50';
         const repetitions = fsrsCard.repetitions ? fsrsCard.repetitions.toString() : '1';
 
-        // Устанавливаем FirstLearnedDate если ещё нет
-        const firstLearnedDate = word.firstLearnedDate || (fsrsCard.interval > 1 ? new Date().toISOString() : '');
+        // ✅ ИСПРАВЛЕННАЯ ЛОГИКА ДЛЯ FirstLearnedDate
+        // Если слово изучается впервые (interval становится >1) и FirstLearnedDate не установлен
+        let firstLearnedDate = word.firstLearnedDate;
+        if ((!firstLearnedDate || firstLearnedDate.trim() === '') && fsrsCard.interval > 1) {
+            firstLearnedDate = new Date().toISOString();
+            console.log('✅ Setting FirstLearnedDate:', firstLearnedDate);
+        }
+
+        console.log('🔍 DEBUG FirstLearnedDate:', {
+            existingFirstLearnedDate: word.firstLearnedDate,
+            newFirstLearnedDate: firstLearnedDate,
+            condition: fsrsCard.interval > 1
+        });
 
         await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
@@ -211,12 +228,12 @@ export class GoogleSheetsService {
             resource: {
                 values: [[
                     new Date().toISOString(),           // LastReview
-                    dueDate,                            // NextReview (защищено)
-                    interval,                           // Interval (защищено)
+                    dueDate,                            // NextReview
+                    interval,                           // Interval
                     'active',                           // Status
-                    firstLearnedDate,                   // FirstLearnedDate
-                    ease,                               // Ease (защищено)
-                    repetitions,                        // Repetitions (защищено)
+                    firstLearnedDate || '',             // FirstLearnedDate (исправлено)
+                    ease,                               // Ease
+                    repetitions,                        // Repetitions
                     rating                              // Rating
                 ]]
             }
@@ -433,4 +450,5 @@ export class GoogleSheetsService {
 // ======================= Initialize =======================
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
