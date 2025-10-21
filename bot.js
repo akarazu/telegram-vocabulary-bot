@@ -1781,6 +1781,7 @@ function formatTimeWithCountdown(date) {
     
     return timeString;
 }
+
 // ✅ ФУНКЦИЯ: Детальное форматирование времени
 function formatTimeDetailed(date) {
     const moscowDate = toMoscowTime(date);
@@ -1796,47 +1797,6 @@ function formatTimeDetailed(date) {
     const dayOfWeek = daysOfWeek[moscowDate.getDay()];
     
     return `${day}.${month}.${year} ${hours}:${minutes}:${seconds} (${dayOfWeek})`;
-}
-
-// ✅ ФУНКЦИЯ: Форматирование времени с обратным отсчетом
-function formatTimeWithCountdown(date) {
-    const now = new Date();
-    const targetDate = new Date(date);
-    
-    const moscowOffset = 3 * 60 * 60 * 1000;
-    const moscowNow = new Date(now.getTime() + moscowOffset);
-    const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
-    
-    const diffTime = moscowTarget - moscowNow;
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    const diffHours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const diffMinutes = Math.floor((diffTime % (1000 * 60 * 60)) / (1000 * 60));
-    
-    const day = moscowTarget.getDate().toString().padStart(2, '0');
-    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
-    const hours = moscowTarget.getHours().toString().padStart(2, '0');
-    const minutes = moscowTarget.getMinutes().toString().padStart(2, '0');
-    
-    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
-    
-    let timeString = `${day}.${month} ${hours}:${minutes}`;
-    
-    if (diffDays === 0) {
-        if (diffHours === 0) {
-            timeString += ` (через ${diffMinutes} мин)`;
-        } else {
-            timeString += ` (через ${diffHours} ч ${diffMinutes} мин)`;
-        }
-    } else if (diffDays === 1) {
-        timeString += ` (завтра, через ${diffDays} дн)`;
-    } else if (diffDays <= 7) {
-        timeString += ` (${dayOfWeek}, через ${diffDays} дн)`;
-    } else {
-        timeString += ` (${dayOfWeek})`;
-    }
-    
-    return timeString;
 }
 
 // ✅ КОМАНДА: Сброс прогресса
@@ -2522,6 +2482,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
