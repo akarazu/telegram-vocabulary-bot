@@ -180,50 +180,56 @@ export class GoogleSheetsService {
 
     // ======================= Update Word After FSRS Review =======================
     async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
-        if (!this.initialized) return false;
-        try {
-            const words = await this.getUserWords(userId);
-            const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
-            if (!word) return false;
+    if (!this.initialized) return false;
+    try {
+        const words = await this.getUserWords(userId);
+        const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
+        if (!word) return false;
 
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:O'
-            });
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:O'
+        });
 
-            const rows = response.data.values || [];
-            const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
-            if (rowIndex === 0) return false;
+        const rows = response.data.values || [];
+        const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
+        if (rowIndex === 0) return false;
 
-            // Устанавливаем FirstLearnedDate если ещё нет
-            const firstLearnedDate = word.firstLearnedDate || (fsrsCard.interval > 1 ? new Date().toISOString() : '');
+        // ✅ ЗАЩИТА ОТ UNDEFINED
+        const dueDate = fsrsCard.due && fsrsCard.due.toISOString ? fsrsCard.due.toISOString() : new Date().toISOString();
+        const interval = fsrsCard.interval ? fsrsCard.interval.toString() : '2';
+        const ease = fsrsCard.ease ? fsrsCard.ease.toFixed(2) : '2.50';
+        const repetitions = fsrsCard.repetitions ? fsrsCard.repetitions.toString() : '1';
 
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: `Words!G${rowIndex}:O${rowIndex}`,
-                valueInputOption: 'RAW',
-                resource: {
-                    values: [[
-                        new Date().toISOString(),           // LastReview
-                        fsrsCard.due.toISOString(),         // NextReview
-                        fsrsCard.interval.toString(),       // Interval
-                        'active',                           // Status
-                        firstLearnedDate,                   // FirstLearnedDate
-                        fsrsCard.ease.toFixed(2),           // Ease
-                        fsrsCard.repetitions.toString(),    // Repetitions
-                        rating                               // Rating
-                    ]]
-                }
-            });
+        // Устанавливаем FirstLearnedDate если ещё нет
+        const firstLearnedDate = word.firstLearnedDate || (fsrsCard.interval > 1 ? new Date().toISOString() : '');
 
-            this.cache.delete(`words_${userId}`);
-            this.cache.delete(`review_${userId}`);
-            return true;
-        } catch (e) {
-            console.error('❌ Error updating FSRS review:', e.message);
-            return false;
-        }
+        await this.sheets.spreadsheets.values.update({
+            spreadsheetId: this.spreadsheetId,
+            range: `Words!G${rowIndex}:O${rowIndex}`,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[
+                    new Date().toISOString(),           // LastReview
+                    dueDate,                            // NextReview (защищено)
+                    interval,                           // Interval (защищено)
+                    'active',                           // Status
+                    firstLearnedDate,                   // FirstLearnedDate
+                    ease,                               // Ease (защищено)
+                    repetitions,                        // Repetitions (защищено)
+                    rating                              // Rating
+                ]]
+            }
+        });
+
+        this.cache.delete(`words_${userId}`);
+        this.cache.delete(`review_${userId}`);
+        return true;
+    } catch (e) {
+        console.error('❌ Error updating FSRS review:', e.message);
+        return false;
     }
+}
 
     // ======================= Get Words For Review =======================
     async getWordsForReview(userId) {
@@ -427,3 +433,4 @@ export class GoogleSheetsService {
 // ======================= Initialize =======================
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
