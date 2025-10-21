@@ -1462,9 +1462,21 @@ async function processNewWordLearning(chatId, action) {
             const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
             
             if (fsrsResult && fsrsResult.card) {
+                // ✅ КРИТИЧЕСКИ ВАЖНО: Сохраняем результат в Google Sheets
+                const success = await sheetsService.updateWordAfterFSRSReview(
+                    chatId,
+                    word.english,
+                    fsrsResult.card,
+                    'good'
+                );
+
+                if (!success) {
+                    throw new Error('Failed to save word progress to Google Sheets');
+                }
+
                 userState.learnedCount++;
                 markWordAsLearned(chatId, word.english);
-                optimizedLog(`📚 Слово "${word.english}" изучено сегодня`);
+                optimizedLog(`📚 Слово "${word.english}" изучено сегодня. Interval: ${fsrsResult.card.interval}`);
                 
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
@@ -2441,5 +2453,6 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
