@@ -1374,18 +1374,27 @@ async function getAllUnlearnedWords(chatId) {
         
         optimizedLog(`🔍 Поиск новых слов для ${chatId}, всего слов: ${userWords.length}`);
 
+        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Только слова, которые НИКОГДА не изучались
         const unlearnedWords = userWords.filter(word => {
             if (word.status !== 'active') {
                 return false;
             }
             
-            const hasFirstLearnedDate = word.firstLearnedDate && word.firstLearnedDate.trim() !== '';
-            const isNewWord = word.interval === 1 && !hasFirstLearnedDate;
+            // Новое слово = interval=1 И нет firstLearnedDate
+            const isNewWord = word.interval === 1 && 
+                            (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
             
             return isNewWord;
         });
 
-        optimizedLog(`📊 Найдено новых слов: ${unlearnedWords.length}`);
+        optimizedLog(`📊 Найдено новых слов (никогда не изучавшихся): ${unlearnedWords.length}`);
+        
+        // Логируем для отладки
+        if (unlearnedWords.length > 0) {
+            unlearnedWords.forEach(word => {
+                optimizedLog(`🔍 Новое слово: "${word.english}", interval: ${word.interval}, firstLearnedDate: "${word.firstLearnedDate}"`);
+            });
+        }
         
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
 
@@ -1622,14 +1631,14 @@ async function showUserStats(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         
-        // ✅ ИСПРАВЛЕНИЕ: Правильный подсчет новых слов
+        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Новые слова - только те, что НИКОГДА не изучались
         const newWords = activeWords.filter(word => 
             word.interval === 1 && 
             (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')
         );
         const newWordsCount = newWords.length;
         
-        // ✅ ИСПРАВЛЕНИЕ: Правильный подсчет слов для повторения
+        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Слова для повторения - изученные слова с наступившей датой
         const reviewWords = await sheetsService.getWordsForReview(chatId);
         const reviewWordsCount = reviewWords.length;
         
@@ -1638,7 +1647,7 @@ async function showUserStats(chatId) {
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
         
-        // ✅ ИСПРАВЛЕНИЕ: Правильный подсчет изученных слов
+        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Изученные слова - те, что изучались хоть раз
         const learnedWords = activeWords.filter(word => 
             word.interval > 1 || 
             (word.firstLearnedDate && word.firstLearnedDate.trim() !== '')
@@ -1652,19 +1661,36 @@ async function showUserStats(chatId) {
         message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
         message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
         
+        // Проверка целостности данных
+        const calculatedTotal = learnedWordsCount + newWordsCount;
+        if (calculatedTotal !== totalWordsCount) {
+            const discrepancy = totalWordsCount - calculatedTotal;
+            message += `\n⚠️ **Расхождение в данных:** ${discrepancy} слов имеют нестандартный статус\n`;
+            
+            // Покажем эти слова для отладки
+            const conflictWords = activeWords.filter(word => 
+                word.interval === 1 && 
+                word.firstLearnedDate && 
+                word.firstLearnedDate.trim() !== ''
+            );
+            
+            if (conflictWords.length > 0) {
+                message += `🔍 Слова с interval=1 но firstLearnedDate: ${conflictWords.length}\n`;
+            }
+        }
+        
         if (remainingToday > 0) {
             message += `🎯 Осталось изучить сегодня: ${remainingToday} слов\n`;
         } else {
             message += `✅ Дневной лимит достигнут!\n`;
         }
 
-        // ✅ ИСПРАВЛЕНИЕ: Правильное отображение ближайших повторений с ВРЕМЕНЕМ
+        // Ближайшие повторения
         const now = new Date();
         const futureWords = activeWords.filter(word => {
             if (!word.nextReview || word.interval <= 1) return false;
             try {
                 const nextReview = new Date(word.nextReview);
-                // ✅ Используем московское время для сравнения
                 const moscowOffset = 3 * 60 * 60 * 1000;
                 const moscowNow = new Date(now.getTime() + moscowOffset);
                 const moscowReview = new Date(nextReview.getTime() + moscowOffset);
@@ -1675,10 +1701,7 @@ async function showUserStats(chatId) {
             }
         });
         
-        // Сортируем по дате повторения
         futureWords.sort((a, b) => new Date(a.nextReview) - new Date(b.nextReview));
-        
-        // Берем ближайшие 5 слов
         const nearestWords = futureWords.slice(0, 5);
         
         if (nearestWords.length > 0) {
@@ -1707,7 +1730,7 @@ async function showUserStats(chatId) {
         message += `\n🕐 **Время сервера:** ${formatTimeDetailed(serverTime)}`;
         message += `\n🇷🇺 **Московское время:** ${formatTimeDetailed(moscowTime)}`;
         
-        // ✅ ИСПРАВЛЕНИЕ: Правильные последние добавленные слова
+        // Последние добавленные слова
         const recentAddedWords = activeWords
             .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
             .slice(0, 3);
@@ -1716,9 +1739,9 @@ async function showUserStats(chatId) {
             message += `\n\n📥 **Последние добавленные слова:**\n`;
             recentAddedWords.forEach(word => {
                 const timeAdded = formatMoscowDate(word.createdDate);
-                const status = word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '') 
-                    ? '🆕' 
-                    : '🎓';
+                // ✅ Правильный статус: новое слово или изученное
+                const isNew = word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
+                const status = isNew ? '🆕' : '🎓';
                 message += `• ${status} ${word.english} (${timeAdded})\n`;
             });
         }
@@ -2482,6 +2505,7 @@ setTimeout(() => {
 }, 5000);
 
 optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+
 
 
 
