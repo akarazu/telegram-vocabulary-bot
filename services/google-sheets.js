@@ -256,16 +256,20 @@ export class GoogleSheetsService {
     const words = await this.getUserWords(userId);
     const now = new Date();
     
-    // ✅ ИСПРАВЛЕНИЕ: Правильный фильтр для слов повторения
+    // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Слова для повторения = изученные слова с наступившей датой
     return words.filter(w => {
         if (w.status !== 'active') return false;
-        if (w.interval <= 1) return false; // Только изученные слова
+        
+        // Изученное слово = interval>1 ИЛИ есть firstLearnedDate
+        const isLearned = w.interval > 1 || 
+                         (w.firstLearnedDate && w.firstLearnedDate.trim() !== '');
+        if (!isLearned) return false;
+        
         if (!w.nextReview) return false;
         
         try {
             const nextReviewDate = new Date(w.nextReview);
-            // ✅ Используем московское время для сравнения
-            const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа
+            const moscowOffset = 3 * 60 * 60 * 1000;
             const moscowNow = new Date(now.getTime() + moscowOffset);
             const moscowReview = new Date(nextReviewDate.getTime() + moscowOffset);
             
@@ -283,13 +287,13 @@ export class GoogleSheetsService {
     }
 
     // ======================= Get New Words Count =======================
-   async getNewWordsCount(userId) {
+  async getNewWordsCount(userId) {
     const words = await this.getUserWords(userId);
     
-    // ✅ ИСПРАВЛЕНИЕ: Только новые слова (interval = 1) без даты первого изучения
+    // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Только слова, которые НИКОГДА не изучались
     return words.filter(w => 
         w.status === 'active' && 
-        w.interval === 1 && 
+        w.interval === 1 &&
         (!w.firstLearnedDate || w.firstLearnedDate.trim() === '')
     ).length;
 }
@@ -477,6 +481,7 @@ export class GoogleSheetsService {
 // ======================= Initialize =======================
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
 
 
 
