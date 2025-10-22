@@ -159,57 +159,58 @@ export class GoogleSheetsService {
         });
     }
 
-    async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
-        if (!this.initialized) return false;
-        try {
-            const words = await this.getUserWords(userId);
-            const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
-            if (!word) return false;
+ async function updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
+    if (!this.initialized) return false;
+    try {
+        const words = await this.getUserWords(userId);
+        const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
+        if (!word) return false;
 
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:O'
-            });
+        const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: 'Words!A:O'
+        });
 
-            const rows = response.data.values || [];
-            const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
-            if (rowIndex === 0) return false;
+        const rows = response.data.values || [];
+        const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
+        if (rowIndex === 0) return false;
 
-            const dueDate = fsrsCard.due?.toISOString?.() || new Date().toISOString();
-            const interval = fsrsCard.interval?.toString() || '2';
-            const ease = fsrsCard.ease?.toFixed(2) || '2.50';
-            const repetitions = fsrsCard.repetitions?.toString() || '1';
-            
-            let firstLearnedDate = fsrsCard.firstLearnedDate || word.firstLearnedDate;
-            if ((!firstLearnedDate || firstLearnedDate.trim() === '') && word.interval === 1) {
-                firstLearnedDate = new Date().toISOString();
-            }
-
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: `Words!G${rowIndex}:O${rowIndex}`,
-                valueInputOption: 'RAW',
-                resource: {
-                    values: [[
-                        new Date().toISOString(),
-                        dueDate,
-                        interval,
-                        'active',
-                        firstLearnedDate || '',
-                        ease,
-                        repetitions,
-                        rating
-                    ]]
-                }
-            });
-
-            this.cache.delete(`words_${userId}`);
-            this.cache.delete(`review_${userId}`);
-            return true;
-        } catch (e) {
-            return false;
+        const dueDate = fsrsCard.due?.toISOString?.() || new Date().toISOString();
+        const interval = fsrsCard.interval?.toString() || '2';
+        const ease = fsrsCard.ease?.toFixed(2) || '2.50';
+        const repetitions = fsrsCard.repetitions?.toString() || '1';
+        
+        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Устанавливаем firstLearnedDate только для новых слов
+        let firstLearnedDate = word.firstLearnedDate;
+        if ((!firstLearnedDate || firstLearnedDate.trim() === '') && word.interval === 1) {
+            firstLearnedDate = new Date().toISOString();
         }
+
+        await this.sheets.spreadsheets.values.update({
+            spreadsheetId: this.spreadsheetId,
+            range: `Words!G${rowIndex}:O${rowIndex}`,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[
+                    new Date().toISOString(),
+                    dueDate,
+                    interval,
+                    'active',
+                    firstLearnedDate || '',
+                    ease,
+                    repetitions,
+                    rating
+                ]]
+            }
+        });
+
+        this.cache.delete(`words_${userId}`);
+        this.cache.delete(`review_${userId}`);
+        return true;
+    } catch (e) {
+        return false;
     }
+}
 
     async getWordsForReview(userId) {
         const words = await this.getUserWords(userId);
@@ -288,3 +289,4 @@ export class GoogleSheetsService {
 
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
