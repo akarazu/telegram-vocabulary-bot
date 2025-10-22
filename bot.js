@@ -125,6 +125,8 @@ async function getLearnedToday(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
         const now = new Date();
+        
+        // Московское время
         const moscowOffset = 3 * 60 * 60 * 1000;
         const moscowNow = new Date(now.getTime() + moscowOffset);
         const todayStart = new Date(moscowNow);
@@ -137,7 +139,8 @@ async function getLearnedToday(chatId) {
         userWords.forEach(word => {
             if (word.status !== 'active') return;
             
-            if (word.interval > 1 && word.firstLearnedDate && word.firstLearnedDate.trim() !== '') {
+            // ✅ ТОЛЬКО слова, которые были изучены ВПЕРВЫЕ сегодня
+            if (word.firstLearnedDate && word.firstLearnedDate.trim() !== '') {
                 try {
                     const learnedDate = new Date(word.firstLearnedDate);
                     const moscowLearned = new Date(learnedDate.getTime() + moscowOffset);
@@ -152,11 +155,11 @@ async function getLearnedToday(chatId) {
         });
 
         return learnedToday;
+        
     } catch (error) {
         return 0;
     }
 }
-
 // Клавиатуры
 function getMainMenu() {
     return {
@@ -983,10 +986,8 @@ async function processNewWordLearning(chatId, action) {
             const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
             
             if (fsrsResult) {
-                const shouldSetFirstLearnedDate = word.interval === 1 && 
-                                                (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
-                
-                if (shouldSetFirstLearnedDate) {
+                // ✅ ВАЖНО: Для новых слов устанавливаем firstLearnedDate
+                if (word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')) {
                     fsrsResult.firstLearnedDate = new Date().toISOString();
                 }
 
@@ -1801,5 +1802,6 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
