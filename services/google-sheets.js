@@ -6,10 +6,10 @@ export class GoogleSheetsService {
         this.sheets = null;
         this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
         
-        // Минимальный кеш для экономии памяти
+        // ОПТИМИЗАЦИЯ: Минимальный кеш
         this.cache = new Map();
-        this.CACHE_TTL = 3 * 60 * 1000;
-        this.MAX_CACHE_SIZE = 30;
+        this.CACHE_TTL = 5 * 60 * 1000;
+        this.MAX_CACHE_SIZE = 40;
 
         if (!this.spreadsheetId) console.error('❌ GOOGLE_SHEET_ID not set');
         this.init();
@@ -31,29 +31,7 @@ export class GoogleSheetsService {
         }
     }
 
-    getCredentialsFromEnv() {
-        try {
-            if (process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS) {
-                return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS);
-            }
-            if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-                return {
-                    type: 'service_account',
-                    project_id: process.env.GOOGLE_PROJECT_ID || 'default-project',
-                    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-                    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-                    client_id: process.env.GOOGLE_CLIENT_ID || 'default-client-id',
-                    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-                    token_uri: 'https://oauth2.googleapis.com/token',
-                };
-            }
-            return null;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    // Оптимизированное кеширование
+    // ОПТИМИЗАЦИЯ: Упрощенный кеш
     async getCachedData(cacheKey, fetchFn) {
         const cached = this.cache.get(cacheKey);
         if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
@@ -62,7 +40,6 @@ export class GoogleSheetsService {
         
         const data = await fetchFn();
         
-        // Автоочистка при превышении лимита
         if (this.cache.size >= this.MAX_CACHE_SIZE) {
             const firstKey = this.cache.keys().next().value;
             this.cache.delete(firstKey);
@@ -72,6 +49,7 @@ export class GoogleSheetsService {
         return data;
     }
 
+    // ОПТИМИЗАЦИЯ: Автоочистка кеша
     startCacheCleanup() {
         setInterval(() => {
             const now = Date.now();
@@ -83,8 +61,133 @@ export class GoogleSheetsService {
         }, 5 * 60 * 1000);
     }
 
-    // КРИТИЧЕСКИ ВАЖНЫЕ ФУНКЦИИ:
+    // ОПТИМИЗАЦИЯ: Обновление слова с сохранением ВСЕХ полей FSRS
+    async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
+        if (!this.initialized) return false;
+        try {
+            const words = await this.getUserWords(userId);
+            const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
+            if (!word) return false;
 
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:O'
+            });
+
+            const rows = response.data.values || [];
+            const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
+            if (rowIndex === 0) return false;
+
+            const dueDate = fsrsCard.due?.toISOString?.() || new Date().toISOString();
+            const interval = fsrsCard.interval?.toString() || '2';
+            const ease = fsrsCard.ease?.toFixed(2) || '2.50';
+            const repetitions = fsrsCard.repetitions?.toString() || '1';
+            
+            // ВАЖНО: Сохраняем ВСЕ поля FSRS для правильной работы алгоритма
+            const stability = fsrsCard.stability?.toFixed(4) || '0.1000';
+            const difficulty = fsrsCard.difficulty?.toFixed(4) || '5.0000';
+            const elapsed_days = fsrsCard.elapsed_days?.toString() || '0';
+            const scheduled_days = fsrsCard.scheduled_days?.toString() || '1';
+            const lapses = fsrsCard.lapses?.toString() || '0';
+            const state = fsrsCard.state?.toString() || '1';
+            
+            let firstLearnedDate = fsrsCard.firstLearnedDate || word.firstLearnedDate;
+            if ((!firstLearnedDate || firstLearnedDate.trim() === '') && word.interval === 1) {
+                firstLearnedDate = new Date().toISOString();
+            }
+
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Words!G${rowIndex}:O${rowIndex}`,
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[
+                        new Date().toISOString(),           // LastReview
+                        dueDate,                            // NextReview
+                        interval,                           // Interval
+                        'active',                           // Status
+                        firstLearnedDate || '',             // FirstLearnedDate
+                        ease,                               // Ease
+                        repetitions,                        // Repetitions
+                        rating,                             // Rating
+                        // Дополнительные поля FSRS в колонке O (JSON)
+                        JSON.stringify({
+                            stability: parseFloat(stability),
+                            difficulty: parseFloat(difficulty),
+                            elapsed_days: parseInt(elapsed_days),
+                            scheduled_days: parseInt(scheduled_days),
+                            lapses: parseInt(lapses),
+                            state: parseInt(state)
+                        })
+                    ]]
+                }
+            });
+
+            this.cache.delete(`words_${userId}`);
+            this.cache.delete(`review_${userId}`);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // ОПТИМИЗАЦИЯ: Чтение слов с извлечением данных FSRS
+    async getUserWords(userId) {
+        if (!this.initialized) return [];
+        const cacheKey = `words_${userId}`;
+        
+        return this.getCachedData(cacheKey, async () => {
+            try {
+                const response = await this.sheets.spreadsheets.values.get({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!A:O'
+                });
+
+                const rows = response.data.values || [];
+                return rows.slice(1)
+                    .filter(row => row[0] === userId.toString() && (row[9] === 'active' || !row[9]))
+                    .map(row => {
+                        // Извлекаем данные FSRS из колонки O
+                        let fsrsData = {};
+                        try {
+                            if (row[14]) {
+                                fsrsData = JSON.parse(row[14]);
+                            }
+                        } catch (e) {
+                            // Игнорируем ошибки парсинга
+                        }
+
+                        return {
+                            userId: row[0],
+                            english: row[1],
+                            transcription: row[2],
+                            audioUrl: row[3],
+                            meanings: row[4] ? JSON.parse(row[4]) : [],
+                            createdDate: row[5],
+                            lastReview: row[6],
+                            nextReview: row[7],
+                            interval: parseInt(row[8]) || 1,
+                            status: row[9],
+                            firstLearnedDate: row[10],
+                            ease: parseFloat(row[11]) || 2.5,
+                            repetitions: parseInt(row[12]) || 0,
+                            rating: parseFloat(row[13]) || 0,
+                            // Данные FSRS
+                            stability: fsrsData.stability || 0.1,
+                            difficulty: fsrsData.difficulty || 5.0,
+                            elapsed_days: fsrsData.elapsed_days || 0,
+                            scheduled_days: fsrsData.scheduled_days || 1,
+                            lapses: fsrsData.lapses || 0,
+                            state: fsrsData.state || 1
+                        };
+                    });
+            } catch (e) {
+                return [];
+            }
+        });
+    }
+
+    // Остальные методы остаются без изменений, но с оптимизацией памяти
     async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
         if (!this.initialized) return false;
         try {
@@ -111,7 +214,8 @@ export class GoogleSheetsService {
                         '',
                         2.5,
                         0,
-                        0
+                        0,
+                        JSON.stringify({}) // Пустые данные FSRS для нового слова
                     ]]
                 }
             });
@@ -122,95 +226,6 @@ export class GoogleSheetsService {
             return false;
         }
     }
-
-    async getUserWords(userId) {
-        if (!this.initialized) return [];
-        const cacheKey = `words_${userId}`;
-        
-        return this.getCachedData(cacheKey, async () => {
-            try {
-                const response = await this.sheets.spreadsheets.values.get({
-                    spreadsheetId: this.spreadsheetId,
-                    range: 'Words!A:O'
-                });
-
-                const rows = response.data.values || [];
-                return rows.slice(1)
-                    .filter(row => row[0] === userId.toString() && (row[9] === 'active' || !row[9]))
-                    .map(row => ({
-                        userId: row[0],
-                        english: row[1],
-                        transcription: row[2],
-                        audioUrl: row[3],
-                        meanings: row[4] ? JSON.parse(row[4]) : [],
-                        createdDate: row[5],
-                        lastReview: row[6],
-                        nextReview: row[7],
-                        interval: parseInt(row[8]) || 1,
-                        status: row[9],
-                        firstLearnedDate: row[10],
-                        ease: parseFloat(row[11]) || 2.5,
-                        repetitions: parseInt(row[12]) || 0,
-                        rating: parseFloat(row[13]) || 0
-                    }));
-            } catch (e) {
-                return [];
-            }
-        });
-    }
-
- async function updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
-    if (!this.initialized) return false;
-    try {
-        const words = await this.getUserWords(userId);
-        const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
-        if (!word) return false;
-
-        const response = await this.sheets.spreadsheets.values.get({
-            spreadsheetId: this.spreadsheetId,
-            range: 'Words!A:O'
-        });
-
-        const rows = response.data.values || [];
-        const rowIndex = rows.findIndex(r => r[0] === userId.toString() && r[1].toLowerCase() === english.toLowerCase()) + 1;
-        if (rowIndex === 0) return false;
-
-        const dueDate = fsrsCard.due?.toISOString?.() || new Date().toISOString();
-        const interval = fsrsCard.interval?.toString() || '2';
-        const ease = fsrsCard.ease?.toFixed(2) || '2.50';
-        const repetitions = fsrsCard.repetitions?.toString() || '1';
-        
-        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Устанавливаем firstLearnedDate только для новых слов
-        let firstLearnedDate = word.firstLearnedDate;
-        if ((!firstLearnedDate || firstLearnedDate.trim() === '') && word.interval === 1) {
-            firstLearnedDate = new Date().toISOString();
-        }
-
-        await this.sheets.spreadsheets.values.update({
-            spreadsheetId: this.spreadsheetId,
-            range: `Words!G${rowIndex}:O${rowIndex}`,
-            valueInputOption: 'RAW',
-            resource: {
-                values: [[
-                    new Date().toISOString(),
-                    dueDate,
-                    interval,
-                    'active',
-                    firstLearnedDate || '',
-                    ease,
-                    repetitions,
-                    rating
-                ]]
-            }
-        });
-
-        this.cache.delete(`words_${userId}`);
-        this.cache.delete(`review_${userId}`);
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
 
     async getWordsForReview(userId) {
         const words = await this.getUserWords(userId);
@@ -252,41 +267,28 @@ export class GoogleSheetsService {
         ).length;
     }
 
-    async addMeaningToWord(userId, english, newMeaning) {
-        if (!this.initialized) return false;
+    getCredentialsFromEnv() {
         try {
-            const words = await this.getUserWords(userId);
-            const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
-            if (!word) return false;
-
-            const updatedMeanings = [...word.meanings, newMeaning];
-            const updatedJSON = JSON.stringify(updatedMeanings);
-
-            const response = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:O'
-            });
-
-            const rows = response.data.values || [];
-            const rowIndex = rows.findIndex(row => row[0] === userId.toString() && row[1].toLowerCase() === english.toLowerCase()) + 1;
-            if (rowIndex === 0) return false;
-
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId: this.spreadsheetId,
-                range: `Words!E${rowIndex}`,
-                valueInputOption: 'RAW',
-                resource: { values: [[updatedJSON]] }
-            });
-
-            this.cache.delete(`words_${userId}`);
-            return true;
+            if (process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS) {
+                return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS);
+            }
+            if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+                return {
+                    type: 'service_account',
+                    project_id: process.env.GOOGLE_PROJECT_ID || 'default-project',
+                    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+                    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+                    client_id: process.env.GOOGLE_CLIENT_ID || 'default-client-id',
+                    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+                    token_uri: 'https://oauth2.googleapis.com/token',
+                };
+            }
+            return null;
         } catch (e) {
-            return false;
+            return null;
         }
     }
-
 }
 
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
-
