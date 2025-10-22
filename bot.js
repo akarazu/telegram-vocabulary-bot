@@ -718,7 +718,7 @@ async function processReviewRating(chatId, rating) {
     }
 
     try {
-        const cardData = {
+const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
             difficulty: word.difficulty || 5.0,
@@ -730,9 +730,15 @@ async function processReviewRating(chatId, rating) {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
-        const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, rating);
+
+         const fsrsResult = await fsrsService.reviewCard(chatId, word, cardData, rating);
         
-        if (fsrsResult) {
+ if (fsrsResult) {
+            // ВАЖНО: Адаптируем параметры FSRS на основе успехов пользователя
+            const userWords = await getCachedUserWords(chatId);
+            const successRate = fsrsService.calculateUserSuccessRate(userWords);
+            fsrsService.adaptUserParameters(chatId, successRate);
+
             const success = await sheetsService.updateWordAfterFSRSReview(
                 chatId,
                 word.english,
@@ -758,7 +764,6 @@ async function processReviewRating(chatId, rating) {
         }
 
     } catch (error) {
-        // Fallback: просто удаляем слово из списка и продолжаем
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -1802,6 +1807,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
