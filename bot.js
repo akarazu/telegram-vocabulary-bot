@@ -1418,6 +1418,18 @@ else if (userState?.state === REVERSE_TRAINING_STATES.ACTIVE) {
     if (text === '👀 Ответ') {
         const word = userState.words[userState.index];
         await showTrainingResult(chatId, userState, word, false);
+        
+        // После показа ответа тоже переходим к следующему слову
+        setTimeout(async () => {
+            userState.index++;
+            userState.lastActivity = Date.now();
+
+            if (userState.index >= userState.words.length) {
+                await completeTraining(chatId, userState);
+            } else {
+                await showNextTrainingWord(chatId);
+            }
+        }, 2500);
     } else if (text === '❌ Завершить') {
         await completeTraining(chatId, userState);
     } else {
@@ -1935,6 +1947,18 @@ async function checkTrainingAnswer(chatId, userAnswer) {
     if (isCorrect) state.correct++;
 
     await showTrainingResult(chatId, state, word, isCorrect, userAnswer);
+    
+    // Увеличиваем индекс и переходим к следующему слову после показа результата
+    setTimeout(async () => {
+        state.index++;
+        state.lastActivity = Date.now();
+
+        if (state.index >= state.words.length) {
+            await completeTraining(chatId, state);
+        } else {
+            await showNextTrainingWord(chatId);
+        }
+    }, 2500); // 2.5 секунды на просмотр результата
 }
 
 // Быстрая нормализация ответа
@@ -1956,27 +1980,7 @@ async function showTrainingResult(chatId, state, word, isCorrect, userAnswer = '
     if (word.transcription) message += `🔤 ${word.transcription}\n`;
     if (translations.length) message += `📚 ${translations.join(', ')}`;
 
-    await bot.sendMessage(chatId, message, {
-        parse_mode: 'Markdown',
-        reply_markup: getTrainingKeyboard()
-    });
-}
-
-// Минималистичная клавиатура
-function getTrainingKeyboard() {
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: '➡️ Далее', callback_data: 'training_next' },
-                    { text: '✍️ Правописание', callback_data: 'training_spelling' }
-                ],
-                [
-                    { text: '📊 Статистика', callback_data: 'training_stats' }
-                ]
-            ]
-        }
-    };
+    await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
 }
 
 async function handleTrainingCallback(chatId, data) {
@@ -1987,7 +1991,11 @@ async function handleTrainingCallback(chatId, data) {
         case 'training_next':
             state.index++;
             state.lastActivity = Date.now();
-            await showNextTrainingWord(chatId);
+            if (state.index >= state.words.length) {
+                await completeTraining(chatId, state);
+            } else {
+                await showNextTrainingWord(chatId);
+            }
             break;
             
         case 'training_spelling':
@@ -2088,7 +2096,22 @@ async function returnToTraining(chatId, state) {
     delete originalState.attempts;
     
     userStates.set(chatId, originalState);
-    await showTrainingResult(chatId, originalState, originalState.words[originalState.index], false);
+    
+    // После возврата из правописания показываем результат текущего слова
+    const word = originalState.words[originalState.index];
+    await showTrainingResult(chatId, originalState, word, false);
+    
+    // И переходим к следующему слову через 2 секунды
+    setTimeout(async () => {
+        originalState.index++;
+        originalState.lastActivity = Date.now();
+
+        if (originalState.index >= originalState.words.length) {
+            await completeTraining(chatId, originalState);
+        } else {
+            await showNextTrainingWord(chatId);
+        }
+    }, 2000);
 }
 
 // Запуск периодических задач
@@ -2097,6 +2120,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
