@@ -1428,7 +1428,7 @@ else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
     if (text === '🔙 Назад') {
         returnToTraining(chatId, userState);
     } else {
-        await checkSpellingAnswer(chatId, text);
+        await ccheckTrainingSpellingAnswer(chatId, text);
     }
 }
     else {
@@ -2048,7 +2048,7 @@ async function startTrainingSpelling(chatId) {
     await askTrainingSpellingQuestion(chatId, meaning.translation);
 }
 
-async function checkSpellingAnswer(chatId, userAnswer) {
+async function checkTrainingSpellingAnswer(chatId, userAnswer) {
     const state = userStates.get(chatId);
     if (!state || state.state !== REVERSE_TRAINING_STATES.SPELLING) return;
 
@@ -2085,6 +2085,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
