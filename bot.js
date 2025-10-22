@@ -3,156 +3,24 @@ import { GoogleSheetsService } from './services/google-sheets.js';
 import { YandexDictionaryService } from './services/yandex-dictionary-service.js';
 import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
 import { FSRSService } from './services/fsrs-service.js';
-import { BatchSheetsService } from './services/batch-sheets-service.js';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-// Оптимизация: ленивая инициализация сервисов
-let sheetsService, yandexService, cambridgeService, fsrsService, batchSheetsService;
+// Оптимизированные хранилища для экономии памяти
+const userStates = new Map();
+const cache = new Map();
+const dailyLearnedWords = new Map();
+const learnedWords = new Map();
+
+// Ленивая инициализация сервисов
+let sheetsService, yandexService, cambridgeService, fsrsService;
 let servicesInitialized = false;
 
-// Оптимизация: кеширование данных
-const cache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 минут
-
-// Оптимизация: уменьшение логов в продакшене
-const isProduction = process.env.NODE_ENV === 'production';
-
-function optimizedLog(message, data = null) {
-    if (!isProduction) {
-        if (data) {
-            console.log(message, data);
-        } else {
-            console.log(message);
-        }
-    } else {
-        const importantMessages = ['❌', '✅', '🔔', '🎯', '💰', '⏰'];
-        if (importantMessages.some(emoji => message.includes(emoji))) {
-            console.log(message);
-        }
-    }
-}
-
-// ✅ УЛУЧШЕННАЯ ФУНКЦИЯ: Показа деталей перевода
-async function showTranslationDetails(chatId, translationIndex, userState) {
-    try {
-        const translation = userState.tempTranslations[translationIndex];
-        
-        // Ищем соответствующий перевод в meanings
-        const meaning = userState.meanings.find(m => 
-            m.translation && m.translation.trim() === translation.trim()
-        );
-
-        if (meaning) {
-            let detailsMessage = `🔍 **Подробности перевода:**\n\n`;
-            detailsMessage += `🇬🇧 **Слово:** ${userState.tempWord}\n`;
-            detailsMessage += `🇷🇺 **Перевод:** ${translation}\n\n`;
-
-            if (meaning.partOfSpeech && meaning.partOfSpeech.trim() !== '') {
-                detailsMessage += `🔤 **Часть речи:** ${meaning.partOfSpeech}\n\n`;
-            }
-
-            if (meaning.englishDefinition && meaning.englishDefinition.trim() !== '') {
-                detailsMessage += `📖 **Английское определение:**\n${meaning.englishDefinition}\n\n`;
-            }
-
-            if (meaning.examples && meaning.examples.length > 0) {
-                detailsMessage += `📝 **Примеры использования:**\n`;
-                meaning.examples.forEach((example, index) => {
-                    if (index < 3) { // Показываем максимум 3 примера
-                        detailsMessage += `\n${index + 1}. ${example.english}`;
-                        if (example.russian && example.russian.trim() !== '') {
-                            detailsMessage += `\n   ${example.russian}`;
-                        }
-                    }
-                });
-            } else {
-                detailsMessage += `📝 **Примеры:** не найдены\n`;
-            }
-
-            await bot.sendMessage(chatId, detailsMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '🔙 Назад к выбору переводов', callback_data: 'back_to_translations' }]
-                    ]
-                }
-            });
-        } else {
-            await bot.sendMessage(chatId, 
-                `❌ Информация о переводе не найдена\n\n` +
-                `Перевод: "${translation}"\n` +
-                `Попробуйте выбрать другой перевод.`
-            );
-        }
-    } catch (error) {
-        optimizedLog('❌ Error showing translation details:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при показе подробностей перевода');
-    }
-}
-
-function toMoscowTime(date) {
-    if (!date) return date;
-    
-    try {
-        const moscowOffset = 3 * 60 * 60 * 1000; // +3 часа для Москвы
-        return new Date(date.getTime() + moscowOffset);
-    } catch (error) {
-        return date;
-    }
-}
-
-function formatMoscowDate(date) {
-    if (!date) return 'дата не указана';
-    
-    try {
-        const moscowDate = toMoscowTime(new Date(date));
-        const day = moscowDate.getDate().toString().padStart(2, '0');
-        const month = (moscowDate.getMonth() + 1).toString().padStart(2, '0');
-        const year = moscowDate.getFullYear();
-        const hours = moscowDate.getHours().toString().padStart(2, '0');
-        const minutes = moscowDate.getMinutes().toString().padStart(2, '0');
-        
-        return `${day}.${month}.${year} ${hours}:${minutes}`;
-    } catch (error) {
-        return 'ошибка даты';
-    }
-}
-
-// ✅ ВОССТАНОВЛЕНО: Функция возврата к выбору переводов
-async function backToTranslationSelection(chatId, userState, callbackQuery) {
-    try {
-        let translationMessage = '🎯 **Выберите переводы:**\n\n' +
-            `🇬🇧 **${userState.tempWord}**`;
-        if (userState.tempTranscription) {
-            translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-        }
-        translationMessage += '\n\n💡 Нажмите на перевод чтобы выбрать его, или 🔍 для подробностей';
-
-        await bot.sendMessage(chatId, translationMessage, {
-            parse_mode: 'Markdown',
-            ...getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, userState.selectedTranslationIndices)
-        });
-
-        try {
-            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-        } catch (deleteError) {
-            optimizedLog('⚠️ Не удалось удалить сообщение с деталями, продолжаем...');
-        }
-    } catch (error) {
-        optimizedLog('❌ Error going back to translations:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при возврате к выбору переводов');
-    }
-}
-
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Инициализация сервисов с FSRS
 async function initializeServices() {
     if (servicesInitialized) return true;
     
     try {
-        optimizedLog('🔄 Initializing services...');
         sheetsService = new GoogleSheetsService();
-        batchSheetsService = new BatchSheetsService(sheetsService);
         yandexService = new YandexDictionaryService();
         cambridgeService = new CambridgeDictionaryService();
         fsrsService = new FSRSService();
@@ -170,23 +38,19 @@ async function initializeServices() {
         });
         
         servicesInitialized = true;
-        optimizedLog('✅ Все сервисы успешно инициализированы');
         return true;
     } catch (error) {
-        optimizedLog('❌ Ошибка инициализации сервисов:', error);
-        // ✅ Создаем заглушки чтобы бот не падал
+        console.error('Service initialization failed');
+        // Заглушки для работы бота
         sheetsService = { 
             initialized: false,
-            hasWordsForReview: () => false,
-            getReviewWordsCount: () => 0,
             getUserWords: () => [],
             getWordsForReview: () => [],
+            getReviewWordsCount: () => 0,
             getNewWordsCount: () => 0,
-            getAllActiveUsers: () => [],
             addWordWithMeanings: async () => false,
             updateWordAfterFSRSReview: async () => false,
-            batchUpdateWords: async () => false,
-            resetUserProgress: async () => true
+            addMeaningToWord: async () => false
         };
         yandexService = { 
             getTranscriptionAndAudio: async () => ({ transcription: '', audioUrl: '' })
@@ -195,33 +59,34 @@ async function initializeServices() {
             getWordData: async () => ({ meanings: [] })
         };
         fsrsService = new FSRSService();
-        batchSheetsService = {
-            updateWordReviewBatch: async () => true,
-            flushAll: async () => {}
-        };
         servicesInitialized = true;
         return false;
     }
 }
 
-// Хранилище состояний пользователей
-const userStates = new Map();
+// Очистка неактивных пользователей каждые 10 минут
+setInterval(() => {
+    const now = Date.now();
+    for (const [chatId, state] of userStates.entries()) {
+        if (now - (state.lastActivity || 0) > 30 * 60 * 1000) {
+            userStates.delete(chatId);
+        }
+    }
+}, 10 * 60 * 1000);
 
-// Хранилище для планировщика нотификаций
-const notificationScheduler = new Map();
+// Функции для работы с кешем
+function updateUserActivity(chatId) {
+    const state = userStates.get(chatId);
+    if (state) {
+        state.lastActivity = Date.now();
+    }
+}
 
-// Хранилище для отслеживания дневного лимита изученных слов
-const dailyLearnedWords = new Map();
-
-// Хранилище для слов, которые УЖЕ ИЗУЧЕНЫ (перешли в повторение)
-const learnedWords = new Map();
-
-// Оптимизация: кеширование пользовательских слов
 async function getCachedUserWords(chatId) {
     const cacheKey = `words_${chatId}`;
     const cached = cache.get(cacheKey);
     
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
         return cached.data;
     }
     
@@ -235,99 +100,31 @@ async function getCachedUserWords(chatId) {
     return words;
 }
 
-// Оптимизация: периодическая очистка кеша
-setInterval(() => {
-    const now = Date.now();
-    for (const [key, value] of cache.entries()) {
-        if (now - value.timestamp > CACHE_TTL) {
-            cache.delete(key);
-        }
-    }
-    // Очищаем неактивные состояния пользователей
-    const inactiveTime = 30 * 60 * 1000; // 30 минут
-    for (const [chatId, state] of userStates.entries()) {
-        if (now - (state.lastActivity || 0) > inactiveTime) {
-            userStates.delete(chatId);
-            optimizedLog(`🧹 Очищен неактивный пользователь: ${chatId}`);
-        }
-    }
-}, 10 * 60 * 1000);
-
-function updateUserActivity(chatId) {
-    const state = userStates.get(chatId);
-    if (state) {
-        state.lastActivity = Date.now();
-    }
-}
-
-// ✅ ФУНКЦИЯ: Отметка слова как изученного
+// Функции для работы с изученными словами
 function markWordAsLearned(chatId, englishWord) {
     if (!learnedWords.has(chatId)) {
         learnedWords.set(chatId, new Set());
     }
-    
-    const userLearnedWords = learnedWords.get(chatId);
-    userLearnedWords.add(englishWord.toLowerCase());
-    optimizedLog(`🎓 Слово "${englishWord}" отмечено как ИЗУЧЕННОЕ для ${chatId}, всего: ${userLearnedWords.size}`);
+    learnedWords.get(chatId).add(englishWord.toLowerCase());
 }
 
-// ✅ ФУНКЦИЯ: Проверка изучено ли слово
 function isWordLearned(chatId, englishWord) {
-    if (!learnedWords.has(chatId)) {
-        learnedWords.set(chatId, new Set());
-        return false;
-    }
-    const userLearnedWords = learnedWords.get(chatId);
-    return userLearnedWords.has(englishWord.toLowerCase());
+    if (!learnedWords.has(chatId)) return false;
+    return learnedWords.get(chatId).has(englishWord.toLowerCase());
 }
 
-// ✅ ФУНКЦИЯ: Сброс дневного лимита
+// Функции для работы с дневным лимитом
 function resetDailyLimit() {
     const now = new Date();
-    const currentHour = now.getHours();
-    
-    if (currentHour === 4) {
+    if (now.getHours() === 4) {
         dailyLearnedWords.clear();
-        optimizedLog('🔄 Сброшен дневной лимит изучения слов');
     }
 }
 
-// ✅ ФУНКЦИЯ: Проверка с учетом часового пояса
-function isReviewDue(nextReviewDate) {
-    if (!nextReviewDate) return false;
-    
-    try {
-        const reviewDate = new Date(nextReviewDate);
-        const now = new Date();
-        
-        // ✅ ИСПРАВЛЕНИЕ: Добавляем запас +3 часа для московского времени
-        const timezoneOffset = 3 * 60 * 60 * 1000; // +3 часа в миллисекундах
-        const adjustedNow = new Date(now.getTime() + timezoneOffset);
-        
-        return reviewDate <= adjustedNow;
-    } catch (error) {
-        return false;
-    }
-}
-
-// Оптимизация: один интервал вместо нескольких
-let lastLimitReset = 0;
-let lastCacheCleanup = 0;
-setInterval(() => {
-    const now = Date.now();
-    if (now - lastLimitReset >= 60 * 60 * 1000) {
-        resetDailyLimit();
-        lastLimitReset = now;
-    }
-}, 60 * 1000);
-
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Получение количества изученных слов сегодня
 async function getLearnedToday(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
         const now = new Date();
-        
-        // Московское время
         const moscowOffset = 3 * 60 * 60 * 1000;
         const moscowNow = new Date(now.getTime() + moscowOffset);
         const todayStart = new Date(moscowNow);
@@ -340,7 +137,6 @@ async function getLearnedToday(chatId) {
         userWords.forEach(word => {
             if (word.status !== 'active') return;
             
-            // ✅ Учитываем ТОЛЬКО слова которые ПЕРВЫЙ РАЗ изучены сегодня
             if (word.interval > 1 && word.firstLearnedDate && word.firstLearnedDate.trim() !== '') {
                 try {
                     const learnedDate = new Date(word.firstLearnedDate);
@@ -348,64 +144,25 @@ async function getLearnedToday(chatId) {
                     
                     if (moscowLearned >= todayStart && moscowLearned <= todayEnd) {
                         learnedToday++;
-                        optimizedLog(`✅ Слово "${word.english}" изучено СЕГОДНЯ впервые: ${moscowLearned.toLocaleString('ru-RU')}`);
                     }
                 } catch (error) {
-                    optimizedLog(`❌ Ошибка даты для "${word.english}":`, error);
+                    // Пропускаем слова с ошибками даты
                 }
             }
         });
 
-        optimizedLog(`📊 Слов изучено сегодня для ${chatId}: ${learnedToday}`);
         return learnedToday;
-        
     } catch (error) {
-        optimizedLog('❌ Error getting learned today:', error);
         return 0;
     }
 }
 
-// Оптимизация: кеширование данных словарей
-const dictionaryCache = new Map();
-
-async function getCachedWordData(englishWord) {
-    const cacheKey = `dict_${englishWord.toLowerCase()}`;
-    const cached = dictionaryCache.get(cacheKey);
-    
-    if (cached) {
-        return cached;
-    }
-    
-    await initializeServices();
-    
-    try {
-        const result = await Promise.race([
-            cambridgeService.getWordData(englishWord),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout')), 10000)
-            )
-        ]);
-        
-        dictionaryCache.set(cacheKey, result);
-        
-        if (dictionaryCache.size > 1000) {
-            const firstKey = dictionaryCache.keys().next().value;
-            dictionaryCache.delete(firstKey);
-        }
-        
-        return result;
-    } catch (error) {
-        optimizedLog(`❌ Dictionary error for "${englishWord}":`, error.message);
-        return { meanings: [] };
-    }
-}
-
-// Главное меню
+// Клавиатуры
 function getMainMenu() {
     return {
         reply_markup: {
             keyboard: [
-                ['➕ Добавить новое слово', '📚 Повторить слова'],
+                ['➕ Добавить слово', '📚 Повторить'],
                 ['🆕 Новые слова', '📊 Статистика']
             ],
             resize_keyboard: true
@@ -413,46 +170,40 @@ function getMainMenu() {
     };
 }
 
-// Клавиатура с кнопкой прослушивания
-function getListeningKeyboard(audioId) {
+function getReviewKeyboard() {
     return {
         reply_markup: {
             inline_keyboard: [
-                [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }],
-                [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
+                [
+                    { text: '😣 Забыл', callback_data: 'review_again' },
+                    { text: '😓 Трудно', callback_data: 'review_hard' }
+                ],
+                [
+                    { text: '😊 Хорошо', callback_data: 'review_good' },
+                    { text: '🎉 Легко', callback_data: 'review_easy' }
+                ],
+                [
+                    { text: '✍️ Правописание', callback_data: 'spelling_train' }
+                ]
             ]
         }
     };
 }
 
-// Клавиатура действий после прослушивания
-function getAfterAudioKeyboard() {
+function getNewWordsKeyboard() {
     return {
         reply_markup: {
             inline_keyboard: [
-                [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
+                [{ text: '✅ Выучил', callback_data: 'learned_word' }],
+                [{ text: '🔄 Нужно повторить', callback_data: 'need_repeat_word' }],
+                [{ text: '✍️ Правописание', callback_data: 'spelling_train' }]
             ]
         }
     };
 }
 
-// Клавиатура для ввода примера с кнопкой "Пропустить"
-function getExampleInputKeyboard() {
-    return {
-        reply_markup: {
-            keyboard: [
-                ['⏭️ Пропустить'],
-                ['➕ Добавить новое слово']
-            ],
-            resize_keyboard: true
-        }
-    };
-}
-
-// Клавиатура для выбора переводов с кнопкой "Подробнее" для всех переводов
 function getTranslationSelectionKeyboard(translations, meanings, selectedIndices = []) {
     if (!translations || translations.length === 0) {
-        optimizedLog('❌ No translations provided to keyboard function');
         return {
             reply_markup: {
                 inline_keyboard: [
@@ -479,7 +230,6 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
             }
         ];
         
-        // ✅ ИСПРАВЛЕНО: Правильное определение наличия деталей
         const meaningForTranslation = meanings?.find(m => 
             m.translation && m.translation.trim() === translation.trim()
         );
@@ -489,8 +239,6 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
             (meaningForTranslation.examples && meaningForTranslation.examples.length > 0) ||
             (meaningForTranslation.partOfSpeech && meaningForTranslation.partOfSpeech.trim() !== '')
         );
-        
-        optimizedLog(`🔍 Translation "${translation}" has details: ${hasDetails}`);
         
         if (hasDetails) {
             row.push({ 
@@ -531,48 +279,39 @@ function getTranslationSelectionKeyboard(translations, meanings, selectedIndices
     };
 }
 
-// Вспомогательная функция для эмодзи номеров
 function getNumberEmoji(number) {
     const emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
     return number <= emojis.length ? emojis[number - 1] : `${number}.`;
 }
 
-// Клавиатура для повторения слов
-function getReviewKeyboard() {
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: '😣 Забыл', callback_data: 'review_again' },
-                    { text: '😓 Трудно', callback_data: 'review_hard' }
-                ],
-                [
-                    { text: '😊 Хорошо', callback_data: 'review_good' },
-                    { text: '🎉 Легко', callback_data: 'review_easy' }
-                ],
-                [
-                    { text: '✍️ Правописание', callback_data: 'spelling_train' }
-                ]
-            ]
-        }
-    };
+// Вспомогательные функции
+function toMoscowTime(date) {
+    if (!date) return date;
+    try {
+        const moscowOffset = 3 * 60 * 60 * 1000;
+        return new Date(date.getTime() + moscowOffset);
+    } catch (error) {
+        return date;
+    }
 }
 
-// Клавиатура для новых слов
-function getNewWordsKeyboard() {
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '✅ Выучил', callback_data: 'learned_word' }],
-                [{ text: '🔄 Нужно повторить', callback_data: 'need_repeat_word' }],
-                [{ text: '✍️ Правописание', callback_data: 'spelling_train' }],
-                [{ text: '⏭️ Пропустить слово', callback_data: 'skip_new_word' }]
-            ]
-        }
-    };
+function formatMoscowDate(date) {
+    if (!date) return 'дата не указана';
+    try {
+        const moscowDate = toMoscowTime(new Date(date));
+        const day = moscowDate.getDate().toString().padStart(2, '0');
+        const month = (moscowDate.getMonth() + 1).toString().padStart(2, '0');
+        const year = moscowDate.getFullYear();
+        const hours = moscowDate.getHours().toString().padStart(2, '0');
+        const minutes = moscowDate.getMinutes().toString().padStart(2, '0');
+        
+        return `${day}.${month}.${year} ${hours}:${minutes}`;
+    } catch (error) {
+        return 'ошибка даты';
+    }
 }
 
-// Функция для принудительного показа меню
+// Основные функции бота
 async function showMainMenu(chatId, text = '') {
     try {
         if (text && text.trim() !== '') {
@@ -584,22 +323,12 @@ async function showMainMenu(chatId, text = '') {
             return await bot.sendMessage(chatId, 'Выберите действие:', getMainMenu());
         }
     } catch (error) {
-        optimizedLog('❌ Error showing main menu:', error);
-        try {
-            await bot.sendMessage(chatId, text || 'Выберите действие из меню:');
-        } catch (e) {
-            optimizedLog('❌ Critical error sending message:', e);
-        }
+        await bot.sendMessage(chatId, text || 'Выберите действие из меню:');
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Сохранение слова с FSRS карточкой
+// Функции для работы со словами
 async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
-    optimizedLog('💾 Saving word with meanings:', { 
-        word: userState.tempWord, 
-        selectedTranslations: selectedTranslations 
-    });
-    
     let success = true;
     
     if (servicesInitialized && sheetsService.initialized) {
@@ -618,7 +347,7 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
                 return;
             }
         } catch (error) {
-            optimizedLog('❌ Error checking duplicates:', error);
+            // Продолжаем даже при ошибке проверки дубликатов
         }
 
         const meaningsData = [];
@@ -645,8 +374,6 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
                 });
             }
         });
-
-        optimizedLog('📝 Meanings data for JSON:', meaningsData);
 
         // Создаем FSRS карточку для нового слова
         const fsrsCard = fsrsService.createNewCard();
@@ -682,39 +409,11 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
     }
 }
 
-// Вспомогательная функция для обработки пользовательского перевода без примера
-async function processCustomTranslationWithoutExample(chatId, userState) {
-    const newTranslations = [userState.customTranslation, ...userState.tempTranslations];
+// Функции для ручного добавления перевода
+async function processCustomTranslation(chatId, userState, translation, example = '') {
+    const newTranslations = [translation, ...userState.tempTranslations];
     const newMeaning = {
-        translation: userState.customTranslation,
-        englishDefinition: '',
-        examples: []
-    };
-    const newMeanings = [newMeaning, ...userState.meanings];
-    
-    userStates.set(chatId, {
-        ...userState,
-        state: 'choosing_translation',
-        tempTranslations: newTranslations,
-        meanings: newMeanings,
-        selectedTranslationIndices: [0]
-    });
-
-    const successMessage = `✅ Ваш перевод "${userState.customTranslation}" добавлен!\n\n` +
-        '🎯 Теперь выберите переводы которые хотите сохранить:\n' +
-        '✅ Ваш перевод отмечен как выбранный';
-    
-    await bot.sendMessage(chatId, successMessage, 
-        getTranslationSelectionKeyboard(newTranslations, newMeanings, [0])
-    );
-    await showMainMenu(chatId);
-}
-
-// Вспомогательная функция для обработки пользовательского перевода с примером
-async function processCustomTranslationWithExample(chatId, userState, example) {
-    const newTranslations = [userState.customTranslation, ...userState.tempTranslations];
-    const newMeaning = {
-        translation: userState.customTranslation,
+        translation: translation,
         englishDefinition: '',
         examples: example ? [{ english: example, russian: '' }] : []
     };
@@ -728,134 +427,16 @@ async function processCustomTranslationWithExample(chatId, userState, example) {
         selectedTranslationIndices: [0]
     });
 
-    let successMessage = `✅ Ваш перевод "${userState.customTranslation}" добавлен!\n\n`;
-    if (example) {
-        successMessage += `📝 Пример: ${example}\n\n`;
-    }
-    successMessage += '🎯 Теперь выберите переводы которые хотите сохранить:\n' +
-        '✅ Ваш перевод отмечен как выбранный';
+    let message = `✅ Ваш перевод "${translation}" добавлен!\n\n`;
+    if (example) message += `📝 Пример: ${example}\n\n`;
+    message += '🎯 Теперь выберите переводы для сохранения:';
     
-    await bot.sendMessage(chatId, successMessage, 
+    await bot.sendMessage(chatId, message, 
         getTranslationSelectionKeyboard(newTranslations, newMeanings, [0])
     );
-    await showMainMenu(chatId);
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Проверка есть ли слова для повторения
-async function hasWordsForReview(userId) {
-    if (!servicesInitialized || !sheetsService.initialized) {
-        return false;
-    }
-    
-    try {
-        const wordsToReview = await sheetsService.getWordsForReview(userId);
-        
-        // ✅ ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: только слова с интервалом > 1
-        const validReviewWords = wordsToReview.filter(word => word.interval > 1);
-        
-        optimizedLog(`🔍 Check review words for ${userId}: ${validReviewWords.length} valid words`);
-        return validReviewWords.length > 0;
-        
-    } catch (error) {
-        optimizedLog('❌ Error checking words for review:', error);
-        return false;
-    }
-}
-
-// ✅ УПРОЩЕННАЯ ВЕРСИЯ: Отправка нотификаций
-async function sendReviewNotification(chatId) {
-    try {
-        const hasWords = await hasWordsForReview(chatId);
-        
-        if (hasWords) {
-            const wordsCount = await sheetsService.getReviewWordsCount(chatId);
-            const userWords = await getCachedUserWords(chatId);
-            
-            const newWords = userWords.filter(word => word.interval === 1).length;
-            
-            let message = '🔔 **Время учить английский!**\n\n';
-            
-            if (wordsCount > 0) {
-                message += `📚 **Готово к повторению:** ${wordsCount} слов\n`;
-            }
-            
-            if (newWords > 0) {
-                message += `🆕 **Новых слов доступно:** ${newWords}\n`;
-            }
-            
-            message += `\n💪 Потратьте всего 5-10 минут на изучение!`;
-
-            const keyboard = {
-                reply_markup: {
-                    inline_keyboard: []
-                }
-            };
-            
-            if (wordsCount > 0) {
-                keyboard.reply_markup.inline_keyboard.push([
-                    { text: `📚 Повторить слова (${wordsCount})`, callback_data: 'start_review_from_notification' }
-                ]);
-            }
-            
-            if (newWords > 0) {
-                keyboard.reply_markup.inline_keyboard.push([
-                    { text: `🆕 Изучить новые слова (${newWords})`, callback_data: 'start_learning_from_notification' }
-                ]);
-            }
-            
-            await bot.sendMessage(chatId, message, {
-                parse_mode: 'Markdown',
-                ...keyboard
-            });
-            
-            optimizedLog(`✅ Sent notification to ${chatId}`);
-            return true;
-        } else {
-            optimizedLog(`ℹ️ No words for review for ${chatId}, skipping notification`);
-            return false;
-        }
-    } catch (error) {
-        optimizedLog('❌ Error sending review notification:', error);
-        return false;
-    }
-}
-
-// ✅ УПРОЩЕННАЯ ВЕРСИЯ: Проверка и отправка нотификаций
-async function checkAndSendNotifications() {
-    optimizedLog('🔔 Checking notifications for all users...');
-    
-    if (!servicesInitialized || !sheetsService.initialized) {
-        optimizedLog('❌ Sheets service not initialized, skipping notifications');
-        return;
-    }
-    
-    try {
-        const activeUsers = await sheetsService.getAllActiveUsers();
-        optimizedLog(`📋 Found ${activeUsers.length} active users`);
-        
-        let sentCount = 0;
-        
-        for (const userId of activeUsers) {
-            try {
-                const sent = await sendReviewNotification(userId);
-                if (sent) {
-                    sentCount++;
-                    // Задержка между отправками
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-            } catch (userError) {
-                optimizedLog(`❌ Error processing user ${userId}:`, userError);
-            }
-        }
-        
-        optimizedLog(`📢 Notification check completed: ${sentCount} sent`);
-        
-    } catch (error) {
-        optimizedLog('❌ Error in notification check:', error);
-    }
-}
-
-// ✅ ДОБАВЛЕНО: Простой тренажер правописания
+// Функции тренажера правописания
 async function startSpellingTraining(chatId, context) {
     const userState = userStates.get(chatId);
     if (!userState) return;
@@ -873,9 +454,6 @@ async function startSpellingTraining(chatId, context) {
         return;
     }
 
-    if (!word) return;
-
-    // Сохраняем оригинальное состояние и запускаем тренажер
     userStates.set(chatId, {
         state: 'spelling_training',
         originalState: originalState,
@@ -888,7 +466,6 @@ async function startSpellingTraining(chatId, context) {
     await askSpellingQuestion(chatId, word);
 }
 
-// ✅ ДОБАВЛЕНО: Задать вопрос по правописанию
 async function askSpellingQuestion(chatId, word) {
     const message = `✍️ **Тренировка правописания**\n\n` +
                    `🇷🇺 Перевод: **${word.meanings[0]?.translation || 'перевод'}**\n\n` +
@@ -903,7 +480,6 @@ async function askSpellingQuestion(chatId, word) {
     });
 }
 
-// ✅ ДОБАВЛЕНО: Проверить ответ
 async function checkSpellingAnswer(chatId, userAnswer) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'spelling_training') return;
@@ -921,7 +497,6 @@ async function checkSpellingAnswer(chatId, userAnswer) {
             `🔤 ${word.transcription || ''}`
         );
         
-        // Возвращаем к карточке через 2 секунды
         setTimeout(() => returnToCard(chatId, userState), 2000);
     } else {
         await bot.sendMessage(chatId, 
@@ -929,7 +504,6 @@ async function checkSpellingAnswer(chatId, userAnswer) {
             `💡 Подсказка: начинается на "${word.english[0]}"`
         );
         
-        // После 3 попыток показываем ответ
         if (userState.attempts >= 3) {
             setTimeout(async () => {
                 await bot.sendMessage(chatId, 
@@ -942,12 +516,10 @@ async function checkSpellingAnswer(chatId, userAnswer) {
     }
 }
 
-// ✅ ДОБАВЛЕНО: Вернуться к карточке
 async function returnToCard(chatId, userState) {
     const originalState = userState.originalState;
     const context = userState.originalContext;
     
-    // Восстанавливаем оригинальное состояние
     userStates.set(chatId, originalState);
     
     if (context === 'review') {
@@ -957,68 +529,26 @@ async function returnToCard(chatId, userState) {
     }
 }
 
-// ✅ УПРОЩЕННАЯ ВЕРСИЯ: Запуск нотификаций
-function startOptimizedNotifications() {
-    optimizedLog('💰 Запуск оптимизированных нотификаций...');
-    
-    // Основная проверка каждые 2 часа
-    setInterval(async () => {
-        await checkAndSendNotifications().catch(console.error);
-    }, 2 * 60 * 60 * 1000);
-    
-    // Утренняя нотификация в 9:00
-    scheduleMorningNotification();
-}
-
-function scheduleMorningNotification() {
-    const now = new Date();
-    const nextMorning = new Date();
-    
-    nextMorning.setHours(9, 0, 0, 0);
-    if (now >= nextMorning) {
-        nextMorning.setDate(nextMorning.getDate() + 1);
-    }
-    
-    const timeUntilMorning = nextMorning.getTime() - now.getTime();
-    
-    setTimeout(() => {
-        optimizedLog('🌅 Sending morning notifications...');
-        checkAndSendNotifications();
-        scheduleMorningNotification();
-    }, timeUntilMorning);
-}
-
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Начало сессии повторения с FSRS
+// Функции повторения слов
 async function startReviewSession(chatId) {
     await initializeServices();
     
-    // ✅ ПРЕЖДЕ ЧЕМ НАЧАТЬ: Очищаем предыдущее состояние
     const existingState = userStates.get(chatId);
     if (existingState) {
-        optimizedLog(`⚠️ Очищаем предыдущее состояние для ${chatId}: ${existingState.state}`);
         userStates.delete(chatId);
-        
-        // Очищаем кеш
         const cacheKey = `words_${chatId}`;
         cache.delete(cacheKey);
     }
     
     if (!sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
         return;
     }
 
     try {
         const wordsToReview = await sheetsService.getWordsForReview(chatId);
         
-        // ✅ ИСПРАВЛЕНИЕ: УБИРАЕМ фильтр по interval > 1
-        // Теперь берем ВСЕ слова, которые вернул getWordsForReview
-        const validReviewWords = wordsToReview;
-        
-        optimizedLog(`🔍 Review session for ${chatId}: ${validReviewWords.length} valid words`);
-        
-        if (validReviewWords.length === 0) {
-            // Показываем детальную информацию
+        if (wordsToReview.length === 0) {
             const userWords = await getCachedUserWords(chatId);
             const activeWords = userWords.filter(word => word.status === 'active');
             const learnedWords = activeWords.filter(word => 
@@ -1046,11 +576,10 @@ async function startReviewSession(chatId) {
             return;
         }
 
-        // ✅ СОЗДАЕМ НОВОЕ СОСТОЯНИЕ С ПРАВИЛЬНЫМИ СЧЕТЧИКАМИ
         userStates.set(chatId, {
             state: 'review_session',
-            reviewWords: validReviewWords,
-            originalWordsCount: validReviewWords.length,
+            reviewWords: wordsToReview,
+            originalWordsCount: wordsToReview.length,
             currentReviewIndex: 0,
             reviewedCount: 0,
             lastActivity: Date.now()
@@ -1059,12 +588,10 @@ async function startReviewSession(chatId) {
         await showNextReviewWord(chatId);
         
     } catch (error) {
-        optimizedLog('❌ Error starting review session:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке слов для повторения.');
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего слова для повторения
 async function showNextReviewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') {
@@ -1075,20 +602,17 @@ async function showNextReviewWord(chatId) {
     const { reviewWords } = userState;
     
     if (!reviewWords || reviewWords.length === 0) {
-        console.log('🎯 showNextReviewWord: массив reviewWords пуст, завершение сессии');
         await completeReviewSession(chatId, userState);
         return;
     }
     
     if (userState.currentReviewIndex >= reviewWords.length) {
-        console.log('🔄 showNextReviewWord: индекс вышел за границы, сбрасываем в 0');
         userState.currentReviewIndex = 0;
     }
 
     const word = reviewWords[userState.currentReviewIndex];
     
     if (!word) {
-        console.log('❌ showNextReviewWord: слово не найдено по индексу', userState.currentReviewIndex);
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         userState.lastActivity = Date.now();
         await showNextReviewWord(chatId);
@@ -1111,14 +635,12 @@ async function showNextReviewWord(chatId) {
         reply_markup: {
             inline_keyboard: [
                 [{ text: '👀 Показать ответ', callback_data: 'show_answer' }],
-                [{ text: '⏭️ Пропустить', callback_data: 'skip_review' }],
                 [{ text: '❌ Завершить повторение', callback_data: 'end_review' }]
             ]
         }
     });
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показать ответ для повторения
 async function showReviewAnswer(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') {
@@ -1162,7 +684,7 @@ async function showReviewAnswer(chatId) {
                 caption: '🔊 Произношение'
             });
         } catch (error) {
-            optimizedLog('❌ Audio not available for review word:', error);
+            // Пропускаем ошибки аудио
         }
     }
 
@@ -1172,7 +694,6 @@ async function showReviewAnswer(chatId) {
     });
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка оценки повторения с FSRS
 async function processReviewRating(chatId, rating) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'review_session') {
@@ -1194,7 +715,6 @@ async function processReviewRating(chatId, rating) {
     }
 
     try {
-        // Подготавливаем данные карточки для FSRS
         const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
@@ -1207,15 +727,9 @@ async function processReviewRating(chatId, rating) {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
-        console.log('🔄 Processing review for word:', word.english, 'rating:', rating);
-        console.log('📝 Card data:', cardData);
-
-        // Используем FSRS для обновления карточки
         const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, rating);
         
         if (fsrsResult) {
-            console.log('✅ FSRS result received:', fsrsResult);
-            
             const success = await sheetsService.updateWordAfterFSRSReview(
                 chatId,
                 word.english,
@@ -1241,7 +755,6 @@ async function processReviewRating(chatId, rating) {
         }
 
     } catch (error) {
-        console.error('❌ Error processing review rating:', error);
         // Fallback: просто удаляем слово из списка и продолжаем
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
@@ -1254,7 +767,6 @@ async function processReviewRating(chatId, rating) {
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии повторения
 async function completeReviewSession(chatId, userState) {
     const totalWordsAtStart = userState.originalWordsCount || userState.reviewWords?.length || 0;
     const reviewedCount = userState.reviewedCount || 0;
@@ -1287,7 +799,7 @@ async function completeReviewSession(chatId, userState) {
         message += `\n`;
     }
     
-    const hasMoreWords = await hasWordsForReview(chatId);
+    const hasMoreWords = await sheetsService.getReviewWordsCount(chatId) > 0;
     if (hasMoreWords) {
         const remainingCount = await sheetsService.getReviewWordsCount(chatId);
         message += `📚 Осталось слов для повторения: ${remainingCount}\n`;
@@ -1306,18 +818,17 @@ async function completeReviewSession(chatId, userState) {
     });
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Начало сессии изучения новых слов
+// Функции изучения новых слов
 async function startNewWordsSession(chatId) {
     await initializeServices();
     
     const existingState = userStates.get(chatId);
     if (existingState && existingState.state === 'learning_new_words') {
-        optimizedLog(`⚠️ Завершаем предыдущую сессию изучения для ${chatId}`);
         await completeNewWordsSession(chatId, existingState);
     }
     
     if (!sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
         return;
     }
 
@@ -1325,15 +836,12 @@ async function startNewWordsSession(chatId) {
         const learnedToday = await getLearnedToday(chatId);
         const DAILY_LIMIT = 5;
         
-        optimizedLog(`🔍 Старт сессии изучения для ${chatId}, изучено сегодня: ${learnedToday}/${DAILY_LIMIT}`);
-
         if (learnedToday >= DAILY_LIMIT) {
             await bot.sendMessage(chatId, 
                 `🎉 Вы достигли дневного лимита!\n\n` +
                 `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
                 '💡 Возвращайтесь завтра для изучения новых слов!\n' +
-                '📚 Можете повторить уже изученные слова\n\n' +
-                '🔄 Или используйте /reset_progress чтобы сбросить лимит'
+                '📚 Можете повторить уже изученные слова'
             );
             return;
         }
@@ -1345,9 +853,8 @@ async function startNewWordsSession(chatId) {
                 `🎉 На сегодня новых слов для изучения нет!\n\n` +
                 `📊 Изучено слов сегодня: ${learnedToday}/${DAILY_LIMIT}\n\n` +
                 '💡 Вы можете:\n' +
-                '• Добавить новые слова через меню "➕ Добавить новое слово"\n' +
-                '• Повторить уже изученные слова\n' +
-                '• Использовать /reset_progress чтобы сбросить лимит'
+                '• Добавить новые слова через меню "➕ Добавить слово"\n' +
+                '• Повторить уже изученные слова'
             );
             return;
         }
@@ -1361,16 +868,13 @@ async function startNewWordsSession(chatId) {
             lastActivity: Date.now()
         });
 
-        optimizedLog(`🎯 Начата сессия изучения для ${chatId}, доступно слов: ${availableNewWords.length}`);
         await showNextNewWord(chatId);
         
     } catch (error) {
-        optimizedLog('❌ Error starting new words session:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке новых слов.');
     }
 }
 
-// ✅ ФУНКЦИЯ: Получение доступных новых слов на сегодня
 async function getAllUnlearnedWords(chatId) {
     if (!servicesInitialized || !sheetsService.initialized) {
         return [];
@@ -1379,41 +883,25 @@ async function getAllUnlearnedWords(chatId) {
     try {
         const userWords = await getCachedUserWords(chatId);
         
-        optimizedLog(`🔍 Поиск новых слов для ${chatId}, всего слов: ${userWords.length}`);
-
-        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Только слова, которые НИКОГДА не изучались
         const unlearnedWords = userWords.filter(word => {
             if (word.status !== 'active') {
                 return false;
             }
             
-            // Новое слово = interval=1 И нет firstLearnedDate
             const isNewWord = word.interval === 1 && 
                             (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
             
             return isNewWord;
         });
 
-        optimizedLog(`📊 Найдено новых слов (никогда не изучавшихся): ${unlearnedWords.length}`);
-        
-        // Логируем для отладки
-        if (unlearnedWords.length > 0) {
-            unlearnedWords.forEach(word => {
-                optimizedLog(`🔍 Новое слово: "${word.english}", interval: ${word.interval}, firstLearnedDate: "${word.firstLearnedDate}"`);
-            });
-        }
-        
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
-
         return unlearnedWords;
         
     } catch (error) {
-        optimizedLog('❌ Error getting unlearned words:', error);
         return [];
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ следующего нового слова
 async function showNextNewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -1470,7 +958,7 @@ async function showNextNewWord(chatId) {
                 caption: '🔊 Произношение'
             });
         } catch (error) {
-            optimizedLog('❌ Audio not available for new word');
+            // Пропускаем ошибки аудио
         }
     }
 
@@ -1480,7 +968,6 @@ async function showNextNewWord(chatId) {
     });
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Обработка изучения нового слова с FSRS
 async function processNewWordLearning(chatId, action) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -1489,22 +976,15 @@ async function processNewWordLearning(chatId, action) {
     
     try {
         if (action === 'learned') {
-            console.log('🎯 Processing word learning:', word.english);
-            
-            // Используем FSRS для обработки изучения нового слова
             const cardData = fsrsService.createNewCard();
             const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
-            console.log('📊 FSRS result:', fsrsResult);
             
             if (fsrsResult) {
-                // ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ: Устанавливаем firstLearnedDate для новых слов
-                // Если слово изучается впервые (было новым словом), устанавливаем дату
                 const shouldSetFirstLearnedDate = word.interval === 1 && 
                                                 (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
                 
                 if (shouldSetFirstLearnedDate) {
                     fsrsResult.firstLearnedDate = new Date().toISOString();
-                    console.log('✅ Setting firstLearnedDate for new word:', fsrsResult.firstLearnedDate);
                 }
 
                 const success = await sheetsService.updateWordAfterFSRSReview(
@@ -1520,17 +1000,12 @@ async function processNewWordLearning(chatId, action) {
 
                 userState.learnedCount++;
                 markWordAsLearned(chatId, word.english);
-                optimizedLog(`📚 Слово "${word.english}" изучено сегодня. Interval: ${fsrsResult.interval}`);
                 
                 userState.newWords.splice(userState.currentWordIndex, 1);
                 
-                optimizedLog(`✅ Слово "${word.english}" удалено из списка. Осталось слов: ${userState.newWords.length}`);
-                
                 const currentLearnedToday = await getLearnedToday(chatId);
-                optimizedLog(`📈 После изучения "${word.english}": ${currentLearnedToday}/5 изучено сегодня`);
                 
                 if (userState.newWords.length === 0) {
-                    optimizedLog(`🎯 Все слова изучены, завершение сессии`);
                     await completeNewWordsSession(chatId, userState);
                     return;
                 }
@@ -1554,41 +1029,29 @@ async function processNewWordLearning(chatId, action) {
             }
             
         } else if (action === 'repeat') {
-            optimizedLog(`🔄 Слово "${word.english}" осталось в новых словах для повторения`);
             userState.currentWordIndex++;
-            userState.lastActivity = Date.now();
-            
-        } else if (action === 'skip') {
-            const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
-            userState.newWords.push(skippedWord);
-            optimizedLog(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец списка`);
             userState.lastActivity = Date.now();
         }
         
         if (userState.newWords.length === 0) {
-            optimizedLog(`🎯 Все слова обработаны, завершение сессии`);
             await completeNewWordsSession(chatId, userState);
             return;
         }
         
         if (userState.currentWordIndex >= userState.newWords.length) {
             userState.currentWordIndex = 0;
-            optimizedLog(`🔄 Индекс сброшен в 0 (достигнут конец массива)`);
         }
         
-        optimizedLog(`🔄 Переход к следующему слову. Текущий индекс: ${userState.currentWordIndex}, всего слов: ${userState.newWords.length}`);
         await showNextNewWord(chatId);
 
     } catch (error) {
-        optimizedLog('❌ Error processing new word learning:', error);
         await bot.sendMessage(chatId, 
             '❌ Ошибка при сохранении прогресса.\n' +
-            'Попробуйте еще раз или используйте /debug_stats для диагностики.'
+            'Попробуйте еще раз.'
         );
     }
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Завершение сессии изучения новых слов
 async function completeNewWordsSession(chatId, userState) {
     userStates.delete(chatId);
     
@@ -1625,12 +1088,12 @@ async function completeNewWordsSession(chatId, userState) {
     });
 }
 
-// ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: Показ статистики
+// Функции статистики
 async function showUserStats(chatId) {
     await initializeServices();
     
     if (!sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
+        await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
         return;
     }
 
@@ -1638,14 +1101,12 @@ async function showUserStats(chatId) {
         const userWords = await getCachedUserWords(chatId);
         const activeWords = userWords.filter(word => word.status === 'active');
         
-        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Новые слова - только те, что НИКОГДА не изучались
         const newWords = activeWords.filter(word => 
             word.interval === 1 && 
             (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')
         );
         const newWordsCount = newWords.length;
         
-        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Слова для повторения - изученные слова с наступившей датой
         const reviewWords = await sheetsService.getWordsForReview(chatId);
         const reviewWordsCount = reviewWords.length;
         
@@ -1654,7 +1115,6 @@ async function showUserStats(chatId) {
         const DAILY_LIMIT = 5;
         const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
         
-        // ✅ ПРАВИЛЬНАЯ ЛОГИКА: Изученные слова - те, что изучались хоть раз
         const learnedWords = activeWords.filter(word => 
             word.interval > 1 || 
             (word.firstLearnedDate && word.firstLearnedDate.trim() !== '')
@@ -1667,24 +1127,6 @@ async function showUserStats(chatId) {
         message += `🆕 Новых слов доступно: ${newWordsCount}\n`;
         message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
         message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
-        
-        // Проверка целостности данных
-        const calculatedTotal = learnedWordsCount + newWordsCount;
-        if (calculatedTotal !== totalWordsCount) {
-            const discrepancy = totalWordsCount - calculatedTotal;
-            message += `\n⚠️ **Расхождение в данных:** ${discrepancy} слов имеют нестандартный статус\n`;
-            
-            // Покажем эти слова для отладки
-            const conflictWords = activeWords.filter(word => 
-                word.interval === 1 && 
-                word.firstLearnedDate && 
-                word.firstLearnedDate.trim() !== ''
-            );
-            
-            if (conflictWords.length > 0) {
-                message += `🔍 Слова с interval=1 но firstLearnedDate: ${conflictWords.length}\n`;
-            }
-        }
         
         if (remainingToday > 0) {
             message += `🎯 Осталось изучить сегодня: ${remainingToday} слов\n`;
@@ -1709,50 +1151,22 @@ async function showUserStats(chatId) {
         });
         
         futureWords.sort((a, b) => new Date(a.nextReview) - new Date(b.nextReview));
-        const nearestWords = futureWords.slice(0, 5);
+        const nearestWords = futureWords.slice(0, 3);
         
         if (nearestWords.length > 0) {
             message += `\n⏰ **Ближайшие повторения:**\n`;
             
             nearestWords.forEach((word, index) => {
                 const reviewDate = new Date(word.nextReview);
-                message += `• ${formatTimeWithCountdown(reviewDate)}: ${word.english}\n`;
+                const formattedDate = formatMoscowDate(reviewDate);
+                message += `• ${formattedDate}: ${word.english}\n`;
             });
-            
-            if (futureWords.length > 5) {
-                const remainingCount = futureWords.length - 5;
-                message += `• ... и еще ${remainingCount} слов\n`;
-            }
         } else if (reviewWordsCount > 0) {
             message += `\n⏰ **Ближайшее повторение:** 🔔 ГОТОВО СЕЙЧАС!\n`;
-            message += `🎯 Начните повторение через меню "📚 Повторить слова"\n`;
         } else {
             message += `\n⏰ **Ближайшее повторение:** пока нет запланированных\n`;
         }
         
-        // Время сервера
-        const serverTime = new Date();
-        const moscowTime = toMoscowTime(serverTime);
-        
-        message += `\n🕐 **Время сервера:** ${formatTimeDetailed(serverTime)}`;
-        message += `\n🇷🇺 **Московское время:** ${formatTimeDetailed(moscowTime)}`;
-        
-        // Последние добавленные слова
-        const recentAddedWords = activeWords
-            .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate))
-            .slice(0, 3);
-        
-        if (recentAddedWords.length > 0) {
-            message += `\n\n📥 **Последние добавленные слова:**\n`;
-            recentAddedWords.forEach(word => {
-                const timeAdded = formatMoscowDate(word.createdDate);
-                // ✅ Правильный статус: новое слово или изученное
-                const isNew = word.interval === 1 && (!word.firstLearnedDate || word.firstLearnedDate.trim() === '');
-                const status = isNew ? '🆕' : '🎓';
-                message += `• ${status} ${word.english} (${timeAdded})\n`;
-            });
-        }
-
         // Прогресс
         const progressPercentage = totalWordsCount > 0 ? Math.round((learnedWordsCount / totalWordsCount) * 100) : 0;
         
@@ -1765,231 +1179,26 @@ async function showUserStats(chatId) {
         });
         
     } catch (error) {
-        optimizedLog('❌ Error showing stats:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
     }
 }
 
-// ✅ ФУНКЦИЯ: Форматирование даты с обратным отсчетом
-function formatTimeWithCountdown(date) {
-    const now = new Date();
-    const targetDate = new Date(date);
-    
-    // ✅ Используем московское время для сравнения
-    const moscowOffset = 3 * 60 * 60 * 1000;
-    const moscowNow = new Date(now.getTime() + moscowOffset);
-    const moscowTarget = new Date(targetDate.getTime() + moscowOffset);
-    
-    const diffTime = moscowTarget - moscowNow;
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    const diffHours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const diffMinutes = Math.floor((diffTime % (1000 * 60 * 60)) / (1000 * 60));
-    
-    const day = moscowTarget.getDate().toString().padStart(2, '0');
-    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
-    const hours = moscowTarget.getHours().toString().padStart(2, '0');
-    const minutes = moscowTarget.getMinutes().toString().padStart(2, '0');
-    
-    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
-    
-    let timeString = `${day}.${month} ${hours}:${minutes}`;
-    
-    if (diffDays === 0) {
-        if (diffHours === 0) {
-            timeString += ` (через ${diffMinutes} мин)`;
-        } else {
-            timeString += ` (через ${diffHours} ч ${diffMinutes} мин)`;
-        }
-    } else if (diffDays === 1) {
-        timeString += ` (завтра, через ${diffDays} дн)`;
-    } else if (diffDays <= 7) {
-        timeString += ` (${dayOfWeek}, через ${diffDays} дн)`;
-    } else {
-        timeString += ` (${dayOfWeek})`;
-    }
-    
-    return timeString;
-}
-
-// ✅ ФУНКЦИЯ: Детальное форматирование времени
-function formatTimeDetailed(date) {
-    const moscowDate = toMoscowTime(date);
-    
-    const day = moscowDate.getDate().toString().padStart(2, '0');
-    const month = (moscowDate.getMonth() + 1).toString().padStart(2, '0');
-    const year = moscowDate.getFullYear();
-    const hours = moscowDate.getHours().toString().padStart(2, '0');
-    const minutes = moscowDate.getMinutes().toString().padStart(2, '0');
-    const seconds = moscowDate.getSeconds().toString().padStart(2, '0');
-    
-    const daysOfWeek = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
-    const dayOfWeek = daysOfWeek[moscowDate.getDay()];
-    
-    return `${day}.${month}.${year} ${hours}:${minutes}:${seconds} (${dayOfWeek})`;
-}
-
-// ✅ КОМАНДА: Сброс прогресса
-bot.onText(/\/reset_progress/, async (msg) => {
-    const chatId = msg.chat.id;
-    
-    if (!servicesInitialized || !sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Google Sheets не инициализирован.');
-        return;
-    }
-
-    try {
-        dailyLearnedWords.delete(chatId);
-        learnedWords.delete(chatId);
-        userStates.delete(chatId);
-        
-        const success = await sheetsService.resetUserProgress(chatId);
-        
-        if (success) {
-            optimizedLog(`🔄 Полный сброс прогресса для пользователя ${chatId}`);
-            
-            await bot.sendMessage(chatId, 
-                '✅ **Весь прогресс полностью сброшен!**\n\n' +
-                '• Все интервалы сброшены\n' +
-                '• Дневной лимит очищен\n' + 
-                '• История изучения удалена\n' +
-                '• Все слова теперь "новые"\n\n' +
-                '💡 Теперь вы можете начать изучение заново!',
-                { parse_mode: 'Markdown' }
-            );
-        } else {
-            await bot.sendMessage(chatId, '❌ Не удалось сбросить прогресс в базе данных.');
-        }
-        
-    } catch (error) {
-        optimizedLog('❌ Error resetting progress:', error);
-        await bot.sendMessage(chatId, 
-            '❌ Ошибка при сбросе прогресса.\n' +
-            'Попробуйте еще раз.'
-        );
-    }
-});
-
-// ✅ КОМАНДА: Диагностика статуса слов
-bot.onText(/\/debug_stats/, async (msg) => {
-    const chatId = msg.chat.id;
-    await initializeServices();
-    
-    try {
-        const userWords = await getCachedUserWords(chatId);
-        const activeWords = userWords.filter(word => word.status === 'active');
-        const now = new Date();
-        
-        let message = '🔍 **Диагностика статуса слов:**\n\n';
-        
-        const reviewWords = activeWords.filter(word => {
-            if (!word.nextReview) return false;
-            try {
-                const nextReview = new Date(word.nextReview);
-                return nextReview <= now;
-            } catch (e) {
-                return false;
-            }
-        });
-        
-        const futureWords = activeWords.filter(word => {
-            if (!word.nextReview) return false;
-            try {
-                const nextReview = new Date(word.nextReview);
-                return nextReview > now;
-            } catch (e) {
-                return false;
-            }
-        });
-        
-        const newWords = activeWords.filter(word => word.interval === 1);
-        
-        message += `📊 Всего активных слов: ${activeWords.length}\n`;
-        message += `🔄 Готово к повторению: ${reviewWords.length}\n`;
-        message += `⏰ Ожидают повторения: ${futureWords.length}\n`;
-        message += `🆕 Новые слова: ${newWords.length}\n\n`;
-        
-        if (futureWords.length > 0) {
-            message += `📅 **Ближайшие повторения:**\n`;
-            const sorted = futureWords
-                .map(word => ({ 
-                    word: word.english, 
-                    date: new Date(word.nextReview),
-                    interval: word.interval 
-                }))
-                .sort((a, b) => a.date - b.date)
-                .slice(0, 3);
-                
-            sorted.forEach(item => {
-                message += `• ${item.word} (инт. ${item.interval}д): ${formatConcreteDate(item.date)}\n`;
-            });
-        }
-        
-        await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-        
-    } catch (error) {
-        optimizedLog('❌ Debug stats error:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка диагностики.');
-    }
-});
-
-// ✅ ФУНКЦИЯ: Форматирование конкретной даты
-function formatConcreteDate(date) {
-    const now = new Date();
-    const targetDate = new Date(date);
-    
-    const moscowNow = toMoscowTime(now);
-    const moscowTarget = toMoscowTime(targetDate);
-    
-    const diffTime = moscowTarget - moscowNow;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const diffHours = Math.ceil(diffTime / (1000 * 60 * 60));
-    
-    const day = moscowTarget.getDate().toString().padStart(2, '0');
-    const month = (moscowTarget.getMonth() + 1).toString().padStart(2, '0');
-    const year = moscowTarget.getFullYear();
-    
-    const hours = moscowTarget.getHours().toString().padStart(2, '0');
-    const minutes = moscowTarget.getMinutes().toString().padStart(2, '0');
-    
-    const daysOfWeek = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    const dayOfWeek = daysOfWeek[moscowTarget.getDay()];
-    
-    if (diffDays === 0) {
-        if (diffHours <= 1) {
-            return `${hours}:${minutes} (через ${diffHours} час)`;
-        } else if (diffHours <= 24) {
-            return `${hours}:${minutes} (через ${diffHours} часов)`;
-        } else {
-            return `${day}.${month}.${year} ${hours}:${minutes}`;
-        }
-    } else if (diffDays === 1) {
-        return `завтра ${hours}:${minutes}`;
-    } else if (diffDays === 2) {
-        return `${day}.${month}.${year} ${hours}:${minutes}`;
-    } else if (diffDays <= 7) {
-        return `${day}.${month}.${year} ${hours}:${minutes} (${dayOfWeek}, через ${diffDays} дн.)`;
-    } else {
-        return `${day}.${month}.${year} ${hours}:${minutes} (${dayOfWeek})`;
-    }
-}
-
-// Основные команды бота
+// Обработчики команд
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     await initializeServices();
-    await showMainMenu(chatId, 
+    await bot.sendMessage(chatId, 
         '📚 Англо-русский словарь\n' +
         '🔤 С транскрипцией и произношением\n' +
         '🇬🇧 Британский вариант\n' +
         '📝 Каждое слово хранится с несколькими значениями\n' +
-        '🔄 **Умное интервальное повторение (FSRS)**\n' +
-        '🔔 **Автоматические напоминания**\n\n' +
+        '🔄 **Умное интервальное повторение (FSRS)**\n\n' +
         '💡 **Как учить слова:**\n' +
         '1. ➕ Добавить новое слово\n' +
         '2. 🆕 Изучить новые слова (5 в день)\n' +
         '3. 📚 Повторить изученные слова\n\n' +
-        'Используйте меню для навигации:'
+        'Используйте меню для навигации:',
+        getMainMenu()
     );
 });
 
@@ -2008,7 +1217,57 @@ bot.onText(/\/new/, async (msg) => {
     await startNewWordsSession(chatId);
 });
 
-// Обработка сообщений
+bot.onText(/\/reset_progress/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    if (!servicesInitialized || !sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
+        return;
+    }
+
+    try {
+        dailyLearnedWords.delete(chatId);
+        learnedWords.delete(chatId);
+        userStates.delete(chatId);
+        
+        // Сбрасываем прогресс через установку интервала = 1
+        const userWords = await getCachedUserWords(chatId);
+        for (const word of userWords) {
+            if (word.status === 'active') {
+                const cardData = {
+                    due: new Date(),
+                    stability: 0.1,
+                    difficulty: 5.0,
+                    elapsed_days: 0,
+                    scheduled_days: 1,
+                    reps: 0,
+                    lapses: 0,
+                    state: 1,
+                    last_review: new Date()
+                };
+                
+                await sheetsService.updateWordAfterFSRSReview(
+                    chatId,
+                    word.english,
+                    cardData,
+                    'again'
+                );
+            }
+        }
+        
+        await bot.sendMessage(chatId, 
+            '✅ **Прогресс сброшен!**\n\n' +
+            'Все слова теперь отмечены как новые.\n' +
+            'Дневной лимит очищен.',
+            { parse_mode: 'Markdown' }
+        );
+        
+    } catch (error) {
+        await bot.sendMessage(chatId, '❌ Ошибка при сбросе прогресса.');
+    }
+});
+
+// Обработчики сообщений
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -2022,11 +1281,11 @@ bot.on('message', async (msg) => {
 
     const userState = userStates.get(chatId);
 
-    if (text === '➕ Добавить новое слово') {
+    if (text === '➕ Добавить слово') {
         userStates.set(chatId, { state: 'waiting_english', lastActivity: Date.now() });
-        await showMainMenu(chatId, '🇬🇧 Введите английское слово:');
+        await bot.sendMessage(chatId, '🇬🇧 Введите английское слово:');
     }
-    else if (text === '📚 Повторить слова') {
+    else if (text === '📚 Повторить') {
         await startReviewSession(chatId);
     }
     else if (text === '🆕 Новые слова') {
@@ -2036,154 +1295,110 @@ bot.on('message', async (msg) => {
         await showUserStats(chatId);
     }
     else if (userState?.state === 'waiting_english') {
-        const englishWord = text.trim().toLowerCase();
-        optimizedLog(`🔍 Обработка слова: "${englishWord}"`);
-
-        if (!cambridgeService || !yandexService) {
-            optimizedLog('❌ Сервисы не инициализированы');
-            await showMainMenu(chatId, '❌ Сервисы временно недоступны. Попробуйте позже.');
-            userStates.delete(chatId);
-            return;
-        }
-
-        if (!/^[a-zA-Z\s\-'\.]+$/.test(englishWord)) {
-            await showMainMenu(chatId, 
-                '❌ Это не похоже на английское слово.\n' +
-                'Пожалуйста, введите слово на английском:'
-            );
-            return;
-        }
-
-        await showMainMenu(chatId, '🔍 Ищу перевод, транскрипцию, произношение и примеры...');
-
-        try {
-            optimizedLog(`🎯 Начинаем поиск для: "${englishWord}"`);
-            let audioId = null;
-            let transcription = '';
-            let audioUrl = '';
-            let meanings = [];
-            let translations = [];
-
-            const cambridgeData = await getCachedWordData(englishWord);
-            if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
-                optimizedLog(`✅ Cambridge успешно: ${cambridgeData.meanings.length} значений`);
-                meanings = cambridgeData.meanings;
-                translations = meanings.map(m => m.translation).filter((t, i, arr) => arr.indexOf(t) === i);
-                optimizedLog('📝 Найдены переводы:', translations);
-            } else {
-                optimizedLog('❌ Cambridge не вернул переводы');
-                meanings = [];
-                translations = [];
-            }
-
-            optimizedLog('🔤 Запрашиваем транскрипцию у Яндекс...');
-            try {
-                const yandexData = await yandexService.getTranscriptionAndAudio(englishWord);
-                transcription = yandexData.transcription || '';
-                audioUrl = yandexData.audioUrl || '';
-                if (audioUrl) {
-                    audioId = Date.now().toString();
-                }
-                optimizedLog(`✅ Яндекс транскрипция: ${transcription}`);
-            } catch (yandexError) {
-                optimizedLog(`❌ Яндекс не сработал: ${yandexError.message}`);
-                audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(englishWord)}&tl=en-gb&client=tw-ob`;
-                audioId = Date.now().toString();
-            }
-
-            userStates.set(chatId, {
-                state: 'showing_transcription',
-                tempWord: englishWord,
-                tempTranscription: transcription,
-                tempAudioUrl: audioUrl,
-                tempAudioId: audioId,
-                tempTranslations: translations,
-                meanings: meanings,
-                selectedTranslationIndices: [],
-                lastActivity: Date.now()
-            });
-
-            let message = `📝 Слово: ${englishWord}`;
-            if (transcription) {
-                message += `\n🔤 Транскрипция: ${transcription}`;
-            } else {
-                message += `\n❌ Транскрипция не найдена`;
-            }
-
-            if (audioUrl) {
-                message += `\n\n🎵 Доступно аудио произношение`;
-            } else {
-                message += `\n\n❌ Аудио произношение не найдено`;
-            }
-
-            if (translations.length > 0) {
-                message += `\n\n🎯 Найдено ${translations.length} вариантов перевода из Cambridge Dictionary`;
-                const totalExamples = meanings.reduce((total, meaning) => 
-                    total + (meaning.examples ? meaning.examples.length : 0), 0
-                );
-                if (totalExamples > 0) {
-                    message += `\n📝 Найдено ${totalExamples} примеров использования`;
-                }
-            } else {
-                message += `\n\n❌ Переводы не найдены в Cambridge Dictionary\n✏️ Вы можете добавить свой перевод`;
-            }
-
-            message += `\n\nВыберите действие:`;
-            await bot.sendMessage(chatId, message, getListeningKeyboard(audioId));
-            await showMainMenu(chatId);
-
-        } catch (error) {
-            optimizedLog('Error getting word data:', error);
-            await showMainMenu(chatId, 
-                '❌ Ошибка при поиске слова\n\n' +
-                'Попробуйте другое слово или повторите позже.'
-            );
-            userStates.delete(chatId);
-        }
-    } 
-    else if (userState?.state === 'waiting_custom_translation') {
-        const customTranslation = text.trim();
-        if (!customTranslation) {
-            await showMainMenu(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
-            return;
-        }
-
-        userStates.set(chatId, {
-            ...userState,
-            state: 'waiting_custom_example',
-            customTranslation: customTranslation
-        });
-
-        await bot.sendMessage(chatId,
-            `✅ Вы ввели перевод: "${customTranslation}"\n\n` +
-            '📝 Теперь вы можете добавить пример использования (необязательно):\n\n' +
-            '💡 Просто отправьте пример предложения с этим словом\n' +
-            '⏭️ Или нажмите "Пропустить" чтобы перейти к выбору переводов',
-            getExampleInputKeyboard()
-        );
+        await handleAddWord(chatId, text);
     }
-    else if (userState?.state === 'waiting_custom_example') {
-        if (text === '⏭️ Пропустить' || text === '➕ Добавить новое слово') {
-            await processCustomTranslationWithoutExample(chatId, userState);
-            return;
-        }
-
-        const example = text.trim();
-        await processCustomTranslationWithExample(chatId, userState, example);
-    }
-     else if (userState?.state === 'spelling_training') {
+    else if (userState?.state === 'spelling_training') {
         if (text === '🔙 Назад к карточке') {
             await returnToCard(chatId, userState);
         } else {
             await checkSpellingAnswer(chatId, text);
         }
     }
+    else if (userState?.state === 'waiting_custom_translation') {
+        await processCustomTranslation(chatId, userState, text);
+    }
+    else if (userState?.state === 'waiting_custom_example') {
+        await processCustomTranslation(chatId, userState, userState.customTranslation, text);
+    }
     else {
-        await showMainMenu(chatId, 'Выберите действие из меню:');
+        await bot.sendMessage(chatId, 'Выберите действие из меню:', getMainMenu());
     }
 });
 
-// Обработка callback_query
+// Обработка добавления слова
+async function handleAddWord(chatId, englishWord) {
+    const lowerWord = englishWord.trim().toLowerCase();
+
+    if (!/^[a-zA-Z\s\-'\.]+$/.test(lowerWord)) {
+        await bot.sendMessage(chatId, 
+            '❌ Это не похоже на английское слово.\n' +
+            'Пожалуйста, введите слово на английском:'
+        );
+        return;
+    }
+
+    await bot.sendMessage(chatId, '🔍 Ищу перевод, транскрипцию и произношение...');
+
+    try {
+        let audioId = null;
+        let transcription = '';
+        let audioUrl = '';
+        let meanings = [];
+        let translations = [];
+
+        const cambridgeData = await cambridgeService.getWordData(lowerWord);
+        if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
+            meanings = cambridgeData.meanings;
+            translations = meanings.map(m => m.translation).filter((t, i, arr) => arr.indexOf(t) === i);
+        }
+
+        try {
+            const yandexData = await yandexService.getTranscriptionAndAudio(lowerWord);
+            transcription = yandexData.transcription || '';
+            audioUrl = yandexData.audioUrl || '';
+            if (audioUrl) {
+                audioId = Date.now().toString();
+            }
+        } catch (yandexError) {
+            audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
+            audioId = Date.now().toString();
+        }
+
+        userStates.set(chatId, {
+            state: 'showing_transcription',
+            tempWord: lowerWord,
+            tempTranscription: transcription,
+            tempAudioUrl: audioUrl,
+            tempAudioId: audioId,
+            tempTranslations: translations,
+            meanings: meanings,
+            selectedTranslationIndices: [],
+            lastActivity: Date.now()
+        });
+
+        let message = `📝 Слово: ${lowerWord}`;
+        if (transcription) {
+            message += `\n🔤 Транскрипция: ${transcription}`;
+        }
+        if (audioUrl) {
+            message += `\n\n🎵 Доступно аудио произношение`;
+        }
+        if (translations.length > 0) {
+            message += `\n\n🎯 Найдено ${translations.length} вариантов перевода`;
+        } else {
+            message += `\n\n❌ Переводы не найдены\n✏️ Вы можете добавить свой перевод`;
+        }
+        message += `\n\nВыберите действие:`;
+
+        await bot.sendMessage(chatId, message, {
+            reply_markup: {
+                inline_keyboard: [
+                    audioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }] : [],
+                    [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
+                ].filter(row => row.length > 0)
+            }
+        });
+
+    } catch (error) {
+        await bot.sendMessage(chatId, 
+            '❌ Ошибка при поиске слова\n\n' +
+            'Попробуйте другое слово или повторите позже.'
+        );
+        userStates.delete(chatId);
+    }
+}
+
+// Обработчики callback
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
@@ -2193,9 +1408,6 @@ bot.on('callback_query', async (callbackQuery) => {
 
     const userState = userStates.get(chatId);
     await bot.answerCallbackQuery(callbackQuery.id);
-
-    optimizedLog('🔍 Callback data:', data);
-    optimizedLog('🔍 User state:', userState?.state);
 
     if (data.startsWith('details_')) {
         const translationIndex = parseInt(data.replace('details_', ''));
@@ -2229,7 +1441,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     { chat_id: chatId, message_id: callbackQuery.message.message_id }
                 );
             } catch (error) {
-                optimizedLog('❌ Error toggling translation:', error);
                 await bot.sendMessage(chatId, '❌ Ошибка при выборе перевода');
             }
         }
@@ -2240,17 +1451,14 @@ bot.on('callback_query', async (callbackQuery) => {
                 const selectedTranslations = userState.selectedTranslationIndices
                     .map(index => userState.tempTranslations[index]);
 
-                optimizedLog(`💾 Сохраняем выбранные переводы:`, selectedTranslations);
-                
                 await saveWordWithMeanings(chatId, userState, selectedTranslations);
                 
                 try {
                     await bot.deleteMessage(chatId, callbackQuery.message.message_id);
                 } catch (deleteError) {
-                    optimizedLog('⚠️ Не удалось удалить сообщение с выбором переводов');
+                    // Игнорируем ошибки удаления
                 }
             } catch (error) {
-                optimizedLog('❌ Error saving translations:', error);
                 await bot.sendMessage(chatId, '❌ Ошибка при сохранении слова');
             }
         } else {
@@ -2273,9 +1481,8 @@ bot.on('callback_query', async (callbackQuery) => {
                 translationMessage += '\n\n📝 Введите ваш вариант перевода:';
 
                 await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-                await showMainMenu(chatId, translationMessage);
+                await bot.sendMessage(chatId, translationMessage, { parse_mode: 'Markdown' });
             } catch (error) {
-                optimizedLog('❌ Error in custom_translation:', error);
                 await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
             }
         }
@@ -2283,11 +1490,6 @@ bot.on('callback_query', async (callbackQuery) => {
     else if (data === 'cancel_translation') {
         if (userState) {
             try {
-                await bot.editMessageReplyMarkup(
-                    { inline_keyboard: [] },
-                    { chat_id: chatId, message_id: callbackQuery.message.message_id }
-                );
-
                 userStates.set(chatId, {
                     ...userState,
                     state: 'showing_transcription'
@@ -2299,10 +1501,16 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
                 message += '\n\n🎵 Доступно аудио произношение\n\nВыберите действие:';
 
-                await bot.sendMessage(chatId, message, getListeningKeyboard(userState.tempAudioId));
-                await showMainMenu(chatId);
+                await bot.editMessageReplyMarkup(
+                    {
+                        inline_keyboard: [
+                            userState.tempAudioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${userState.tempAudioId}` }] : [],
+                            [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
+                        ].filter(row => row.length > 0)
+                    },
+                    { chat_id: chatId, message_id: callbackQuery.message.message_id }
+                );
             } catch (error) {
-                optimizedLog('❌ Error canceling translation:', error);
                 await bot.sendMessage(chatId, '❌ Ошибка при отмене');
             }
         }
@@ -2314,19 +1522,6 @@ bot.on('callback_query', async (callbackQuery) => {
         const rating = data.replace('review_', '');
         await processReviewRating(chatId, rating);
     }
-    else if (data === 'skip_review') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'review_session') {
-            const skippedWord = userState.reviewWords.splice(userState.currentReviewIndex, 1)[0];
-            userState.reviewWords.push(skippedWord);
-            
-            optimizedLog(`⏭️ Слово "${skippedWord.english}" пропущено и перемещено в конец`);
-            
-            userState.lastActivity = Date.now();
-            
-            await showNextReviewWord(chatId);
-        }
-    }
     else if (data === 'end_review') {
         if (userState?.state === 'review_session') {
             await completeReviewSession(chatId, userState);
@@ -2337,129 +1532,6 @@ bot.on('callback_query', async (callbackQuery) => {
     }
     else if (data === 'need_repeat_word') {
         await processNewWordLearning(chatId, 'repeat');
-    }
-    else if (data === 'skip_new_word') {
-        const userState = userStates.get(chatId);
-        if (userState?.state === 'learning_new_words') {
-            const skippedWord = userState.newWords.splice(userState.currentWordIndex, 1)[0];
-            userState.newWords.push(skippedWord);
-            userState.lastActivity = Date.now();
-            await showNextNewWord(chatId);
-        }
-    }
-    else if (data === 'start_review_from_notification') {
-        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-        await startReviewSession(chatId);
-    }
-    else if (data === 'start_learning_from_notification') {
-        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-        await startNewWordsSession(chatId);
-    }
-    else if (data.startsWith('audio_')) {
-        const audioId = data.replace('audio_', '');
-        const audioUrl = userState?.tempAudioUrl;
-        const englishWord = userState?.tempWord;
-
-        if (audioUrl && englishWord) {
-            try {
-                await bot.editMessageReplyMarkup(
-                    { inline_keyboard: [] },
-                    { chat_id: chatId, message_id: callbackQuery.message.message_id }
-                );
-                await bot.sendAudio(chatId, audioUrl, {
-                    caption: `🔊 Британское произношение: ${englishWord}`
-                });
-                await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', getAfterAudioKeyboard());
-            } catch (error) {
-                optimizedLog('Error sending audio:', error);
-                await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио.');
-            }
-        } else {
-            await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
-        }
-    }
-    else if (data === 'enter_translation') {
-        optimizedLog('🔍 Processing enter_translation callback');
-        
-        if (userState?.state === 'showing_transcription') {
-            try {
-                try {
-                    await bot.editMessageReplyMarkup(
-                        { inline_keyboard: [] },
-                        { 
-                            chat_id: chatId, 
-                            message_id: callbackQuery.message.message_id 
-                        }
-                    );
-                } catch (editError) {
-                    optimizedLog('⚠️ Could not edit message markup, continuing...');
-                }
-
-                const hasTranslations = userState.tempTranslations && 
-                                      userState.tempTranslations.length > 0;
-                
-                optimizedLog(`🔍 Translations available: ${hasTranslations}, count: ${userState.tempTranslations?.length}`);
-
-                if (hasTranslations) {
-                    userStates.set(chatId, {
-                        ...userState,
-                        state: 'choosing_translation',
-                        selectedTranslationIndices: []
-                    });
-
-                    let translationMessage = '🎯 **Выберите переводы:**\n\n' +
-                        `🇬🇧 **${userState.tempWord}**`;
-                        
-                    if (userState.tempTranscription) {
-                        translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-                    }
-                    
-                    translationMessage += '\n\n💡 Нажмите на номер перевода чтобы выбрать его';
-
-                    await bot.sendMessage(
-                        chatId, 
-                        translationMessage,
-                        {
-                            parse_mode: 'Markdown',
-                            ...getTranslationSelectionKeyboard(
-                                userState.tempTranslations, 
-                                userState.meanings, 
-                                []
-                            )
-                        }
-                    );
-                    
-                } else {
-                    userStates.set(chatId, {
-                        ...userState,
-                        state: 'waiting_custom_translation'
-                    });
-
-                    let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
-                        `🇬🇧 Слово: **${userState.tempWord}**`;
-                        
-                    if (userState.tempTranscription) {
-                        translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-                    }
-                    
-                    translationMessage += '\n\n📝 Введите ваш вариант перевода:';
-
-                    await bot.sendMessage(chatId, translationMessage, { parse_mode: 'Markdown' });
-                }
-                
-            } catch (error) {
-                optimizedLog('❌ Error in enter_translation:', error);
-                await bot.sendMessage(chatId, 
-                    '❌ Ошибка при обработке запроса. Попробуйте еще раз.'
-                );
-            }
-        } else {
-            optimizedLog(`❌ Wrong state for enter_translation: ${userState?.state}`);
-            await bot.sendMessage(chatId, 
-                '❌ Неверное состояние. Начните добавление слова заново.'
-            );
-            userStates.delete(chatId);
-        }
     }
     else if (data === 'spelling_train') {
         const userState = userStates.get(chatId);
@@ -2474,52 +1546,169 @@ bot.on('callback_query', async (callbackQuery) => {
         try {
             await bot.deleteMessage(chatId, callbackQuery.message.message_id);
         } catch (e) {
-            optimizedLog('⚠️ Cannot delete message');
+            // Игнорируем ошибки удаления
         }
     }
-    else {
-        optimizedLog(`❌ Unknown callback data: ${data}`);
-        await bot.sendMessage(chatId, '❌ Неизвестная команда. Попробуйте еще раз.');
+    else if (data.startsWith('audio_')) {
+        const audioId = data.replace('audio_', '');
+        const audioUrl = userState?.tempAudioUrl;
+        const englishWord = userState?.tempWord;
+
+        if (audioUrl && englishWord) {
+            try {
+                await bot.sendAudio(chatId, audioUrl, {
+                    caption: `🔊 Британское произношение: ${englishWord}`
+                });
+                await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
+                        ]
+                    }
+                });
+            } catch (error) {
+                await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио.');
+            }
+        } else {
+            await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
+        }
+    }
+    else if (data === 'enter_translation') {
+        if (userState?.state === 'showing_transcription') {
+            try {
+                const hasTranslations = userState.tempTranslations && 
+                                      userState.tempTranslations.length > 0;
+                
+                if (hasTranslations) {
+                    userStates.set(chatId, {
+                        ...userState,
+                        state: 'choosing_translation',
+                        selectedTranslationIndices: []
+                    });
+
+                    let translationMessage = '🎯 **Выберите переводы:**\n\n' +
+                        `🇬🇧 **${userState.tempWord}**`;
+                    if (userState.tempTranscription) {
+                        translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                    }
+                    translationMessage += '\n\n💡 Нажмите на номер перевода чтобы выбрать его';
+
+                    await bot.sendMessage(
+                        chatId, 
+                        translationMessage,
+                        {
+                            parse_mode: 'Markdown',
+                            ...getTranslationSelectionKeyboard(
+                                userState.tempTranslations, 
+                                userState.meanings, 
+                                []
+                            )
+                        }
+                    );
+                } else {
+                    userStates.set(chatId, {
+                        ...userState,
+                        state: 'waiting_custom_translation'
+                    });
+
+                    let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
+                        `🇬🇧 Слово: **${userState.tempWord}**`;
+                    if (userState.tempTranscription) {
+                        translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                    }
+                    translationMessage += '\n\n📝 Введите ваш вариант перевода:';
+
+                    await bot.sendMessage(chatId, translationMessage, { parse_mode: 'Markdown' });
+                }
+            } catch (error) {
+                await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса.');
+            }
+        }
     }
 });
 
-// Graceful shutdown
-async function gracefulShutdown() {
-    optimizedLog('💾 Сохраняем все батчи перед выходом...');
-    
-    if (batchSheetsService) {
-        await batchSheetsService.flushAll();
+// Вспомогательные функции для работы с переводами
+async function showTranslationDetails(chatId, translationIndex, userState) {
+    try {
+        const translation = userState.tempTranslations[translationIndex];
+        const meaning = userState.meanings.find(m => 
+            m.translation && m.translation.trim() === translation.trim()
+        );
+
+        if (meaning) {
+            let detailsMessage = `🔍 **Подробности перевода:**\n\n`;
+            detailsMessage += `🇬🇧 **Слово:** ${userState.tempWord}\n`;
+            detailsMessage += `🇷🇺 **Перевод:** ${translation}\n\n`;
+
+            if (meaning.partOfSpeech && meaning.partOfSpeech.trim() !== '') {
+                detailsMessage += `🔤 **Часть речи:** ${meaning.partOfSpeech}\n\n`;
+            }
+
+            if (meaning.englishDefinition && meaning.englishDefinition.trim() !== '') {
+                detailsMessage += `📖 **Английское определение:**\n${meaning.englishDefinition}\n\n`;
+            }
+
+            if (meaning.examples && meaning.examples.length > 0) {
+                detailsMessage += `📝 **Примеры использования:**\n`;
+                meaning.examples.forEach((example, index) => {
+                    if (index < 3) {
+                        detailsMessage += `\n${index + 1}. ${example.english}`;
+                        if (example.russian && example.russian.trim() !== '') {
+                            detailsMessage += `\n   ${example.russian}`;
+                        }
+                    }
+                });
+            } else {
+                detailsMessage += `📝 **Примеры:** не найдены\n`;
+            }
+
+            await bot.sendMessage(chatId, detailsMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🔙 Назад к выбору переводов', callback_data: 'back_to_translations' }]
+                    ]
+                }
+            });
+        } else {
+            await bot.sendMessage(chatId, 
+                `❌ Информация о переводе не найдена\n\n` +
+                `Перевод: "${translation}"\n` +
+                `Попробуйте выбрать другой перевод.`
+            );
+        }
+    } catch (error) {
+        await bot.sendMessage(chatId, '❌ Ошибка при показе подробностей перевода');
     }
-    
-    bot.stopPolling();
-    optimizedLog('✅ Все данные сохранены, выход');
-    process.exit(0);
 }
 
-process.on('SIGINT', async () => {
-    optimizedLog('🔄 Получен SIGINT, завершаем работу...');
-    await gracefulShutdown();
-});
+async function backToTranslationSelection(chatId, userState, callbackQuery) {
+    try {
+        let translationMessage = '🎯 **Выберите переводы:**\n\n' +
+            `🇬🇧 **${userState.tempWord}**`;
+        if (userState.tempTranscription) {
+            translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+        }
+        translationMessage += '\n\n💡 Нажмите на перевод чтобы выбрать его, или 🔍 для подробностей';
 
-process.on('SIGTERM', async () => {
-    optimizedLog('🔄 Получен SIGTERM, завершаем работу...');
-    await gracefulShutdown();
-});
+        await bot.sendMessage(chatId, translationMessage, {
+            parse_mode: 'Markdown',
+            ...getTranslationSelectionKeyboard(userState.tempTranslations, userState.meanings, userState.selectedTranslationIndices)
+        });
 
-// Запускаем оптимизированные нотификации
-setTimeout(() => {
-    startOptimizedNotifications();
-}, 5000);
+        try {
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+        } catch (deleteError) {
+            // Игнорируем ошибки удаления
+        }
+    } catch (error) {
+        await bot.sendMessage(chatId, '❌ Ошибка при возврате к выбору переводов');
+    }
+}
 
-optimizedLog('🤖 Бот запущен: Обновленная версия с FSRS и улучшенной интеграцией Google Sheets!');
+// Запуск периодических задач
+setInterval(() => {
+    resetDailyLimit();
+}, 60 * 60 * 1000);
 
-
-
-
-
-
-
-
-
-
-
+console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
