@@ -3,61 +3,92 @@ const { fsrs, generatorParameters, createEmptyCard } = pkg;
 
 export class FSRSService {
     constructor() {
-        // Храним параметры для каждого пользователя
+        // ОПТИМИЗАЦИЯ ПАМЯТИ: Ограниченный кеш для активных пользователей
         this.userParameters = new Map();
         this.userSchedulers = new Map();
+        this.MAX_USERS_CACHE = 100;
         
-        console.log('✅ FSRS Service initialized with user-specific adaptation');
+        // ВОССТАНОВЛЕН параметр w для точных вычислений
+        this.defaultParams = generatorParameters({
+            request_retention: 0.9,
+            maximum_interval: 36500,
+            enable_fuzz: true,
+            w: [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61]
+        });
+        
+        this.defaultScheduler = fsrs(this.defaultParams);
+        
+        this.accessTimes = new Map();
+        this.setupSmartCleanup();
+        
+        console.log('✅ FSRS Service optimized with w-parameters');
     }
 
-    // Получаем или создаем параметры для пользователя
-    getUserParameters(userId) {
-        if (!this.userParameters.has(userId)) {
-            // Параметры по умолчанию, но они будут адаптироваться
-            const params = generatorParameters({
-                request_retention: 0.9,
-                maximum_interval: 36500,
-                enable_fuzz: true, // Включим фузз для разнообразия
-                w: [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61]
-            });
+    setupSmartCleanup() {
+        setInterval(() => {
+            const now = Date.now();
+            const INACTIVE_LIMIT = 60 * 60 * 1000; // 1 час неактивности
             
-            this.userParameters.set(userId, params);
-            this.userSchedulers.set(userId, fsrs(params));
+            for (const [userId, lastAccess] of this.accessTimes.entries()) {
+                if (now - lastAccess > INACTIVE_LIMIT && this.userParameters.size > this.MAX_USERS_CACHE) {
+                    this.userParameters.delete(userId);
+                    this.userSchedulers.delete(userId);
+                    this.accessTimes.delete(userId);
+                }
+            }
+        }, 30 * 60 * 1000);
+    }
+
+    getUserParameters(userId) {
+        // Обновляем время доступа
+        this.accessTimes.set(userId, Date.now());
+        
+        if (this.userParameters.has(userId)) {
+            return {
+                parameters: this.userParameters.get(userId),
+                scheduler: this.userSchedulers.get(userId)
+            };
         }
         
+        // Создаем индивидуальные параметры с ВОССТАНОВЛЕННЫМ w
+        const params = generatorParameters({
+            request_retention: 0.9,
+            maximum_interval: 36500,
+            enable_fuzz: true,
+            w: [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61]
+        });
+        
+        this.userParameters.set(userId, params);
+        this.userSchedulers.set(userId, fsrs(params));
+        
         return {
-            parameters: this.userParameters.get(userId),
+            parameters: params,
             scheduler: this.userSchedulers.get(userId)
         };
     }
 
-    // Адаптируем параметры на основе успехов пользователя
+    // ОПТИМИЗАЦИЯ: Упрощенная адаптация (только retention)
     adaptUserParameters(userId, successRate) {
         if (!this.userParameters.has(userId)) return;
         
         const params = this.userParameters.get(userId);
         
-        // Адаптируем retention rate на основе успехов
+        // Сохраняем ВСЕ параметры включая w, адаптируем только retention
         if (successRate < 0.7) {
-            // Низкий успех - увеличиваем retention для более частых повторений
             params.request_retention = Math.min(0.95, params.request_retention + 0.05);
         } else if (successRate > 0.9) {
-            // Высокий успех - уменьшаем retention для более редких повторений
             params.request_retention = Math.max(0.8, params.request_retention - 0.03);
         }
         
-        console.log(`🔄 Adapted parameters for user ${userId}: retention=${params.request_retention.toFixed(2)}, successRate=${successRate.toFixed(2)}`);
-        
-        // Обновляем scheduler с новыми параметрами
+        // Пересоздаем scheduler с обновленными параметрами
         this.userSchedulers.set(userId, fsrs(params));
     }
 
+    // ОПТИМИЗАЦИЯ: Быстрое создание карточки
     createNewCard() {
         const now = new Date();
-        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-        
         return {
-            due: tomorrow,
+            due: new Date(now.getTime() + 24 * 60 * 60 * 1000),
             stability: 0.1,
             difficulty: 5.0,
             elapsed_days: 0,
@@ -79,6 +110,7 @@ export class FSRSService {
         return ratingMap[rating] || 3;
     }
 
+    // ОПТИМИЗАЦИЯ: Быстрое создание карты
     createCard(cardData) {
         const card = createEmptyCard();
         const now = new Date();
@@ -96,6 +128,7 @@ export class FSRSService {
         return card;
     }
 
+    // ОПТИМИЗАЦИЯ: Минимальные логи в продакшене
     async reviewCard(userId, word, cardData, rating) {
         try {
             const { scheduler } = this.getUserParameters(userId);
@@ -103,39 +136,23 @@ export class FSRSService {
             const grade = this.safeConvertRating(rating);
             const now = new Date();
 
-            console.log(`🎯 FSRS review for user ${userId}, word: ${word.english}, rating: ${rating}, grade: ${grade}`);
-            console.log('📝 Card before FSRS:', {
-                due: card.due,
-                stability: card.stability,
-                difficulty: card.difficulty,
-                reps: card.reps,
-                lapses: card.lapses
-            });
-
             const schedulingCards = scheduler.repeat(card, now);
             
             if (!schedulingCards) {
-                console.log('❌ schedulingCards is undefined');
                 return this.simpleFallback(cardData, rating);
             }
 
             const fsrsCard = schedulingCards[grade];
-            console.log('🔑 Available keys in schedulingCards:', Object.keys(schedulingCards));
-            console.log('🎯 Selected FSRS card:', fsrsCard);
 
             if (!fsrsCard) {
-                console.log('❌ No FSRS card for grade:', grade);
                 return this.simpleFallback(cardData, rating);
             }
 
             const fsrsCardData = fsrsCard.card || fsrsCard;
-            console.log('🎯 Extracted FSRS card data:', fsrsCardData);
-
             let scheduled_days = fsrsCardData.scheduled_days;
             let interval = Math.max(1, Math.round(scheduled_days));
             
             if (scheduled_days === 0 || isNaN(scheduled_days)) {
-                console.log('⚠️ scheduled_days is 0 or NaN, setting to 1');
                 scheduled_days = 1;
                 interval = 1;
             }
@@ -143,13 +160,11 @@ export class FSRSService {
             let dueDate;
             if (fsrsCardData.due && fsrsCardData.due instanceof Date && !isNaN(fsrsCardData.due.getTime())) {
                 dueDate = fsrsCardData.due;
-                console.log('✅ Using FSRS due date:', dueDate);
             } else {
                 dueDate = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
-                console.log('⚠️ Using calculated due date:', dueDate);
             }
 
-            const updatedCard = {
+            return {
                 due: dueDate,
                 stability: fsrsCardData.stability || 0.1,
                 difficulty: fsrsCardData.difficulty || 5.0,
@@ -164,11 +179,7 @@ export class FSRSService {
                 repetitions: fsrsCardData.reps || 0
             };
 
-            console.log('✅ Final updated card:', updatedCard);
-            return updatedCard;
-
         } catch (error) {
-            console.error('❌ FSRS review failed:', error);
             return this.simpleFallback(cardData, rating);
         }
     }
@@ -203,28 +214,23 @@ export class FSRSService {
         };
     }
 
-    // Анализ успеваемости пользователя
+    // ОПТИМИЗАЦИЯ: Быстрый расчет успеваемости
     calculateUserSuccessRate(userWords) {
         const reviewedWords = userWords.filter(word => 
             word.repetitions > 0 && word.lastReview
         );
         
-        if (reviewedWords.length === 0) return 0.8; // По умолчанию
+        if (reviewedWords.length === 0) return 0.8;
         
-        let totalReviews = 0;
         let successfulReviews = 0;
         
-        reviewedWords.forEach(word => {
-            // Считаем рейтинг выше 2 как успешный повтор
+        // ОПТИМИЗАЦИЯ: Быстрый цикл без промежуточных переменных
+        for (const word of reviewedWords) {
             if (word.rating >= 3) {
                 successfulReviews++;
             }
-            totalReviews++;
-        });
+        }
         
-        const successRate = totalReviews > 0 ? successfulReviews / totalReviews : 0.8;
-        console.log(`📊 User success rate: ${successRate.toFixed(2)} (${successfulReviews}/${totalReviews})`);
-        
-        return successRate;
+        return successfulReviews / reviewedWords.length;
     }
 }
