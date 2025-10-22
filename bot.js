@@ -1842,20 +1842,31 @@ async function startReverseTraining(chatId) {
     }
 
     try {
-        const wordsToReview = await sheetsService.getWordsForReview(chatId);
+        // Берем ВСЕ слова пользователя, а не только готовые к повторению
+        const userWords = await getCachedUserWords(chatId);
         
-        if (wordsToReview.length === 0) {
+        // Фильтруем только активные слова, которые уже изучены
+        const learnedWords = userWords.filter(word => 
+            word.status === 'active' && 
+            word.interval > 1 && // Исключаем новые слова (interval = 1)
+            word.firstLearnedDate && 
+            word.firstLearnedDate.trim() !== ''
+        );
+
+        if (learnedWords.length === 0) {
             await bot.sendMessage(chatId, 
-                '📚 Нет слов для тренировки.\n\n💡 Сначала изучите слова в разделе "🆕 Новые слова"'
+                '📚 Нет изученных слов для тренировки.\n\n' +
+                '💡 Сначала изучите слова в разделе "🆕 Новые слова"'
             );
             return;
         }
 
         // Быстрое перемешивание
-        const shuffledWords = wordsToReview
+        const shuffledWords = learnedWords
             .map(word => ({ word, sort: Math.random() }))
             .sort((a, b) => a.sort - b.sort)
-            .map(({ word }) => word);
+            .map(({ word }) => word)
+            .slice(0, 10); // Ограничиваем 10 словами для одной сессии
 
         userStates.set(chatId, {
             state: REVERSE_TRAINING_STATES.ACTIVE,
@@ -1870,6 +1881,7 @@ async function startReverseTraining(chatId) {
         await showNextTrainingWord(chatId);
         
     } catch (error) {
+        console.error('Error in startReverseTraining:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке слов.');
     }
 }
@@ -2085,6 +2097,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
