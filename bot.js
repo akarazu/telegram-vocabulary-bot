@@ -11,6 +11,11 @@ const userStates = new Map();
 const cache = new Map();
 const dailyLearnedWords = new Map();
 const learnedWords = new Map();
+const REVERSE_TRAINING_STATES = {
+    ACTIVE: 'reverse_training',
+    SPELLING: 'reverse_training_spelling'
+};
+
 
 // Ленивая инициализация сервисов
 let sheetsService, yandexService, cambridgeService, fsrsService;
@@ -166,7 +171,8 @@ function getMainMenu() {
         reply_markup: {
             keyboard: [
                 ['➕ Добавить слово', '📚 Повторить'],
-                ['🆕 Новые слова', '📊 Статистика']
+                ['🆕 Новые слова', '📊 Статистика'],
+                ['🔁 Рус→Англ Тренировка']
             ],
             resize_keyboard: true
         }
@@ -1405,6 +1411,26 @@ bot.on('message', async (msg) => {
     else if (userState?.state === 'waiting_custom_example') {
         await processCustomTranslation(chatId, userState, userState.customTranslation, text);
     }
+    else if (text === '🔁 Рус→Англ Тренировка') {
+    await startReverseTraining(chatId);
+}
+else if (userState?.state === REVERSE_TRAINING_STATES.ACTIVE) {
+    if (text === '👀 Ответ') {
+        const word = userState.words[userState.index];
+        await showTrainingResult(chatId, userState, word, false);
+    } else if (text === '❌ Завершить') {
+        await completeTraining(chatId, userState);
+    } else {
+        await checkTrainingAnswer(chatId, text);
+    }
+}
+else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
+    if (text === '🔙 Назад') {
+        returnToTraining(chatId, userState);
+    } else {
+        await checkSpellingAnswer(chatId, text);
+    }
+}
     else {
         await bot.sendMessage(chatId, 'Выберите действие из меню:', getMainMenu());
     }
@@ -1719,7 +1745,15 @@ bot.on('callback_query', async (callbackQuery) => {
                 await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса.');
             }
         }
+    } else if (data.startsWith('training_')) {
+    await handleTrainingCallback(chatId, data);
+    
+    try {
+        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+    } catch (e) {
+        // Игнорируем ошибки удаления
     }
+}
 });
 
 // Вспомогательные функции для работы с переводами
@@ -1801,12 +1835,267 @@ async function backToTranslationSelection(chatId, userState, callbackQuery) {
     }
 }
 
+async function startReverseTraining(chatId) {
+    if (!servicesInitialized || !sheetsService.initialized) {
+        await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
+        return;
+    }
+
+    try {
+        const wordsToReview = await sheetsService.getWordsForReview(chatId);
+        
+        if (wordsToReview.length === 0) {
+            await bot.sendMessage(chatId, 
+                '📚 Нет слов для тренировки.\n\n💡 Сначала изучите слова в разделе "🆕 Новые слова"'
+            );
+            return;
+        }
+
+        // Быстрое перемешивание
+        const shuffledWords = wordsToReview
+            .map(word => ({ word, sort: Math.random() }))
+            .sort((a, b) => a.sort - b.sort)
+            .map(({ word }) => word);
+
+        userStates.set(chatId, {
+            state: REVERSE_TRAINING_STATES.ACTIVE,
+            words: shuffledWords,
+            total: shuffledWords.length,
+            index: 0,
+            correct: 0,
+            startTime: Date.now(),
+            lastActivity: Date.now()
+        });
+
+        await showNextTrainingWord(chatId);
+        
+    } catch (error) {
+        await bot.sendMessage(chatId, '❌ Ошибка при загрузке слов.');
+    }
+}
+
+async function showNextTrainingWord(chatId) {
+    const state = userStates.get(chatId);
+    if (!state || state.state !== REVERSE_TRAINING_STATES.ACTIVE) return;
+
+    const { words, index, total } = state;
+    
+    if (index >= words.length) {
+        await completeTraining(chatId, state);
+        return;
+    }
+
+    const word = words[index];
+    const meaning = getRandomMeaning(word);
+    
+    if (!meaning) {
+        // Пропускаем слова без переводов
+        state.index++;
+        state.lastActivity = Date.now();
+        await showNextTrainingWord(chatId);
+        return;
+    }
+
+    const message = `🔁 Тренировка ${index + 1}/${total}\n\n🇷🇺 **${meaning.translation}**\n\n✏️ Введите английское слово:`;
+
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            keyboard: [['👀 Ответ', '❌ Завершить']],
+            resize_keyboard: true
+        }
+    });
+}
+
+// Быстрая функция получения случайного перевода
+function getRandomMeaning(word) {
+    if (!word.meanings || !word.meanings.length) return null;
+    return word.meanings[Math.floor(Math.random() * word.meanings.length)];
+}
+
+async function checkTrainingAnswer(chatId, userAnswer) {
+    const state = userStates.get(chatId);
+    if (!state || state.state !== REVERSE_TRAINING_STATES.ACTIVE) return;
+
+    const word = state.words[state.index];
+    const isCorrect = normalizeAnswer(word.english) === normalizeAnswer(userAnswer);
+    
+    if (isCorrect) state.correct++;
+
+    await showTrainingResult(chatId, state, word, isCorrect, userAnswer);
+}
+
+// Быстрая нормализация ответа
+function normalizeAnswer(answer) {
+    return answer.trim().toLowerCase().replace(/[^a-z]/g, '');
+}
+
+// Компактный показ результата
+async function showTrainingResult(chatId, state, word, isCorrect, userAnswer = '') {
+    const translations = word.meanings?.map(m => m.translation).filter(Boolean) || [];
+    
+    let message = isCorrect ? '✅ **Правильно!**\n\n' : '❌ **Неправильно**\n\n';
+    
+    if (!isCorrect && userAnswer) {
+        message += `Ваш ответ: "${userAnswer}"\n`;
+    }
+    
+    message += `🇬🇧 **${word.english}**\n`;
+    if (word.transcription) message += `🔤 ${word.transcription}\n`;
+    if (translations.length) message += `📚 ${translations.join(', ')}`;
+
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: getTrainingKeyboard()
+    });
+}
+
+// Минималистичная клавиатура
+function getTrainingKeyboard() {
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: '➡️ Далее', callback_data: 'training_next' },
+                    { text: '✍️ Правописание', callback_data: 'training_spelling' }
+                ],
+                [
+                    { text: '📊 Статистика', callback_data: 'training_stats' }
+                ]
+            ]
+        }
+    };
+}
+
+async function handleTrainingCallback(chatId, data) {
+    const state = userStates.get(chatId);
+    if (!state || state.state !== REVERSE_TRAINING_STATES.ACTIVE) return;
+
+    switch (data) {
+        case 'training_next':
+            state.index++;
+            state.lastActivity = Date.now();
+            await showNextTrainingWord(chatId);
+            break;
+            
+        case 'training_spelling':
+            await startTrainingSpelling(chatId);
+            break;
+            
+        case 'training_stats':
+            await showTrainingStats(chatId, state);
+            break;
+    }
+}
+
+async function showTrainingStats(chatId, state) {
+    const { index, total, correct, startTime } = state;
+    const accuracy = index > 0 ? Math.round((correct / index) * 100) : 0;
+    const timeSpent = Math.round((Date.now() - startTime) / 1000 / 60);
+    
+    const message = `📊 **Статистика:**\n\n` +
+                   `Пройдено: ${index}/${total}\n` +
+                   `Правильно: ${correct}\n` +
+                   `Точность: ${accuracy}%\n` +
+                   `Время: ${timeSpent} мин`;
+
+    await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+}
+
+async function completeTraining(chatId, state) {
+    const { index, total, correct, startTime } = state;
+    const accuracy = index > 0 ? Math.round((correct / index) * 100) : 0;
+    const timeSpent = Math.round((Date.now() - startTime) / 1000 / 60);
+    
+    let message = '🎉 **Тренировка завершена!**\n\n';
+    message += `Пройдено: ${index}/${total}\n`;
+    message += `Правильно: ${correct}\n`;
+    message += `Точность: ${accuracy}%\n`;
+    message += `Время: ${timeSpent} мин\n\n`;
+    
+    if (accuracy >= 80) message += `💪 Отлично!`;
+    else if (accuracy >= 60) message += `👍 Хорошо!`;
+    else message += `💡 Продолжайте тренироваться!`;
+
+    userStates.delete(chatId);
+    
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...getMainMenu()
+    });
+}
+
+async function startTrainingSpelling(chatId) {
+    const state = userStates.get(chatId);
+    if (!state || state.state !== REVERSE_TRAINING_STATES.ACTIVE) return;
+
+    const word = state.words[state.index];
+    const meaning = getRandomMeaning(word);
+    
+    if (!meaning) {
+        await bot.sendMessage(chatId, '❌ Не удалось начать тренировку правописания.');
+        return;
+    }
+
+    userStates.set(chatId, {
+        ...state,
+        state: REVERSE_TRAINING_STATES.SPELLING,
+        spellingWord: word,
+        spellingTranslation: meaning.translation,
+        attempts: 0
+    });
+
+    await askSpellingQuestion(chatId, meaning.translation);
+}
+
+async function askSpellingQuestion(chatId, translation) {
+    await bot.sendMessage(chatId, 
+        `✍️ **Правописание**\n\n🇷🇺 ${translation}\n\nВведите слово:`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: { keyboard: [['🔙 Назад']], resize_keyboard: true }
+        }
+    );
+}
+
+async function checkSpellingAnswer(chatId, userAnswer) {
+    const state = userStates.get(chatId);
+    if (!state || state.state !== REVERSE_TRAINING_STATES.SPELLING) return;
+
+    const word = state.spellingWord;
+    const isCorrect = normalizeAnswer(word.english) === normalizeAnswer(userAnswer);
+    
+    state.attempts++;
+
+    if (isCorrect) {
+        await bot.sendMessage(chatId, `✅ Правильно! ${word.english}`);
+        setTimeout(() => returnToTraining(chatId, state), 1500);
+    } else if (state.attempts >= 2) {
+        await bot.sendMessage(chatId, `💡 Ответ: ${word.english}`);
+        setTimeout(() => returnToTraining(chatId, state), 1500);
+    } else {
+        await bot.sendMessage(chatId, '❌ Попробуйте ещё раз');
+    }
+}
+
+async function returnToTraining(chatId, state) {
+    const originalState = { ...state };
+    originalState.state = REVERSE_TRAINING_STATES.ACTIVE;
+    delete originalState.spellingWord;
+    delete originalState.spellingTranslation;
+    delete originalState.attempts;
+    
+    userStates.set(chatId, originalState);
+    await showTrainingResult(chatId, originalState, originalState.words[originalState.index], false);
+}
+
 // Запуск периодических задач
 setInterval(() => {
     resetDailyLimit();
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
