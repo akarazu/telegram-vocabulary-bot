@@ -895,9 +895,11 @@ async function getAllUnlearnedWords(chatId) {
         });
 
         unlearnedWords.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+
         return unlearnedWords;
         
     } catch (error) {
+        console.error('❌ Error getting unlearned words:', error);
         return [];
     }
 }
@@ -1712,3 +1714,4 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
