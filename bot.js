@@ -11,11 +11,11 @@ const userStates = new Map();
 const cache = new Map();
 const dailyLearnedWords = new Map();
 const learnedWords = new Map();
+const audioCache = new Map(); // Новый кэш для аудио
 const REVERSE_TRAINING_STATES = {
     ACTIVE: 'reverse_training',
     SPELLING: 'reverse_training_spelling'
 };
-
 
 // Ленивая инициализация сервисов
 let sheetsService, yandexService, cambridgeService, fsrsService;
@@ -428,13 +428,17 @@ async function processCustomTranslation(chatId, userState, translation, example 
     };
     const newMeanings = [newMeaning, ...userState.meanings];
     
-    userStates.set(chatId, {
-        ...userState,
-        state: 'choosing_translation',
-        tempTranslations: newTranslations,
-        meanings: newMeanings,
-        selectedTranslationIndices: [0]
-    });
+userStates.set(chatId, {
+    state: 'review_session',
+    reviewWords: wordsToReview,
+    originalWordsCount: wordsToReview.length,
+    currentReviewIndex: 0,
+    reviewedCount: 0,
+    lastActivity: Date.now()
+});
+
+    preloadAudioForWords(wordsToReview);
+    await showNextReviewWord(chatId);
 
     let message = `✅ Ваш перевод "${translation}" добавлен!\n\n`;
     if (example) message += `📝 Пример: ${example}\n\n`;
@@ -687,11 +691,15 @@ async function showReviewAnswer(chatId) {
         message += `\n❌ Переводы не найдены`;
     }
 
-    if (word.audioUrl) {
+    // Используем кэшированное аудио
+    if (word.english) {
         try {
-            await bot.sendAudio(chatId, word.audioUrl, {
-                caption: '🔊 Произношение'
-            });
+            const audioUrl = await getCachedAudio(word.english);
+            if (audioUrl) {
+                await bot.sendAudio(chatId, audioUrl, {
+                    caption: '🔊 Произношение'
+                });
+            }
         } catch (error) {
             // Пропускаем ошибки аудио
         }
@@ -874,13 +882,14 @@ async function startNewWordsSession(chatId) {
         }
 
         userStates.set(chatId, {
-            state: 'learning_new_words',
-            newWords: availableNewWords,
-            currentWordIndex: 0,
-            learnedCount: 0,
-            originalWordsCount: availableNewWords.length,
-            lastActivity: Date.now()
-        });
+    state: 'learning_new_words',
+    newWords: availableNewWords,
+    currentWordIndex: 0,
+    learnedCount: 0,
+    originalWordsCount: availableNewWords.length,
+    lastActivity: Date.now()
+});
+        preloadAudioForWords(availableNewWords);
 
         await showNextNewWord(chatId);
         
@@ -919,6 +928,7 @@ async function getAllUnlearnedWords(chatId) {
         return [];
     }
 }
+
 async function showNextNewWord(chatId) {
     const userState = userStates.get(chatId);
     if (!userState || userState.state !== 'learning_new_words') return;
@@ -969,11 +979,15 @@ async function showNextNewWord(chatId) {
         }
     });
 
-    if (word.audioUrl) {
+    // Используем кэшированное аудио
+    if (word.english) {
         try {
-            await bot.sendAudio(chatId, word.audioUrl, {
-                caption: '🔊 Произношение'
-            });
+            const audioUrl = await getCachedAudio(word.english);
+            if (audioUrl) {
+                await bot.sendAudio(chatId, audioUrl, {
+                    caption: '🔊 Произношение'
+                });
+            }
         } catch (error) {
             // Пропускаем ошибки аудио
         }
@@ -1368,6 +1382,19 @@ bot.onText(/\/reset_progress/, async (msg) => {
     }
 });
 
+bot.onText(/\/clear_audio_cache/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    const audioCacheSize = audioCache.size;
+    audioCache.clear();
+    
+    await bot.sendMessage(chatId, 
+        `✅ Кэш аудио очищен!\n\n` +
+        `Удалено ${audioCacheSize} записей.`,
+        getMainMenu()
+    );
+});
+
 // Обработчики сообщений
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -1463,28 +1490,27 @@ async function handleAddWord(chatId, englishWord) {
     await bot.sendMessage(chatId, '🔍 Ищу перевод, транскрипцию и произношение...');
 
     try {
-        let audioId = null;
         let transcription = '';
         let audioUrl = '';
         let meanings = [];
         let translations = [];
 
+        // Получаем данные из Cambridge Dictionary
         const cambridgeData = await cambridgeService.getWordData(lowerWord);
         if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
             meanings = cambridgeData.meanings;
             translations = meanings.map(m => m.translation).filter((t, i, arr) => arr.indexOf(t) === i);
         }
 
+        // Получаем транскрипцию и аудио с кэшированием
         try {
             const yandexData = await yandexService.getTranscriptionAndAudio(lowerWord);
             transcription = yandexData.transcription || '';
-            audioUrl = yandexData.audioUrl || '';
-            if (audioUrl) {
-                audioId = Date.now().toString();
-            }
+            // Используем кэшированное аудио
+            audioUrl = await getCachedAudio(lowerWord);
         } catch (yandexError) {
-            audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
-            audioId = Date.now().toString();
+            // Если Yandex не сработал, используем кэшированное аудио от Google TTS
+            audioUrl = await getCachedAudio(lowerWord);
         }
 
         userStates.set(chatId, {
@@ -1492,7 +1518,7 @@ async function handleAddWord(chatId, englishWord) {
             tempWord: lowerWord,
             tempTranscription: transcription,
             tempAudioUrl: audioUrl,
-            tempAudioId: audioId,
+            tempAudioId: Date.now().toString(),
             tempTranslations: translations,
             meanings: meanings,
             selectedTranslationIndices: [],
@@ -1516,7 +1542,7 @@ async function handleAddWord(chatId, englishWord) {
         await bot.sendMessage(chatId, message, {
             reply_markup: {
                 inline_keyboard: [
-                    audioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }] : [],
+                    audioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioUrl}` }] : [],
                     [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
                 ].filter(row => row.length > 0)
             }
@@ -1682,30 +1708,48 @@ bot.on('callback_query', async (callbackQuery) => {
             // Игнорируем ошибки удаления
         }
     }
-    else if (data.startsWith('audio_')) {
-        const audioId = data.replace('audio_', '');
-        const audioUrl = userState?.tempAudioUrl;
-        const englishWord = userState?.tempWord;
+else if (data.startsWith('audio_')) {
+    const audioUrl = data.replace('audio_', '');
+    const englishWord = userState?.tempWord;
 
-        if (audioUrl && englishWord) {
+    if (audioUrl && englishWord) {
+        try {
+            await bot.sendAudio(chatId, audioUrl, {
+                caption: `🔊 Британское произношение: ${englishWord}`
+            });
+            await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
+                    ]
+                }
+            });
+        } catch (error) {
+            // Если URL не работает, пробуем получить новый из кэша
             try {
-                await bot.sendAudio(chatId, audioUrl, {
-                    caption: `🔊 Британское произношение: ${englishWord}`
-                });
-                await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
-                        ]
-                    }
-                });
-            } catch (error) {
+                const newAudioUrl = await getCachedAudio(englishWord);
+                if (newAudioUrl && newAudioUrl !== audioUrl) {
+                    await bot.sendAudio(chatId, newAudioUrl, {
+                        caption: `🔊 Британское произношение: ${englishWord}`
+                    });
+                    await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
+                            ]
+                        }
+                    });
+                } else {
+                    throw new Error('No audio available');
+                }
+            } catch (retryError) {
                 await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио.');
             }
-        } else {
-            await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
         }
+    } else {
+        await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
     }
+}
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
             try {
@@ -1880,16 +1924,17 @@ async function startReverseTraining(chatId) {
             .map(({ word }) => word)
             .slice(0, 10); // Ограничиваем 10 словами для одной сессии
 
-        userStates.set(chatId, {
-            state: REVERSE_TRAINING_STATES.ACTIVE,
-            words: shuffledWords,
-            total: shuffledWords.length,
-            index: 0,
-            correct: 0,
-            startTime: Date.now(),
-            lastActivity: Date.now()
-        });
+userStates.set(chatId, {
+    state: REVERSE_TRAINING_STATES.ACTIVE,
+    words: shuffledWords,
+    total: shuffledWords.length,
+    index: 0,
+    correct: 0,
+    startTime: Date.now(),
+    lastActivity: Date.now()
+});
 
+        preloadAudioForWords(shuffledWords);
         await showNextTrainingWord(chatId);
         
     } catch (error) {
@@ -2114,12 +2159,71 @@ async function returnToTraining(chatId, state) {
     }, 2000);
 }
 
+// Функция для получения аудио с кэшированием
+async function getCachedAudio(englishWord) {
+    const cacheKey = `audio_${englishWord.toLowerCase()}`;
+    
+    // Проверяем кэш
+    if (audioCache.has(cacheKey)) {
+        const cached = audioCache.get(cacheKey);
+        // Проверяем, не устарел ли кэш (1 день)
+        if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+            return cached.audioUrl;
+        }
+    }
+    
+    // Если нет в кэше или устарел, получаем новое аудио
+    try {
+        let audioUrl = '';
+        
+        // Сначала пробуем Yandex
+        try {
+            const yandexData = await yandexService.getTranscriptionAndAudio(englishWord);
+            audioUrl = yandexData.audioUrl || '';
+        } catch (yandexError) {
+            // Если Yandex не сработал, используем Google TTS
+            audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(englishWord)}&tl=en-gb&client=tw-ob`;
+        }
+        
+        // Сохраняем в кэш
+        if (audioUrl) {
+            audioCache.set(cacheKey, {
+                audioUrl: audioUrl,
+                timestamp: Date.now()
+            });
+        }
+        
+        return audioUrl;
+    } catch (error) {
+        console.error('Error getting audio:', error);
+        return '';
+    }
+}
+
+async function preloadAudioForWords(words) {
+    const audioPromises = words.map(async (word) => {
+        if (word.english) {
+            try {
+                await getCachedAudio(word.english);
+            } catch (error) {
+                // Игнорируем ошибки для отдельных слов
+            }
+        }
+    });
+    
+    // Запускаем в фоне, не ждем завершения
+    Promise.allSettled(audioPromises).then(() => {
+        console.log(`Preloaded audio for ${words.length} words`);
+    });
+}
+
 // Запуск периодических задач
 setInterval(() => {
     resetDailyLimit();
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
