@@ -475,7 +475,7 @@ async function startSpellingTraining(chatId, context) {
     await askSpellingQuestion(chatId, word);
 }
 
-async function askSpellingQuestion(chatId, word) {
+async function askTrainingSpellingQuestion(chatId, word) {
     const message = `✍️ **Тренировка правописания**\n\n` +
                    `🇷🇺 Перевод: **${word.meanings[0]?.translation || 'перевод'}**\n\n` +
                    `✏️ Напишите английское слово:`;
@@ -2045,17 +2045,7 @@ async function startTrainingSpelling(chatId) {
         attempts: 0
     });
 
-    await askSpellingQuestion(chatId, meaning.translation);
-}
-
-async function askSpellingQuestion(chatId, translation) {
-    await bot.sendMessage(chatId, 
-        `✍️ **Правописание**\n\n🇷🇺 ${translation}\n\nВведите слово:`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: { keyboard: [['🔙 Назад']], resize_keyboard: true }
-        }
-    );
+    await askTrainingSpellingQuestion(chatId, meaning.translation);
 }
 
 async function checkSpellingAnswer(chatId, userAnswer) {
@@ -2095,6 +2085,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
