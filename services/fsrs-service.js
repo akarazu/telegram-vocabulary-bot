@@ -1,5 +1,4 @@
 import pkg from 'ts-fsrs';
-
 const { fsrs, generatorParameters, createEmptyCard } = pkg;
 
 export class FSRSService {
@@ -10,21 +9,15 @@ export class FSRSService {
                 maximum_interval: 36500,
                 enable_fuzz: false
             });
-
             this.scheduler = fsrs(this.parameters);
-            this.isInitialized = true;
-            console.log('✅ FSRS initialized successfully');
         } catch (error) {
-            console.error('❌ FSRS initialization failed:', error);
             this.scheduler = null;
-            this.isInitialized = false;
         }
     }
 
     createNewCard() {
         const now = new Date();
         const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
         return {
             due: tomorrow,
             stability: 0.1,
@@ -40,59 +33,12 @@ export class FSRSService {
 
     safeConvertRating(rating) {
         const ratingMap = {
-            'again': 1,
-            'review_again': 1,
-            'hard': 2,
-            'review_hard': 2,
-            'good': 3,
-            'review_good': 3,
-            'easy': 4,
-            'review_easy': 4
+            'again': 1, 'review_again': 1,
+            'hard': 2, 'review_hard': 2,
+            'good': 3, 'review_good': 3,
+            'easy': 4, 'review_easy': 4
         };
         return ratingMap[rating] || 3;
-    }
-
-    simpleFallback(cardData, rating) {
-        const now = new Date();
-        let interval;
-        switch (rating) {
-            case 'again':
-            case 'review_again':
-                interval = 1;
-                break;
-            case 'hard':
-            case 'review_hard':
-                interval = 2;
-                break;
-            case 'good':
-            case 'review_good':
-                interval = 4;
-                break;
-            case 'easy':
-            case 'review_easy':
-                interval = 7;
-                break;
-            default:
-                interval = 3;
-        }
-
-        return {
-            card: {
-                due: new Date(now.getTime() + interval * 24 * 60 * 60 * 1000),
-                stability: interval * 0.5,
-                difficulty: 5.0,
-                elapsed_days: interval,
-                scheduled_days: interval,
-                reps: (cardData.reps || 0) + 1,
-                lapses: rating.includes('again') ? (cardData.lapses || 0) + 1 : (cardData.lapses || 0),
-                state: 1,
-                last_review: now
-            },
-            interval: interval,
-            ease: interval * 0.5,
-            repetitions: (cardData.reps || 0) + 1,
-            rating: rating
-        };
     }
 
     createCard(cardData) {
@@ -113,18 +59,8 @@ export class FSRSService {
     }
 
     async reviewCard(userId, word, cardData, rating) {
-        console.log('🔄 FSRS reviewCard called:', { 
-            userId, 
-            word, 
-            rating,
-            hasScheduler: !!this.scheduler,
-            isInitialized: this.isInitialized
-        });
-
-        if (!this.isInitialized || !this.scheduler) {
-            console.log('❌ FSRS not initialized, using fallback');
-            const fallback = this.simpleFallback(cardData, rating);
-            return fallback.card;
+        if (!this.scheduler) {
+            return this.simpleFallback(cardData, rating);
         }
 
         try {
@@ -132,62 +68,30 @@ export class FSRSService {
             const grade = this.safeConvertRating(rating);
             const now = new Date();
 
-            console.log('📝 Card data before FSRS:', card);
-            console.log('🎯 Grade:', grade);
-
-            // ПРАВИЛЬНЫЙ ВЫЗОВ FSRS
             const schedulingCards = this.scheduler.repeat(card, now);
-            console.log('📊 FSRS scheduling cards RAW:', schedulingCards);
-
-            // Проверяем, что schedulingCards существует
-            if (!schedulingCards) {
-                console.log('❌ schedulingCards is undefined');
-                throw new Error('FSRS returned undefined scheduling cards');
-            }
-
-            // ✅ ИСПРАВЛЕНИЕ: FSRS возвращает объект с ЧИСЛОВЫМИ ключами (1, 2, 3, 4)
-            console.log('🔑 Available keys in schedulingCards:', Object.keys(schedulingCards));
-            
-            // Используем числовой ключ напрямую
             const fsrsCard = schedulingCards[grade];
-            console.log('🎯 Selected FSRS card (using numeric key):', fsrsCard);
 
             if (!fsrsCard) {
-                console.log('❌ No FSRS card for numeric grade:', grade);
-                console.log('🔄 Using fallback instead');
-                const fallback = this.simpleFallback(cardData, rating);
-                return fallback.card;
+                return this.simpleFallback(cardData, rating);
             }
 
-            // ✅ ИСПРАВЛЕНИЕ: Извлекаем данные из правильного места
-            // FSRS возвращает { card: {...}, log: {...} }, нам нужен card
             const fsrsCardData = fsrsCard.card || fsrsCard;
-            console.log('🎯 Extracted FSRS card data:', fsrsCardData);
-
-            // ✅ ИСПРАВЛЕНИЕ: Обрабатываем scheduled_days и due
             let scheduled_days = fsrsCardData.scheduled_days;
             let interval = Math.max(1, Math.round(scheduled_days));
             
-            // Если scheduled_days = 0, устанавливаем минимальный интервал
             if (scheduled_days === 0 || isNaN(scheduled_days)) {
-                console.log('⚠️ scheduled_days is 0 or NaN, setting to 1');
                 scheduled_days = 1;
                 interval = 1;
             }
 
-            // ✅ ИСПРАВЛЕНИЕ: Обрабатываем due date
             let dueDate;
             if (fsrsCardData.due && fsrsCardData.due instanceof Date && !isNaN(fsrsCardData.due.getTime())) {
                 dueDate = fsrsCardData.due;
-                console.log('✅ Using FSRS due date:', dueDate);
             } else {
-                // Fallback: устанавливаем due на основе интервала
                 dueDate = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
-                console.log('⚠️ Using calculated due date:', dueDate);
             }
 
-            // ПРОСТАЯ И ПОНЯТНАЯ СТРУКТУРА
-            const updatedCard = {
+            return {
                 due: dueDate,
                 stability: fsrsCardData.stability || 0.1,
                 difficulty: fsrsCardData.difficulty || 5.0,
@@ -197,20 +101,43 @@ export class FSRSService {
                 lapses: fsrsCardData.lapses || 0,
                 state: fsrsCardData.state || 1,
                 last_review: now,
-                // Поля для Google Sheets
                 interval: interval,
                 ease: fsrsCardData.stability || 0.1,
                 repetitions: fsrsCardData.reps || 0
             };
 
-            console.log('✅ Final updated card:', updatedCard);
-            return updatedCard;
-
         } catch (error) {
-            console.error('❌ FSRS review failed:', error);
-            console.log('🔄 Using fallback');
-            const fallback = this.simpleFallback(cardData, rating);
-            return fallback.card;
+            return this.simpleFallback(cardData, rating);
         }
+    }
+
+    simpleFallback(cardData, rating) {
+        const now = new Date();
+        let interval;
+        switch (rating) {
+            case 'again': case 'review_again': interval = 1; break;
+            case 'hard': case 'review_hard': interval = 2; break;
+            case 'good': case 'review_good': interval = 4; break;
+            case 'easy': case 'review_easy': interval = 7; break;
+            default: interval = 3;
+        }
+
+        return {
+            card: {
+                due: new Date(now.getTime() + interval * 24 * 60 * 60 * 1000),
+                stability: interval * 0.5,
+                difficulty: 5.0,
+                elapsed_days: interval,
+                scheduled_days: interval,
+                reps: (cardData.reps || 0) + 1,
+                lapses: rating.includes('again') ? (cardData.lapses || 0) + 1 : (cardData.lapses || 0),
+                state: 1,
+                last_review: now
+            },
+            interval: interval,
+            ease: interval * 0.5,
+            repetitions: (cardData.reps || 0) + 1,
+            rating: rating
+        };
     }
 }
