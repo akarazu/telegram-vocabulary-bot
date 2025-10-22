@@ -2206,15 +2206,13 @@ async function preloadAudioForWords(words) {
             try {
                 await getCachedAudio(word.english);
             } catch (error) {
-                // Игнорируем ошибки для отдельных слов
+                console.error(`Error preloading audio for "${word.english}":`, error);
             }
         }
     });
     
     // Запускаем в фоне, не ждем завершения
-    Promise.allSettled(audioPromises).then(() => {
-        console.log(`Preloaded audio for ${words.length} words`);
-    });
+    Promise.allSettled(audioPromises);
 }
 
 // Запуск периодических задач
@@ -2223,6 +2221,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
