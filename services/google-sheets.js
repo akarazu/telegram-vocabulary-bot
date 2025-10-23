@@ -26,8 +26,64 @@ export class GoogleSheetsService {
 
             this.sheets = google.sheets({ version: 'v4', auth });
             this.initialized = true;
+            
+            // ✅ Инициализируем столбцы для обратных карточек
+            await this.initializeReverseColumns();
         } catch (e) {
             console.error('❌ Google Sheets init failed');
+        }
+    }
+
+    // ✅ ДОБАВЛЕНО: Инициализация столбцов для обратных карточек
+    async initializeReverseColumns() {
+        if (!this.initialized) return false;
+        
+        try {
+            // Получаем текущие заголовки
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!1:1'
+            });
+
+            const currentHeaders = response.data.values ? response.data.values[0] : [];
+            const reverseColumns = [
+                'ReverseDue',
+                'ReverseStability', 
+                'ReverseDifficulty',
+                'ReverseInterval',
+                'ReverseLastReview',
+                'ReverseReps',
+                'ReverseLapses'
+            ];
+
+            // Проверяем, какие столбцы отсутствуют
+            const missingColumns = reverseColumns.filter(col => 
+                !currentHeaders.includes(col)
+            );
+
+            if (missingColumns.length > 0) {
+                console.log('🔧 Adding missing reverse columns:', missingColumns);
+                
+                // Добавляем недостающие столбцы
+                const newHeaders = [...currentHeaders, ...missingColumns];
+                await this.sheets.spreadsheets.values.update({
+                    spreadsheetId: this.spreadsheetId,
+                    range: 'Words!1:1',
+                    valueInputOption: 'RAW',
+                    resource: {
+                        values: [newHeaders]
+                    }
+                });
+                
+                console.log('✅ Reverse columns initialized successfully');
+            } else {
+                console.log('✅ All reverse columns already exist');
+            }
+            
+            return true;
+        } catch (error) {
+            console.error('❌ Error initializing reverse columns:', error);
+            return false;
         }
     }
 
@@ -71,7 +127,7 @@ export class GoogleSheetsService {
 
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:O'
+                range: 'Words!A:V' // Обновлено до V для новых столбцов
             });
 
             const rows = response.data.values || [];
@@ -131,6 +187,160 @@ export class GoogleSheetsService {
         }
     }
 
+    // ✅ ДОБАВЛЕНО: Обновление прогресса обратной карточки
+    async updateReverseCardProgress(chatId, englishWord, fsrsResult, rating) {
+        if (!this.initialized) return false;
+        try {
+            const words = await this.getUserWords(chatId);
+            const word = words.find(w => w.english.toLowerCase() === englishWord.toLowerCase());
+            if (!word) return false;
+
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:V'
+            });
+
+            const rows = response.data.values || [];
+            const rowIndex = rows.findIndex(r => r[0] === chatId.toString() && r[1].toLowerCase() === englishWord.toLowerCase()) + 1;
+            if (rowIndex === 0) return false;
+
+            const reverseDue = fsrsResult.due?.toISOString?.() || new Date().toISOString();
+            const reverseStability = fsrsResult.stability?.toFixed(4) || '0.1000';
+            const reverseDifficulty = fsrsResult.difficulty?.toFixed(4) || '6.0000';
+            const reverseInterval = fsrsResult.interval?.toString() || '1';
+            const reverseLastReview = new Date().toISOString();
+            
+            // Получаем текущие значения reps и lapses
+            let reverseReps = 1;
+            let reverseLapses = 0;
+            
+            if (rows[rowIndex - 1][20]) { // Колонка U (ReverseReps)
+                reverseReps = parseInt(rows[rowIndex - 1][20]) + 1;
+            }
+            
+            if (rating === 'again') {
+                if (rows[rowIndex - 1][21]) { // Колонка V (ReverseLapses)
+                    reverseLapses = parseInt(rows[rowIndex - 1][21]) + 1;
+                } else {
+                    reverseLapses = 1;
+                }
+            } else {
+                reverseLapses = rows[rowIndex - 1][21] ? parseInt(rows[rowIndex - 1][21]) : 0;
+            }
+
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Words!P${rowIndex}:V${rowIndex}`,
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[
+                        reverseDue,           // P: ReverseDue
+                        reverseStability,     // Q: ReverseStability
+                        reverseDifficulty,    // R: ReverseDifficulty
+                        reverseInterval,      // S: ReverseInterval
+                        reverseLastReview,    // T: ReverseLastReview
+                        reverseReps.toString(), // U: ReverseReps
+                        reverseLapses.toString() // V: ReverseLapses
+                    ]]
+                }
+            });
+
+            this.cache.delete(`words_${chatId}`);
+            console.log(`✅ Reverse card updated for: ${englishWord}`);
+            return true;
+        } catch (error) {
+            console.error('❌ Error updating reverse card:', error);
+            return false;
+        }
+    }
+
+    // ✅ ДОБАВЛЕНО: Получение данных обратной карточки
+    async getReverseCardData(chatId, englishWord) {
+        if (!this.initialized) return null;
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Words!A:V'
+            });
+
+            const rows = response.data.values || [];
+            const row = rows.find(r => 
+                r[0] === chatId.toString() && 
+                r[1].toLowerCase() === englishWord.toLowerCase()
+            );
+            
+            if (row && row[15]) { // Колонка P (ReverseDue)
+                const reverseData = {
+                    due: new Date(row[15]),
+                    stability: parseFloat(row[16]) || 0.1,
+                    difficulty: parseFloat(row[17]) || 6.0,
+                    interval: parseFloat(row[18]) || 1,
+                    elapsed_days: 0,
+                    scheduled_days: 1,
+                    reps: parseInt(row[20]) || 0,
+                    lapses: parseInt(row[21]) || 0,
+                    state: 1,
+                    last_review: new Date(row[19] || new Date())
+                };
+                
+                console.log(`📊 Loaded reverse card data for: ${englishWord}`);
+                return reverseData;
+            }
+            
+            console.log(`📝 No reverse card data found for: ${englishWord}`);
+            return null;
+        } catch (error) {
+            console.error('❌ Error getting reverse card data:', error);
+            return null;
+        }
+    }
+
+    // ✅ ДОБАВЛЕНО: Статистика по обратным карточкам
+    async getReverseTrainingStats(chatId) {
+        if (!this.initialized) return null;
+        try {
+            const words = await this.getUserWords(chatId);
+            const activeWords = words.filter(word => word.status === 'active');
+            
+            let stats = {
+                totalWords: activeWords.length,
+                wordsWithReverseCards: 0,
+                totalReverseReps: 0,
+                totalReverseLapses: 0,
+                avgReverseDifficulty: 0,
+                syncedWords: 0
+            };
+
+            // Загружаем данные обратных карточек для каждого слова
+            for (const word of activeWords) {
+                const reverseData = await this.getReverseCardData(chatId, word.english);
+                if (reverseData && reverseData.reps > 0) {
+                    stats.wordsWithReverseCards++;
+                    stats.totalReverseReps += reverseData.reps;
+                    stats.totalReverseLapses += reverseData.lapses;
+                    stats.avgReverseDifficulty += reverseData.difficulty;
+                    
+                    // Проверяем синхронизацию (интервалы отличаются не более чем в 2 раза)
+                    if (reverseData.interval > 0 && word.interval > 0) {
+                        const ratio = Math.max(reverseData.interval, word.interval) / Math.min(reverseData.interval, word.interval);
+                        if (ratio <= 2.0) {
+                            stats.syncedWords++;
+                        }
+                    }
+                }
+            }
+            
+            if (stats.wordsWithReverseCards > 0) {
+                stats.avgReverseDifficulty = Math.round((stats.avgReverseDifficulty / stats.wordsWithReverseCards) * 10);
+            }
+            
+            return stats;
+        } catch (error) {
+            console.error('❌ Error getting reverse training stats:', error);
+            return null;
+        }
+    }
+
     // ОПТИМИЗАЦИЯ: Чтение слов с извлечением данных FSRS
     async getUserWords(userId) {
         if (!this.initialized) return [];
@@ -140,7 +350,7 @@ export class GoogleSheetsService {
             try {
                 const response = await this.sheets.spreadsheets.values.get({
                     spreadsheetId: this.spreadsheetId,
-                    range: 'Words!A:O'
+                    range: 'Words!A:V' // Обновлено до V для новых столбцов
                 });
 
                 const rows = response.data.values || [];
@@ -197,7 +407,7 @@ export class GoogleSheetsService {
 
             await this.sheets.spreadsheets.values.append({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:O',
+                range: 'Words!A:V',
                 valueInputOption: 'RAW',
                 requestBody: {
                     values: [[
@@ -215,7 +425,8 @@ export class GoogleSheetsService {
                         2.5,
                         0,
                         0,
-                        JSON.stringify({}) // Пустые данные FSRS для нового слова
+                        JSON.stringify({}), // Пустые данные FSRS для нового слова
+                        '', '', '', '', '', '', '' // Пустые значения для обратных карточек
                     ]]
                 }
             });
@@ -267,77 +478,6 @@ export class GoogleSheetsService {
         ).length;
     }
 
-    async updateReverseCardProgress(chatId, englishWord, fsrsResult, rating) {
-    try {
-        const doc = await this.getDoc();
-        const sheet = doc.sheetsByTitle[this.sheetName];
-        
-        // Находим строку с словом
-        const rows = await sheet.getRows();
-        const rowIndex = rows.findIndex(row => 
-            row.get('UserID') == chatId && 
-            row.get('English').toLowerCase() === englishWord.toLowerCase()
-        );
-        
-        if (rowIndex !== -1) {
-            const row = rows[rowIndex];
-            
-            // Сохраняем данные обратной карточки
-            row.set('ReverseDue', fsrsResult.due.toISOString());
-            row.set('ReverseStability', fsrsResult.stability);
-            row.set('ReverseDifficulty', fsrsResult.difficulty);
-            row.set('ReverseInterval', fsrsResult.interval);
-            row.set('ReverseLastReview', new Date().toISOString());
-            row.set('ReverseReps', (parseInt(row.get('ReverseReps') || 0) + 1));
-            
-            if (rating === 'again') {
-                row.set('ReverseLapses', (parseInt(row.get('ReverseLapses') || 0) + 1));
-            }
-            
-            await row.save();
-            return true;
-        }
-        
-        return false;
-    } catch (error) {
-        console.error('Error updating reverse card:', error);
-        return false;
-    }
-},
-
-async getReverseCardData(chatId, englishWord) {
-    try {
-        const doc = await this.getDoc();
-        const sheet = doc.sheetsByTitle[this.sheetName];
-        const rows = await sheet.getRows();
-        
-        const row = rows.find(r => 
-            r.get('UserID') == chatId && 
-            r.get('English').toLowerCase() === englishWord.toLowerCase()
-        );
-        
-        if (row && row.get('ReverseDue')) {
-            return {
-                due: new Date(row.get('ReverseDue')),
-                stability: parseFloat(row.get('ReverseStability')) || 0.1,
-                difficulty: parseFloat(row.get('ReverseDifficulty')) || 6.0,
-                interval: parseFloat(row.get('ReverseInterval')) || 1,
-                elapsed_days: 0,
-                scheduled_days: 1,
-                reps: parseInt(row.get('ReverseReps')) || 0,
-                lapses: parseInt(row.get('ReverseLapses')) || 0,
-                state: 1,
-                last_review: new Date(row.get('ReverseLastReview') || new Date())
-            };
-        }
-        
-        return null;
-    } catch (error) {
-        console.error('Error getting reverse card data:', error);
-        return null;
-    }
-}
-
     getCredentialsFromEnv() {
         try {
             if (process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS) {
@@ -363,4 +503,3 @@ async getReverseCardData(chatId, englishWord) {
 
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
-
