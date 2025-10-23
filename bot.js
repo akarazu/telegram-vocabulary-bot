@@ -81,6 +81,22 @@ function updateUserActivity(chatId) {
     }
 }
 
+function cacheAudio(audioId, audioUrl, word = '') {
+    audioCache.set(audioId, {
+        url: audioUrl,
+        word: word,
+        timestamp: Date.now()
+    });
+    
+    // Очистка старых записей (старше 1 часа)
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    for (const [key, value] of audioCache.entries()) {
+        if (value.timestamp < oneHourAgo) {
+            audioCache.delete(key);
+        }
+    }
+}
+
 async function getCachedUserWords(chatId) {
     const cacheKey = `words_${chatId}`;
     const cached = cache.get(cacheKey);
@@ -1516,12 +1532,6 @@ bot.on('message', async (msg) => {
 
 // Обработка добавления слова
 async function handleAddWord(chatId, englishWord) {
-    // Проверка входных данных
-    if (!englishWord || typeof englishWord !== 'string') {
-        await bot.sendMessage(chatId, '❌ Неверный формат слова. Попробуйте еще раз:');
-        return;
-    }
-
     const lowerWord = englishWord.trim().toLowerCase();
     
     if (!/^[a-zA-Z\s\-'\.]+$/.test(lowerWord)) {
@@ -1532,7 +1542,6 @@ async function handleAddWord(chatId, englishWord) {
     await bot.sendMessage(chatId, '🔍 Ищу перевод в Cambridge Dictionary...');
 
     try {
-        // Гарантируем инициализацию сервисов
         if (!servicesInitialized) {
             await initializeServices();
         }
@@ -1566,7 +1575,7 @@ async function handleAddWord(chatId, englishWord) {
             await bot.sendMessage(chatId, '❌ Cambridge Dictionary не доступен');
         }
 
-        // ВТОРОЙ ЭТАП: Yandex для транскрипции и аудио (всегда пробуем, независимо от результатов Cambridge)
+        // ВТОРОЙ ЭТАП: Yandex для транскрипции и аудио
         await bot.sendMessage(chatId, '🎵 Ищу транскрипцию и произношение...');
         
         try {
@@ -1587,24 +1596,29 @@ async function handleAddWord(chatId, englishWord) {
             await bot.sendMessage(chatId, '❌ Сервис произношения не доступен');
         }
 
-        // Fallback для аудио (если Yandex не сработал)
+        // Fallback для аудио
         if (!audioUrl) {
             audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
         }
 
-        // Сохраняем состояние
+        // Генерируем уникальный ID для аудио
+        const audioId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        cacheAudio(audioId, audioUrl, lowerWord);
+
+        // Сохраняем состояние с ВСЕМИ данными
         userStates.set(chatId, {
-            state: 'waiting_translation',
+            state: 'showing_transcription',
             tempWord: lowerWord,
             tempTranscription: transcription,
             tempAudioUrl: audioUrl,
-            meanings: meanings,
+            tempAudioId: audioId,
             tempTranslations: translations,
+            meanings: meanings,
             selectedTranslationIndices: [],
             lastActivity: Date.now()
         });
 
-        // Формируем итоговое сообщение с результатами
+        // Формируем сообщение с результатами поиска
         let message = `📋 **Результаты поиска:**\n\n`;
         message += `🇬🇧 Слово: **${lowerWord}**\n`;
         
@@ -1616,19 +1630,26 @@ async function handleAddWord(chatId, englishWord) {
             message += `\n✅ Найдено переводов: ${translations.length}\n`;
             message += `📚 Источник: Cambridge Dictionary\n\n`;
             message += `💡 Вы можете:\n`;
-            message += `• Использовать найденные переводы\n`;
+            message += `• Прослушать произношение 🔊\n`;
+            message += `• Выбрать из найденных переводов\n`;
             message += `• Добавить свой вариант перевода\n\n`;
-            message += `📝 Введите или выберите перевод:`;
+            message += `🎯 Выберите действие:`;
         } else {
             message += `\n❌ Переводы не найдены\n`;
-            message += `💡 Введите перевод вручную:`;
+            message += `💡 Вы можете:\n`;
+            message += `• Прослушать произношение 🔊\n`;
+            message += `• Добавить перевод вручную\n\n`;
+            message += `🎯 Выберите действие:`;
         }
 
+        // Отправляем сообщение с кнопками
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
             reply_markup: {
-                keyboard: [['❌ Отмена']],
-                resize_keyboard: true
+                inline_keyboard: [
+                    audioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioId}` }] : [],
+                    [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
+                ].filter(row => row.length > 0)
             }
         });
 
@@ -1659,6 +1680,7 @@ async function handleAddWord(chatId, englishWord) {
         });
     }
 }
+
 // Обработчики callback
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
@@ -1673,15 +1695,22 @@ bot.on('callback_query', async (callbackQuery) => {
     console.log(`📨 Callback received: ${data}`);
 
     // Обработка аудио через короткий ID
-   if (data.startsWith('audio_')) {
-    const cachedAudio = audioCache.get(data);
-    const audioUrl = cachedAudio?.url || cachedAudio;
+else if (data.startsWith('audio_')) {
+    const audioId = data.replace('audio_', '');
+    const cachedAudio = audioCache.get(audioId);
+    const audioUrl = cachedAudio?.url || userState?.tempAudioUrl;
     const englishWord = userState?.tempWord || cachedAudio?.word || 'слова';
-    
+
     if (audioUrl) {
         try {
+            // Убираем клавиатуру у сообщения
+            await bot.editMessageReplyMarkup(
+                { inline_keyboard: [] },
+                { chat_id: chatId, message_id: callbackQuery.message.message_id }
+            );
+            
             await bot.sendAudio(chatId, audioUrl, {
-                caption: `🔊 Произношение: ${englishWord}`
+                caption: `🔊 Британское произношение: ${englishWord}`
             });
             
             // После проигрывания аудио предлагаем продолжить
@@ -1700,9 +1729,8 @@ bot.on('callback_query', async (callbackQuery) => {
             await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио.');
         }
     } else {
-        await bot.sendMessage(chatId, '❌ Аудио произношение недоступно.');
+        await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
     }
-    return;
 }
 
     // Обработка деталей перевода
@@ -1885,59 +1913,96 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     // Выбор перевода
-    else if (data === 'enter_translation') {
-        if (userState?.state === 'showing_transcription') {
-            try {
-                const hasTranslations = userState.tempTranslations && 
-                                      userState.tempTranslations.length > 0;
-                
-                if (hasTranslations) {
-                    userStates.set(chatId, {
-                        ...userState,
-                        state: 'choosing_translation',
-                        selectedTranslationIndices: []
-                    });
+else if (data === 'enter_translation') {
+    optimizedLog('🔍 Processing enter_translation callback');
+    
+    if (userState?.state === 'showing_transcription') {
+        try {
+            const hasTranslations = userState.tempTranslations && 
+                                  userState.tempTranslations.length > 0;
+            
+            optimizedLog(`🔍 Translations available: ${hasTranslations}, count: ${userState.tempTranslations?.length}`);
 
-                    let translationMessage = '🎯 **Выберите переводы:**\n\n' +
-                        `🇬🇧 **${userState.tempWord}**`;
-                    if (userState.tempTranscription) {
-                        translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-                    }
-                    translationMessage += '\n\n💡 Нажмите на номер перевода чтобы выбрать его';
+            if (hasTranslations) {
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'choosing_translation',
+                    selectedTranslationIndices: []
+                });
 
-                    await bot.sendMessage(
-                        chatId, 
-                        translationMessage,
-                        {
-                            parse_mode: 'Markdown',
-                            ...getTranslationSelectionKeyboard(
-                                userState.tempTranslations, 
-                                userState.meanings, 
-                                []
-                            )
-                        }
-                    );
-                } else {
-                    userStates.set(chatId, {
-                        ...userState,
-                        state: 'waiting_custom_translation'
-                    });
-
-                    let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
-                        `🇬🇧 Слово: **${userState.tempWord}**`;
-                    if (userState.tempTranscription) {
-                        translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-                    }
-                    translationMessage += '\n\n📝 Введите ваш вариант перевода:';
-
-                    await bot.sendMessage(chatId, translationMessage, { parse_mode: 'Markdown' });
+                let translationMessage = '🎯 **Выберите переводы:**\n\n' +
+                    `🇬🇧 **${userState.tempWord}**`;
+                    
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
-            } catch (error) {
-                await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса.');
+                
+                translationMessage += '\n\n💡 Нажмите на перевод чтобы выбрать его, или 🔍 для подробностей';
+
+                // Удаляем предыдущее сообщение и отправляем новое с кнопками выбора
+                try {
+                    await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                } catch (deleteError) {
+                    optimizedLog('⚠️ Could not delete previous message');
+                }
+
+                await bot.sendMessage(
+                    chatId, 
+                    translationMessage,
+                    {
+                        parse_mode: 'Markdown',
+                        ...getTranslationSelectionKeyboard(
+                            userState.tempTranslations, 
+                            userState.meanings, 
+                            []
+                        )
+                    }
+                );
+                
+            } else {
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'waiting_custom_translation'
+                });
+
+                let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
+                    `🇬🇧 Слово: **${userState.tempWord}**`;
+                    
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
+                }
+                
+                translationMessage += '\n\n📝 Введите ваш вариант перевода:';
+
+                try {
+                    await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                } catch (deleteError) {
+                    optimizedLog('⚠️ Could not delete previous message');
+                }
+
+                await bot.sendMessage(chatId, translationMessage, { 
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['❌ Отмена']],
+                        resize_keyboard: true
+                    }
+                });
             }
+            
+        } catch (error) {
+            optimizedLog('❌ Error in enter_translation:', error);
+            await bot.sendMessage(chatId, 
+                '❌ Ошибка при обработке запроса. Попробуйте еще раз.'
+            );
         }
-        return;
+    } else {
+        optimizedLog(`❌ Wrong state for enter_translation: ${userState?.state}`);
+        await bot.sendMessage(chatId, 
+            '❌ Неверное состояние. Начните добавление слова заново.'
+        );
+        userStates.delete(chatId);
     }
+}
 
     // Обработка тренировки
     else if (data.startsWith('training_')) {
@@ -2491,6 +2556,7 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
 
