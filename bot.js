@@ -2357,36 +2357,6 @@ async function preloadAudioForWords(words) {
     Promise.allSettled(audioPromises);
 }
 
-// Добавьте эту функцию для управления audio cache
-function manageAudioCache() {
-    // Очистка старых записей каждые 10 минут
-    setInterval(() => {
-        const now = Date.now();
-        const oneHourAgo = now - 60 * 60 * 1000;
-        
-        let cleanedCount = 0;
-        for (const [key, value] of audioCache.entries()) {
-            if (value.timestamp && value.timestamp < oneHourAgo) {
-                audioCache.delete(key);
-                cleanedCount++;
-            }
-        }
-        
-        if (cleanedCount > 0) {
-            console.log(`🧹 Audio cache cleaned: ${cleanedCount} old entries removed`);
-        }
-        
-        // Ограничиваем размер кэша
-        if (audioCache.size > 100) {
-            const keys = Array.from(audioCache.keys());
-            for (let i = 0; i < keys.length - 50; i++) {
-                audioCache.delete(keys[i]);
-            }
-            console.log(`📦 Audio cache trimmed to 50 entries`);
-        }
-    }, 10 * 60 * 1000);
-}
-
 // Запуск периодических задач
 setInterval(() => {
     resetDailyLimit();
@@ -2398,19 +2368,3 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
