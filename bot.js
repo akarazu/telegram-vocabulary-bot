@@ -1526,7 +1526,7 @@ async function handleAddWord(chatId, englishWord) {
 
         console.log(`📡 Fetching data for: "${lowerWord}"`);
 
-        // Последовательные запросы вместо параллельных для надежности
+        // Последовательные запросы для надежности
         try {
             const cambridgeData = await cambridgeService.getWordData(lowerWord);
             console.log(`✅ Cambridge data received: ${cambridgeData.meanings?.length || 0} meanings`);
@@ -1563,12 +1563,23 @@ async function handleAddWord(chatId, englishWord) {
 
         console.log(`📊 Final data - Meanings: ${meanings.length}, Translations: ${translations.length}, Audio: ${!!audioUrl}`);
 
+        // Генерируем уникальный ID для аудио (короткий)
+        const audioId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Сохраняем аудио URL в кэше с коротким ID
+        audioCache.set(audioId, {
+            url: audioUrl,
+            timestamp: Date.now(),
+            word: lowerWord
+        });
+
         // Сохраняем состояние
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: lowerWord,
             tempTranscription: transcription,
             tempAudioUrl: audioUrl,
+            tempAudioId: audioId,
             tempTranslations: translations,
             meanings: meanings,
             selectedTranslationIndices: [],
@@ -1576,41 +1587,47 @@ async function handleAddWord(chatId, englishWord) {
         });
 
         // Формируем сообщение
-        let message = `📝 Слово: **${lowerWord}**`;
+        let message = `📝 **${lowerWord}**`;
+        
         if (transcription) {
-            message += `\n🔤 Транскрипция: ${transcription}`;
+            message += `\n🔤 *${transcription}*`;
         }
         
-        if (audioUrl) {
-            message += `\n\n🎵 Доступно аудио произношение`;
-        }
-        
+        message += `\n\n`;
+
         if (translations.length > 0) {
-            message += `\n\n🎯 Найдено ${translations.length} вариантов перевода`;
+            message += `🎯 *Найдено ${translations.length} вариантов перевода*`;
         } else {
-            message += `\n\n❌ Переводы не найдены\n✏️ Вы можете добавить свой перевод`;
+            message += `❌ *Переводы не найдены*`;
+            message += `\n✏️ Вы можете добавить свой перевод`;
         }
-        
-        message += `\n\nВыберите действие:`;
 
-        // Формируем клавиатуру
-        const keyboard = {
-            inline_keyboard: []
-        };
+        // Формируем клавиатуру с КОРОТКИМ audioId вместо полного URL
+        const keyboardRows = [];
 
         if (audioUrl) {
-            keyboard.inline_keyboard.push([
-                { text: '🔊 Прослушать произношение', callback_data: `audio_${audioUrl}` }
+            keyboardRows.push([
+                { 
+                    text: '🔊 Прослушать произношение', 
+                    callback_data: audioId // Короткий ID вместо URL
+                }
             ]);
         }
         
-        keyboard.inline_keyboard.push([
+        keyboardRows.push([
             { text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }
+        ]);
+
+        // Добавляем кнопку отмены
+        keyboardRows.push([
+            { text: '❌ Отмена', callback_data: 'cancel_translation' }
         ]);
 
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
-            reply_markup: keyboard
+            reply_markup: {
+                inline_keyboard: keyboardRows
+            }
         });
 
         console.log(`✅ Word search completed successfully for: "${lowerWord}"`);
@@ -1618,18 +1635,25 @@ async function handleAddWord(chatId, englishWord) {
     } catch (error) {
         console.error('💥 CRITICAL ERROR in handleAddWord:', error);
         
-        await bot.sendMessage(chatId, 
-            '❌ Произошла ошибка при поиске слова.\n\n' +
-            'Возможные причины:\n' +
-            '• Проблемы с интернет-соединением\n' + 
-            '• Слово не найдено в словарях\n' +
-            '• Временные неполадки сервиса\n\n' +
-            'Попробуйте:\n' +
-            '• Проверить написание слова\n' +
-            '• Попробовать позже\n' +
-            '• Добавить перевод вручную'
-        );
+        let errorMessage = '❌ Произошла ошибка при поиске слова.\n\n';
         
+        if (error.message.includes('ETELEGRAM') || error.message.includes('BUTTON_DATA_INVALID')) {
+            errorMessage += '⚠️ *Проблема с кнопками интерфейса*\n';
+            errorMessage += 'Попробуйте начать заново с команды /start';
+        } else {
+            errorMessage += 'Возможные причины:\n';
+            errorMessage += '• Проблемы с интернет-соединением\n';
+            errorMessage += '• Слово не найдено в словарях\n';
+            errorMessage += '• Временные неполадки сервиса\n\n';
+            errorMessage += 'Попробуйте:\n';
+            errorMessage += '• Проверить написание слова\n';
+            errorMessage += '• Попробовать позже\n';
+            errorMessage += '• Добавить перевод вручную';
+        }
+        
+        await bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
+        
+        // Очищаем состояние пользователя
         userStates.delete(chatId);
     }
 }
@@ -1645,17 +1669,59 @@ bot.on('callback_query', async (callbackQuery) => {
     const userState = userStates.get(chatId);
     await bot.answerCallbackQuery(callbackQuery.id);
 
-    if (data.startsWith('details_')) {
+    console.log(`📨 Callback received: ${data}`);
+
+    // Обработка аудио через короткий ID
+   if (data.startsWith('audio_')) {
+    const cachedAudio = audioCache.get(data);
+    const audioUrl = cachedAudio?.url || cachedAudio;
+    const englishWord = userState?.tempWord || cachedAudio?.word || 'слова';
+    
+    if (audioUrl) {
+        try {
+            await bot.sendAudio(chatId, audioUrl, {
+                caption: `🔊 Произношение: ${englishWord}`
+            });
+            
+            // После проигрывания аудио предлагаем продолжить
+            await bot.sendMessage(chatId, 
+                '🎵 Вы прослушали произношение. Хотите выбрать перевод?', 
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
+                        ]
+                    }
+                }
+            );
+        } catch (audioError) {
+            console.error('Audio playback error:', audioError);
+            await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио.');
+        }
+    } else {
+        await bot.sendMessage(chatId, '❌ Аудио произношение недоступно.');
+    }
+    return;
+}
+
+    // Обработка деталей перевода
+    else if (data.startsWith('details_')) {
         const translationIndex = parseInt(data.replace('details_', ''));
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
             await showTranslationDetails(chatId, translationIndex, userState);
         }
+        return;
     }
+
+    // Назад к переводам
     else if (data === 'back_to_translations') {
         if (userState?.state === 'choosing_translation') {
             await backToTranslationSelection(chatId, userState, callbackQuery);
         }
+        return;
     }
+
+    // Переключение выбора перевода
     else if (data.startsWith('toggle_translation_')) {
         const translationIndex = parseInt(data.replace('toggle_translation_', ''));
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
@@ -1680,7 +1746,10 @@ bot.on('callback_query', async (callbackQuery) => {
                 await bot.sendMessage(chatId, '❌ Ошибка при выборе перевода');
             }
         }
+        return;
     }
+
+    // Сохранение выбранных переводов
     else if (data === 'save_selected_translations') {
         if (userState?.state === 'choosing_translation' && userState.selectedTranslationIndices.length > 0) {
             try {
@@ -1700,7 +1769,10 @@ bot.on('callback_query', async (callbackQuery) => {
         } else {
             await bot.sendMessage(chatId, '❌ Выберите хотя бы один перевод для сохранения');
         }
+        return;
     }
+
+    // Пользовательский перевод
     else if (data === 'custom_translation') {
         if (userState?.state === 'choosing_translation') {
             try {
@@ -1722,7 +1794,10 @@ bot.on('callback_query', async (callbackQuery) => {
                 await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
             }
         }
+        return;
     }
+
+    // Отмена перевода
     else if (data === 'cancel_translation') {
         if (userState) {
             try {
@@ -1737,10 +1812,14 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
                 message += '\n\n🎵 Доступно аудио произношение\n\nВыберите действие:';
 
+                // Генерируем новый audioId для кнопки
+                const audioId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                audioCache.set(audioId, userState.tempAudioUrl);
+
                 await bot.editMessageReplyMarkup(
                     {
                         inline_keyboard: [
-                            userState.tempAudioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${userState.tempAudioId}` }] : [],
+                            userState.tempAudioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: audioId }] : [],
                             [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
                         ].filter(row => row.length > 0)
                     },
@@ -1750,25 +1829,42 @@ bot.on('callback_query', async (callbackQuery) => {
                 await bot.sendMessage(chatId, '❌ Ошибка при отмене');
             }
         }
+        return;
     }
+
+    // Показать ответ в режиме повторения
     else if (data === 'show_answer') {
         await showReviewAnswer(chatId);
+        return;
     }
+
+    // Оценка в режиме повторения
     else if (data.startsWith('review_')) {
         const rating = data.replace('review_', '');
         await processReviewRating(chatId, rating);
+        return;
     }
+
+    // Завершить повторение
     else if (data === 'end_review') {
         if (userState?.state === 'review_session') {
             await completeReviewSession(chatId, userState);
         }
+        return;
     }
+
+    // Изучение новых слов
     else if (data === 'learned_word') {
         await processNewWordLearning(chatId, 'learned');
+        return;
     }
+
     else if (data === 'need_repeat_word') {
         await processNewWordLearning(chatId, 'repeat');
+        return;
     }
+
+    // Тренировка правописания
     else if (data === 'spelling_train') {
         const userState = userStates.get(chatId);
         
@@ -1784,49 +1880,10 @@ bot.on('callback_query', async (callbackQuery) => {
         } catch (e) {
             // Игнорируем ошибки удаления
         }
+        return;
     }
-else if (data.startsWith('audio_')) {
-    const audioUrl = data.replace('audio_', '');
-    const englishWord = userState?.tempWord;
 
-    if (audioUrl && englishWord) {
-        try {
-            await bot.sendAudio(chatId, audioUrl, {
-                caption: `🔊 Британское произношение: ${englishWord}`
-            });
-            await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
-                    ]
-                }
-            });
-        } catch (error) {
-            // Если URL не работает, пробуем получить новый из кэша
-            try {
-                const newAudioUrl = await getCachedAudio(englishWord);
-                if (newAudioUrl && newAudioUrl !== audioUrl) {
-                    await bot.sendAudio(chatId, newAudioUrl, {
-                        caption: `🔊 Британское произношение: ${englishWord}`
-                    });
-                    await bot.sendMessage(chatId, '🎵 Вы прослушали произношение. Хотите выбрать перевод?', {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '✏️ Выбрать перевод', callback_data: 'enter_translation' }]
-                            ]
-                        }
-                    });
-                } else {
-                    throw new Error('No audio available');
-                }
-            } catch (retryError) {
-                await bot.sendMessage(chatId, '❌ Ошибка при воспроизведении аудио.');
-            }
-        }
-    } else {
-        await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
-    }
-}
+    // Выбор перевода
     else if (data === 'enter_translation') {
         if (userState?.state === 'showing_transcription') {
             try {
@@ -1878,15 +1935,23 @@ else if (data.startsWith('audio_')) {
                 await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса.');
             }
         }
-    } else if (data.startsWith('training_')) {
-    await handleTrainingCallback(chatId, data);
-    
-    try {
-        await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-    } catch (e) {
-        // Игнорируем ошибки удаления
+        return;
     }
-}
+
+    // Обработка тренировки
+    else if (data.startsWith('training_')) {
+        await handleTrainingCallback(chatId, data);
+        
+        try {
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+        } catch (e) {
+            // Игнорируем ошибки удаления
+        }
+        return;
+    }
+
+    // Если callback_data не распознан
+    console.log(`❓ Unknown callback data: ${data}`);
 });
 
 // Вспомогательные функции для работы с переводами
@@ -2292,12 +2357,48 @@ async function preloadAudioForWords(words) {
     Promise.allSettled(audioPromises);
 }
 
+// Добавьте эту функцию для управления audio cache
+function manageAudioCache() {
+    // Очистка старых записей каждые 10 минут
+    setInterval(() => {
+        const now = Date.now();
+        const oneHourAgo = now - 60 * 60 * 1000;
+        
+        let cleanedCount = 0;
+        for (const [key, value] of audioCache.entries()) {
+            if (value.timestamp && value.timestamp < oneHourAgo) {
+                audioCache.delete(key);
+                cleanedCount++;
+            }
+        }
+        
+        if (cleanedCount > 0) {
+            console.log(`🧹 Audio cache cleaned: ${cleanedCount} old entries removed`);
+        }
+        
+        // Ограничиваем размер кэша
+        if (audioCache.size > 100) {
+            const keys = Array.from(audioCache.keys());
+            for (let i = 0; i < keys.length - 50; i++) {
+                audioCache.delete(keys[i]);
+            }
+            console.log(`📦 Audio cache trimmed to 50 entries`);
+        }
+    }, 10 * 60 * 1000);
+}
+
 // Запуск периодических задач
 setInterval(() => {
     resetDailyLimit();
 }, 60 * 60 * 1000);
 
-console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+initializeServices().then(() => {
+    initializeAudioCache(); // ← ДОБАВЬТЕ ЭТУ СТРОКУ
+    console.log('✅ Bot started successfully on Railways');
+}).catch(error => {
+    console.error('❌ Failed to start bot:', error);
+});
+
 
 
 
