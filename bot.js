@@ -2363,8 +2363,8 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 initializeServices().then(() => {
-    initializeAudioCache(); // ← ДОБАВЬТЕ ЭТУ СТРОКУ
     console.log('✅ Bot started successfully on Railways');
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
