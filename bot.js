@@ -26,17 +26,17 @@ async function initializeServices() {
     
     try {
         sheetsService = new GoogleSheetsService();
-        yandexService = new YandexDictionaryService();
-        cambridgeService = new CambridgeDictionaryService();
+        yandexService = getYandexDictionaryService();
+        cambridgeService = getCambridgeService();
         fsrsService = new FSRSService();
         
-        // Ждем инициализацию Google Sheets
-        await new Promise(resolve => {
+        // Быстрая инициализация Google Sheets
+        await new Promise((resolve) => {
             const checkInitialized = () => {
                 if (sheetsService.initialized) {
                     resolve();
                 } else {
-                    setTimeout(checkInitialized, 100);
+                    setTimeout(checkInitialized, 50);
                 }
             };
             checkInitialized();
@@ -45,8 +45,7 @@ async function initializeServices() {
         servicesInitialized = true;
         return true;
     } catch (error) {
-        console.error('Service initialization failed');
-        // Заглушки для работы бота
+        // Минимальные заглушки для работы
         sheetsService = { 
             initialized: false,
             getUserWords: () => [],
@@ -54,22 +53,17 @@ async function initializeServices() {
             getReviewWordsCount: () => 0,
             getNewWordsCount: () => 0,
             addWordWithMeanings: async () => false,
-            updateWordAfterFSRSReview: async () => false,
-            addMeaningToWord: async () => false
+            updateWordAfterFSRSReview: async () => false
         };
-        yandexService = { 
-            getTranscriptionAndAudio: async () => ({ transcription: '', audioUrl: '' })
-        };
-        cambridgeService = { 
-            getWordData: async () => ({ meanings: [] })
-        };
+        yandexService = getYandexDictionaryService();
+        cambridgeService = getCambridgeService();
         fsrsService = new FSRSService();
         servicesInitialized = true;
         return false;
     }
 }
 
-// Очистка неактивных пользователей каждые 10 минут
+// Очистка неактивных пользователей каждые 30 минут
 setInterval(() => {
     const now = Date.now();
     for (const [chatId, state] of userStates.entries()) {
@@ -77,7 +71,7 @@ setInterval(() => {
             userStates.delete(chatId);
         }
     }
-}, 10 * 60 * 1000);
+}, 30 * 60 * 1000);
 
 // Функции для работы с кешем
 function updateUserActivity(chatId) {
@@ -1505,19 +1499,11 @@ async function handleAddWord(chatId, englishWord) {
     const lowerWord = englishWord.trim().toLowerCase();
 
     if (!/^[a-zA-Z\s\-'\.]+$/.test(lowerWord)) {
-        await bot.sendMessage(chatId, 
-            '❌ Это не похоже на английское слово.\n' +
-            'Пожалуйста, введите слово на английском:'
-        );
+        await bot.sendMessage(chatId, '❌ Пожалуйста, введите корректное английское слово:');
         return;
-
-        if (!englishWord || englishWord.trim() === '') {
-    await bot.sendMessage(chatId, '❌ Слово не может быть пустым. Введите английское слово:');
-    return;
-}
     }
 
-    await bot.sendMessage(chatId, '🔍 Ищу перевод, транскрипцию и произношение...');
+    await bot.sendMessage(chatId, '🔍 Ищу перевод и произношение...');
 
     try {
         let transcription = '';
@@ -1525,22 +1511,30 @@ async function handleAddWord(chatId, englishWord) {
         let meanings = [];
         let translations = [];
 
-        // Получаем данные из Cambridge Dictionary
-        const cambridgeData = await cambridgeService.getWordData(lowerWord);
-        if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
-            meanings = cambridgeData.meanings;
-            translations = meanings.map(m => m.translation).filter((t, i, arr) => arr.indexOf(t) === i);
+        // Параллельные запросы с таймаутом
+        const [cambridgeData, yandexData] = await Promise.allSettled([
+            cambridgeService.getWordData(lowerWord),
+            yandexService.getTranscriptionAndAudio(lowerWord)
+        ]);
+
+        // Обрабатываем данные Cambridge
+        if (cambridgeData.status === 'fulfilled' && cambridgeData.value.meanings) {
+            meanings = cambridgeData.value.meanings;
+            translations = meanings
+                .map(m => m.translation)
+                .filter(t => t && t.trim() !== '')
+                .filter((t, i, arr) => arr.indexOf(t) === i);
         }
 
-        // Получаем транскрипцию и аудио с кэшированием
-        try {
-            const yandexData = await yandexService.getTranscriptionAndAudio(lowerWord);
-            transcription = yandexData.transcription || '';
-            // Используем кэшированное аудио
-            audioUrl = await getCachedAudio(lowerWord);
-        } catch (yandexError) {
-            // Если Yandex не сработал, используем кэшированное аудио от Google TTS
-            audioUrl = await getCachedAudio(lowerWord);
+        // Обрабатываем данные Yandex
+        if (yandexData.status === 'fulfilled') {
+            transcription = yandexData.value.transcription || '';
+            audioUrl = yandexData.value.audioUrl || '';
+        }
+
+        // Fallback для аудио
+        if (!audioUrl) {
+            audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
         }
 
         userStates.set(chatId, {
@@ -1548,20 +1542,15 @@ async function handleAddWord(chatId, englishWord) {
             tempWord: lowerWord,
             tempTranscription: transcription,
             tempAudioUrl: audioUrl,
-            tempAudioId: Date.now().toString(),
             tempTranslations: translations,
             meanings: meanings,
             selectedTranslationIndices: [],
             lastActivity: Date.now()
         });
 
-        let message = `📝 Слово: ${lowerWord}`;
-        if (transcription) {
-            message += `\n🔤 Транскрипция: ${transcription}`;
-        }
-        if (audioUrl) {
-            message += `\n\n🎵 Доступно аудио произношение`;
-        }
+        let message = `📝 Слово: **${lowerWord}**`;
+        if (transcription) message += `\n🔤 Транскрипция: ${transcription}`;
+        if (audioUrl) message += `\n\n🎵 Доступно аудио произношение`;
         if (translations.length > 0) {
             message += `\n\n🎯 Найдено ${translations.length} вариантов перевода`;
         } else {
@@ -1569,20 +1558,19 @@ async function handleAddWord(chatId, englishWord) {
         }
         message += `\n\nВыберите действие:`;
 
+        const keyboard = [];
+        if (audioUrl) {
+            keyboard.push([{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioUrl}` }]);
+        }
+        keyboard.push([{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]);
+
         await bot.sendMessage(chatId, message, {
-            reply_markup: {
-                inline_keyboard: [
-                    audioUrl ? [{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioUrl}` }] : [],
-                    [{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]
-                ].filter(row => row.length > 0)
-            }
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
         });
 
     } catch (error) {
-        await bot.sendMessage(chatId, 
-            '❌ Ошибка при поиске слова\n\n' +
-            'Попробуйте другое слово или повторите позже.'
-        );
+        await bot.sendMessage(chatId, '❌ Ошибка при поиске слова. Попробуйте позже.');
         userStates.delete(chatId);
     }
 }
@@ -2251,6 +2239,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
