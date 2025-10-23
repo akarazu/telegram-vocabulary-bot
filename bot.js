@@ -1445,7 +1445,7 @@ bot.on('message', async (msg) => {
             await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
         }
     }
-        else if (userState?.state === 'waiting_custom_example') {
+    else if (userState?.state === 'waiting_custom_example') {
         if (text && text.trim() !== '') {
             await processCustomTranslation(chatId, userState, userState.customTranslation, text.trim());
         } else {
@@ -1453,63 +1453,62 @@ bot.on('message', async (msg) => {
             await processCustomTranslation(chatId, userState, userState.customTranslation);
         }
     }
-
-    else if (userState?.state === 'waiting_custom_example') {
-        await processCustomTranslation(chatId, userState, userState.customTranslation, text);
-    }
     else if (text === '🔁 Рус→Англ Тренировка') {
-    await startReverseTraining(chatId);
-}
-else if (userState?.state === REVERSE_TRAINING_STATES.ACTIVE) {
-    if (text === '👀 Ответ') {
-        const word = userState.words[userState.index];
-        await showTrainingResult(chatId, userState, word, false);
-        
-        // После показа ответа тоже переходим к следующему слову
-        setTimeout(async () => {
-            userState.index++;
-            userState.lastActivity = Date.now();
+        await startReverseTraining(chatId);
+    }
+    else if (userState?.state === REVERSE_TRAINING_STATES.ACTIVE) {
+        if (text === '👀 Ответ') {
+            const word = userState.words[userState.index];
+            await showTrainingResult(chatId, userState, word, false);
+            
+            // После показа ответа тоже переходим к следующему слову
+            setTimeout(async () => {
+                userState.index++;
+                userState.lastActivity = Date.now();
 
-            if (userState.index >= userState.words.length) {
-                await completeTraining(chatId, userState);
-            } else {
-                await showNextTrainingWord(chatId);
-            }
-        }, 2500);
-    } else if (text === '❌ Завершить') {
-        await completeTraining(chatId, userState);
-    } else {
-        await checkTrainingAnswer(chatId, text);
+                if (userState.index >= userState.words.length) {
+                    await completeTraining(chatId, userState);
+                } else {
+                    await showNextTrainingWord(chatId);
+                }
+            }, 2500);
+        } else if (text === '❌ Завершить') {
+            await completeTraining(chatId, userState);
+        } else {
+            await checkTrainingAnswer(chatId, text);
+        }
     }
-}
-else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
-    if (text === '🔙 Назад') {
-        returnToTraining(chatId, userState);
-    } else {
-        await ccheckTrainingSpellingAnswer(chatId, text);
+    else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
+        if (text === '🔙 Назад') {
+            await returnToTraining(chatId, userState);
+        } else {
+            await checkTrainingSpellingAnswer(chatId, text);
+        }
     }
-} else if (userState?.state === 'waiting_translation') {
-    if (text === '❌ Отмена') {
-        userStates.delete(chatId);
-        await showMainMenu(chatId, '❌ Добавление слова отменено.');
-    } else {
-        await processManualTranslation(chatId, userState, text);
+    else if (userState?.state === 'waiting_translation') {
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление слова отменено.');
+        } else {
+            await processManualTranslation(chatId, userState, text);
+        }
     }
-else if (userState?.state === 'waiting_example') {
-    if (text === '❌ Отмена') {
-        userStates.delete(chatId);
-        await showMainMenu(chatId, '❌ Добавление слова отменено.');
-    } else {
-        await saveWordWithManualInput(chatId, userState, text);
+    else if (userState?.state === 'waiting_example') {
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление слова отменено.');
+        } else {
+            await saveWordWithManualInput(chatId, userState, text);
+        }
     }
-} else if (userState?.state === 'waiting_definition') {
-    if (text === '❌ Отмена') {
-        userStates.delete(chatId);
-        await showMainMenu(chatId, '❌ Добавление слова отменено.');
-    } else {
-        await processManualDefinition(chatId, userState, text);
+    else if (userState?.state === 'waiting_definition') {
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление слова отменено.');
+        } else {
+            await processManualDefinition(chatId, userState, text);
+        }
     }
-}
     else {
         await bot.sendMessage(chatId, 'Выберите действие из меню:', getMainMenu());
     }
@@ -2465,6 +2464,7 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
 
