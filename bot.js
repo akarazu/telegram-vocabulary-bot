@@ -1496,8 +1496,6 @@ else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
 
 // Обработка добавления слова
 async function handleAddWord(chatId, englishWord) {
-    console.log(`🔄 Starting word search for: "${englishWord}"`);
-    
     // Проверка входных данных
     if (!englishWord || typeof englishWord !== 'string') {
         await bot.sendMessage(chatId, '❌ Неверный формат слова. Попробуйте еще раз:');
@@ -1524,12 +1522,9 @@ async function handleAddWord(chatId, englishWord) {
         let meanings = [];
         let translations = [];
 
-        console.log(`📡 Fetching data for: "${lowerWord}"`);
-
         // Последовательные запросы для надежности
         try {
             const cambridgeData = await cambridgeService.getWordData(lowerWord);
-            console.log(`✅ Cambridge data received: ${cambridgeData.meanings?.length || 0} meanings`);
             
             if (cambridgeData.meanings) {
                 meanings = cambridgeData.meanings;
@@ -1539,20 +1534,17 @@ async function handleAddWord(chatId, englishWord) {
                     .filter((t, i, arr) => arr.indexOf(t) === i);
             }
         } catch (cambridgeError) {
-            console.error('❌ Cambridge error:', cambridgeError.message);
             // Продолжаем без Cambridge данных
         }
 
         try {
             const yandexData = await yandexService.getTranscriptionAndAudio(lowerWord);
-            console.log(`✅ Yandex data received`);
             
             if (yandexData) {
                 transcription = yandexData.transcription || '';
                 audioUrl = yandexData.audioUrl || '';
             }
         } catch (yandexError) {
-            console.error('❌ Yandex error:', yandexError.message);
             // Продолжаем без Yandex данных
         }
 
@@ -1560,8 +1552,6 @@ async function handleAddWord(chatId, englishWord) {
         if (!audioUrl) {
             audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
         }
-
-        console.log(`📊 Final data - Meanings: ${meanings.length}, Translations: ${translations.length}, Audio: ${!!audioUrl}`);
 
         // Генерируем уникальный ID для аудио (короткий)
         const audioId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1609,7 +1599,7 @@ async function handleAddWord(chatId, englishWord) {
             keyboardRows.push([
                 { 
                     text: '🔊 Прослушать произношение', 
-                    callback_data: audioId // Короткий ID вместо URL
+                    callback_data: audioId
                 }
             ]);
         }
@@ -1630,11 +1620,7 @@ async function handleAddWord(chatId, englishWord) {
             }
         });
 
-        console.log(`✅ Word search completed successfully for: "${lowerWord}"`);
-
     } catch (error) {
-        console.error('💥 CRITICAL ERROR in handleAddWord:', error);
-        
         let errorMessage = '❌ Произошла ошибка при поиске слова.\n\n';
         
         if (error.message.includes('ETELEGRAM') || error.message.includes('BUTTON_DATA_INVALID')) {
@@ -2367,4 +2353,5 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
