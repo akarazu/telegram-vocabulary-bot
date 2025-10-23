@@ -1496,40 +1496,64 @@ else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
 
 // Обработка добавления слова
 async function handleAddWord(chatId, englishWord) {
-    const lowerWord = englishWord.trim().toLowerCase();
+    console.log(`🔄 Starting word search for: "${englishWord}"`);
+    
+    // Проверка входных данных
+    if (!englishWord || typeof englishWord !== 'string') {
+        await bot.sendMessage(chatId, '❌ Неверный формат слова. Попробуйте еще раз:');
+        return;
+    }
 
+    const lowerWord = englishWord.trim().toLowerCase();
+    
     if (!/^[a-zA-Z\s\-'\.]+$/.test(lowerWord)) {
-        await bot.sendMessage(chatId, '❌ Пожалуйста, введите корректное английское слово:');
+        await bot.sendMessage(chatId, '❌ Это не похоже на английское слово. Введите корректное слово:');
         return;
     }
 
     await bot.sendMessage(chatId, '🔍 Ищу перевод и произношение...');
 
     try {
+        // Гарантируем инициализацию сервисов
+        if (!servicesInitialized) {
+            await initializeServices();
+        }
+
         let transcription = '';
         let audioUrl = '';
         let meanings = [];
         let translations = [];
 
-        // Параллельные запросы с таймаутом
-        const [cambridgeData, yandexData] = await Promise.allSettled([
-            cambridgeService.getWordData(lowerWord),
-            yandexService.getTranscriptionAndAudio(lowerWord)
-        ]);
+        console.log(`📡 Fetching data for: "${lowerWord}"`);
 
-        // Обрабатываем данные Cambridge
-        if (cambridgeData.status === 'fulfilled' && cambridgeData.value.meanings) {
-            meanings = cambridgeData.value.meanings;
-            translations = meanings
-                .map(m => m.translation)
-                .filter(t => t && t.trim() !== '')
-                .filter((t, i, arr) => arr.indexOf(t) === i);
+        // Последовательные запросы вместо параллельных для надежности
+        try {
+            const cambridgeData = await cambridgeService.getWordData(lowerWord);
+            console.log(`✅ Cambridge data received: ${cambridgeData.meanings?.length || 0} meanings`);
+            
+            if (cambridgeData.meanings) {
+                meanings = cambridgeData.meanings;
+                translations = meanings
+                    .map(m => m.translation)
+                    .filter(t => t && t.trim() !== '')
+                    .filter((t, i, arr) => arr.indexOf(t) === i);
+            }
+        } catch (cambridgeError) {
+            console.error('❌ Cambridge error:', cambridgeError.message);
+            // Продолжаем без Cambridge данных
         }
 
-        // Обрабатываем данные Yandex
-        if (yandexData.status === 'fulfilled') {
-            transcription = yandexData.value.transcription || '';
-            audioUrl = yandexData.value.audioUrl || '';
+        try {
+            const yandexData = await yandexService.getTranscriptionAndAudio(lowerWord);
+            console.log(`✅ Yandex data received`);
+            
+            if (yandexData) {
+                transcription = yandexData.transcription || '';
+                audioUrl = yandexData.audioUrl || '';
+            }
+        } catch (yandexError) {
+            console.error('❌ Yandex error:', yandexError.message);
+            // Продолжаем без Yandex данных
         }
 
         // Fallback для аудио
@@ -1537,6 +1561,9 @@ async function handleAddWord(chatId, englishWord) {
             audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
         }
 
+        console.log(`📊 Final data - Meanings: ${meanings.length}, Translations: ${translations.length}, Audio: ${!!audioUrl}`);
+
+        // Сохраняем состояние
         userStates.set(chatId, {
             state: 'showing_transcription',
             tempWord: lowerWord,
@@ -1548,29 +1575,61 @@ async function handleAddWord(chatId, englishWord) {
             lastActivity: Date.now()
         });
 
+        // Формируем сообщение
         let message = `📝 Слово: **${lowerWord}**`;
-        if (transcription) message += `\n🔤 Транскрипция: ${transcription}`;
-        if (audioUrl) message += `\n\n🎵 Доступно аудио произношение`;
+        if (transcription) {
+            message += `\n🔤 Транскрипция: ${transcription}`;
+        }
+        
+        if (audioUrl) {
+            message += `\n\n🎵 Доступно аудио произношение`;
+        }
+        
         if (translations.length > 0) {
             message += `\n\n🎯 Найдено ${translations.length} вариантов перевода`;
         } else {
             message += `\n\n❌ Переводы не найдены\n✏️ Вы можете добавить свой перевод`;
         }
+        
         message += `\n\nВыберите действие:`;
 
-        const keyboard = [];
+        // Формируем клавиатуру
+        const keyboard = {
+            inline_keyboard: []
+        };
+
         if (audioUrl) {
-            keyboard.push([{ text: '🔊 Прослушать произношение', callback_data: `audio_${audioUrl}` }]);
+            keyboard.inline_keyboard.push([
+                { text: '🔊 Прослушать произношение', callback_data: `audio_${audioUrl}` }
+            ]);
         }
-        keyboard.push([{ text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }]);
+        
+        keyboard.inline_keyboard.push([
+            { text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }
+        ]);
 
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: keyboard }
+            reply_markup: keyboard
         });
 
+        console.log(`✅ Word search completed successfully for: "${lowerWord}"`);
+
     } catch (error) {
-        await bot.sendMessage(chatId, '❌ Ошибка при поиске слова. Попробуйте позже.');
+        console.error('💥 CRITICAL ERROR in handleAddWord:', error);
+        
+        await bot.sendMessage(chatId, 
+            '❌ Произошла ошибка при поиске слова.\n\n' +
+            'Возможные причины:\n' +
+            '• Проблемы с интернет-соединением\n' + 
+            '• Слово не найдено в словарях\n' +
+            '• Временные неполадки сервиса\n\n' +
+            'Попробуйте:\n' +
+            '• Проверить написание слова\n' +
+            '• Попробовать позже\n' +
+            '• Добавить перевод вручную'
+        );
+        
         userStates.delete(chatId);
     }
 }
@@ -2239,6 +2298,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
