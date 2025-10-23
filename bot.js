@@ -1488,6 +1488,27 @@ else if (userState?.state === REVERSE_TRAINING_STATES.SPELLING) {
     } else {
         await ccheckTrainingSpellingAnswer(chatId, text);
     }
+} else if (userState?.state === 'waiting_translation') {
+    if (text === '❌ Отмена') {
+        userStates.delete(chatId);
+        await showMainMenu(chatId, '❌ Добавление слова отменено.');
+    } else {
+        await processManualTranslation(chatId, userState, text);
+    }
+else if (userState?.state === 'waiting_example') {
+    if (text === '❌ Отмена') {
+        userStates.delete(chatId);
+        await showMainMenu(chatId, '❌ Добавление слова отменено.');
+    } else {
+        await saveWordWithManualInput(chatId, userState, text);
+    }
+} else if (userState?.state === 'waiting_definition') {
+    if (text === '❌ Отмена') {
+        userStates.delete(chatId);
+        await showMainMenu(chatId, '❌ Добавление слова отменено.');
+    } else {
+        await processManualDefinition(chatId, userState, text);
+    }
 }
     else {
         await bot.sendMessage(chatId, 'Выберите действие из меню:', getMainMenu());
@@ -1553,94 +1574,62 @@ async function handleAddWord(chatId, englishWord) {
             audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
         }
 
-        // Генерируем уникальный ID для аудио (короткий)
-        const audioId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Сохраняем аудио URL в кэше с коротким ID
-        audioCache.set(audioId, {
-            url: audioUrl,
-            timestamp: Date.now(),
-            word: lowerWord
-        });
-
         // Сохраняем состояние
         userStates.set(chatId, {
-            state: 'showing_transcription',
+            state: 'waiting_translation', // Изменено состояние
             tempWord: lowerWord,
             tempTranscription: transcription,
             tempAudioUrl: audioUrl,
-            tempAudioId: audioId,
-            tempTranslations: translations,
             meanings: meanings,
+            tempTranslations: translations,
             selectedTranslationIndices: [],
             lastActivity: Date.now()
         });
 
-        // Формируем сообщение
-        let message = `📝 **${lowerWord}**`;
+        // Формируем сообщение с запросом перевода
+        let message = `📝 Слово: **${lowerWord}**`;
         
         if (transcription) {
-            message += `\n🔤 *${transcription}*`;
+            message += `\n🔤 Транскрипция: *${transcription}*`;
         }
         
-        message += `\n\n`;
-
-        if (translations.length > 0) {
-            message += `🎯 *Найдено ${translations.length} вариантов перевода*`;
-        } else {
-            message += `❌ *Переводы не найдены*`;
-            message += `\n✏️ Вы можете добавить свой перевод`;
-        }
-
-        // Формируем клавиатуру с КОРОТКИМ audioId вместо полного URL
-        const keyboardRows = [];
-
-        if (audioUrl) {
-            keyboardRows.push([
-                { 
-                    text: '🔊 Прослушать произношение', 
-                    callback_data: audioId
-                }
-            ]);
-        }
-        
-        keyboardRows.push([
-            { text: '➡️ Выбрать перевод', callback_data: 'enter_translation' }
-        ]);
-
-        // Добавляем кнопку отмены
-        keyboardRows.push([
-            { text: '❌ Отмена', callback_data: 'cancel_translation' }
-        ]);
+        message += `\n\n📝 Теперь введите перевод на русский язык:`;
 
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
             reply_markup: {
-                inline_keyboard: keyboardRows
+                keyboard: [['❌ Отмена']],
+                resize_keyboard: true
             }
         });
 
     } catch (error) {
         let errorMessage = '❌ Произошла ошибка при поиске слова.\n\n';
+        errorMessage += 'Попробуйте:\n';
+        errorMessage += '• Проверить написание слова\n';
+        errorMessage += '• Попробовать позже\n';
+        errorMessage += '• Ввести перевод вручную\n\n';
+        errorMessage += '📝 Введите перевод на русский язык:';
         
-        if (error.message.includes('ETELEGRAM') || error.message.includes('BUTTON_DATA_INVALID')) {
-            errorMessage += '⚠️ *Проблема с кнопками интерфейса*\n';
-            errorMessage += 'Попробуйте начать заново с команды /start';
-        } else {
-            errorMessage += 'Возможные причины:\n';
-            errorMessage += '• Проблемы с интернет-соединением\n';
-            errorMessage += '• Слово не найдено в словарях\n';
-            errorMessage += '• Временные неполадки сервиса\n\n';
-            errorMessage += 'Попробуйте:\n';
-            errorMessage += '• Проверить написание слова\n';
-            errorMessage += '• Попробовать позже\n';
-            errorMessage += '• Добавить перевод вручную';
-        }
-        
-        await bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
-        
-        // Очищаем состояние пользователя
-        userStates.delete(chatId);
+        // Сохраняем состояние для ручного ввода
+        userStates.set(chatId, {
+            state: 'waiting_translation',
+            tempWord: lowerWord,
+            tempTranscription: '',
+            tempAudioUrl: '',
+            meanings: [],
+            tempTranslations: [],
+            selectedTranslationIndices: [],
+            lastActivity: Date.now()
+        });
+
+        await bot.sendMessage(chatId, errorMessage, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['❌ Отмена']],
+                resize_keyboard: true
+            }
+        });
     }
 }
 
@@ -2343,6 +2332,129 @@ async function preloadAudioForWords(words) {
     Promise.allSettled(audioPromises);
 }
 
+async function processManualTranslation(chatId, userState, translation) {
+    if (!translation || translation.trim() === '') {
+        await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+        return;
+    }
+
+    // Сохраняем перевод
+    const newTranslation = translation.trim();
+    
+    // Переходим к следующему шагу - запросу значения (определения)
+    userStates.set(chatId, {
+        ...userState,
+        state: 'waiting_definition',
+        tempTranslation: newTranslation,
+        lastActivity: Date.now()
+    });
+
+    await bot.sendMessage(chatId, 
+        `✅ Перевод "${newTranslation}" сохранен.\n\n` +
+        `📖 Введите значение на английском (определение) или отправьте "-" чтобы пропустить:`,
+        {
+            reply_markup: {
+                keyboard: [['-', '❌ Отмена']],
+                resize_keyboard: true
+            }
+        }
+    );
+}
+
+async function saveWordWithManualInput(chatId, userState, example = '') {
+    try {
+        // Проверка дубликатов
+        const existingWords = await getCachedUserWords(chatId);
+        const isDuplicate = existingWords.some(word => 
+            word.english.toLowerCase() === userState.tempWord.toLowerCase()
+        );
+        
+        if (isDuplicate) {
+            await showMainMenu(chatId, 
+                `❌ Слово "${userState.tempWord}" уже есть в вашем словаре!\n\n` +
+                'Каждое английское слово может быть добавлено только один раз.'
+            );
+            userStates.delete(chatId);
+            return;
+        }
+
+        // Подготовка данных для сохранения
+        const meaningsData = [{
+            translation: userState.tempTranslation,
+            example: example === '-' ? '' : example,
+            partOfSpeech: '',
+            definition: userState.tempDefinition || ''
+        }];
+
+        // Создаем FSRS карточку для нового слова
+        const fsrsCard = fsrsService.createNewCard();
+        
+        const success = await sheetsService.addWordWithMeanings(
+            chatId,
+            userState.tempWord,
+            userState.tempTranscription || '',
+            userState.tempAudioUrl || '',
+            meaningsData
+        );
+
+        userStates.delete(chatId);
+
+        if (success) {
+            const transcriptionText = userState.tempTranscription ? ` [${userState.tempTranscription}]` : '';
+            let successMessage = '✅ Слово добавлено в словарь!\n\n' +
+                `💬 **${userState.tempWord}**${transcriptionText}\n` +
+                `📝 **Перевод:** ${userState.tempTranslation}`;
+            
+            if (userState.tempDefinition) {
+                successMessage += `\n📖 **Значение:** ${userState.tempDefinition}`;
+            }
+            
+            if (example && example !== '-') {
+                successMessage += `\n📚 **Пример:** ${example}`;
+            }
+            
+            successMessage += '\n\n📚 Теперь вы можете изучать слово в разделе "🆕 Новые слова"!';
+            await showMainMenu(chatId, successMessage);
+        } else {
+            await showMainMenu(chatId, 
+                '❌ Ошибка сохранения\n\n' +
+                'Не удалось сохранить слово в словарь. Попробуйте еще раз.'
+            );
+        }
+
+    } catch (error) {
+        await showMainMenu(chatId, 
+            '❌ Ошибка при сохранении слова.\n\n' +
+            'Попробуйте еще раз.'
+        );
+        userStates.delete(chatId);
+    }
+}
+
+async function processManualDefinition(chatId, userState, definition) {
+    // Сохраняем определение
+    const newDefinition = definition.trim();
+    
+    // Переходим к следующему шагу - запросу примера
+    userStates.set(chatId, {
+        ...userState,
+        state: 'waiting_example',
+        tempDefinition: newDefinition === '-' ? '' : newDefinition,
+        lastActivity: Date.now()
+    });
+
+    await bot.sendMessage(chatId, 
+        `✅ Определение сохранено.\n\n` +
+        `💡 Теперь введите пример использования (или отправьте "-" чтобы пропустить):`,
+        {
+            reply_markup: {
+                keyboard: [['-', '❌ Отмена']],
+                resize_keyboard: true
+            }
+        }
+    );
+}
+
 // Запуск периодических задач
 setInterval(() => {
     resetDailyLimit();
@@ -2353,5 +2465,6 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
