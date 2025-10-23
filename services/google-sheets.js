@@ -267,6 +267,77 @@ export class GoogleSheetsService {
         ).length;
     }
 
+    async updateReverseCardProgress(chatId, englishWord, fsrsResult, rating) {
+    try {
+        const doc = await this.getDoc();
+        const sheet = doc.sheetsByTitle[this.sheetName];
+        
+        // Находим строку с словом
+        const rows = await sheet.getRows();
+        const rowIndex = rows.findIndex(row => 
+            row.get('UserID') == chatId && 
+            row.get('English').toLowerCase() === englishWord.toLowerCase()
+        );
+        
+        if (rowIndex !== -1) {
+            const row = rows[rowIndex];
+            
+            // Сохраняем данные обратной карточки
+            row.set('ReverseDue', fsrsResult.due.toISOString());
+            row.set('ReverseStability', fsrsResult.stability);
+            row.set('ReverseDifficulty', fsrsResult.difficulty);
+            row.set('ReverseInterval', fsrsResult.interval);
+            row.set('ReverseLastReview', new Date().toISOString());
+            row.set('ReverseReps', (parseInt(row.get('ReverseReps') || 0) + 1));
+            
+            if (rating === 'again') {
+                row.set('ReverseLapses', (parseInt(row.get('ReverseLapses') || 0) + 1));
+            }
+            
+            await row.save();
+            return true;
+        }
+        
+        return false;
+    } catch (error) {
+        console.error('Error updating reverse card:', error);
+        return false;
+    }
+},
+
+async getReverseCardData(chatId, englishWord) {
+    try {
+        const doc = await this.getDoc();
+        const sheet = doc.sheetsByTitle[this.sheetName];
+        const rows = await sheet.getRows();
+        
+        const row = rows.find(r => 
+            r.get('UserID') == chatId && 
+            r.get('English').toLowerCase() === englishWord.toLowerCase()
+        );
+        
+        if (row && row.get('ReverseDue')) {
+            return {
+                due: new Date(row.get('ReverseDue')),
+                stability: parseFloat(row.get('ReverseStability')) || 0.1,
+                difficulty: parseFloat(row.get('ReverseDifficulty')) || 6.0,
+                interval: parseFloat(row.get('ReverseInterval')) || 1,
+                elapsed_days: 0,
+                scheduled_days: 1,
+                reps: parseInt(row.get('ReverseReps')) || 0,
+                lapses: parseInt(row.get('ReverseLapses')) || 0,
+                state: 1,
+                last_review: new Date(row.get('ReverseLastReview') || new Date())
+            };
+        }
+        
+        return null;
+    } catch (error) {
+        console.error('Error getting reverse card data:', error);
+        return null;
+    }
+}
+
     getCredentialsFromEnv() {
         try {
             if (process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS) {
@@ -292,3 +363,4 @@ export class GoogleSheetsService {
 
 export const sheetsService = new GoogleSheetsService();
 sheetsService.startCacheCleanup();
+
