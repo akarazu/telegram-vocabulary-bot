@@ -340,28 +340,32 @@ async function showMainMenu(chatId, text = '') {
 async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
     let success = true;
     
-    if (servicesInitialized && sheetsService.initialized) {
-        try {
-            const existingWords = await getCachedUserWords(chatId);
-            const isDuplicate = existingWords.some(word => 
-                word.english.toLowerCase() === userState.tempWord.toLowerCase()
+    if (!servicesInitialized || !sheetsService.initialized) {
+        await showMainMenu(chatId, '❌ Сервис временно недоступен. Попробуйте позже.');
+        userStates.delete(chatId);
+        return;
+    }
+
+    try {
+        // Проверка дубликатов
+        const existingWords = await getCachedUserWords(chatId);
+        const isDuplicate = existingWords.some(word => 
+            word.english.toLowerCase() === userState.tempWord.toLowerCase()
+        );
+        
+        if (isDuplicate) {
+            await showMainMenu(chatId, 
+                `❌ Слово "${userState.tempWord}" уже есть в вашем словаре!\n\n` +
+                'Каждое английское слово может быть добавлено только один раз.'
             );
-            
-            if (isDuplicate) {
-                await showMainMenu(chatId, 
-                    `❌ Слово "${userState.tempWord}" уже есть в вашем словаре!\n\n` +
-                    'Каждое английское слово может быть добавлено только один раз.'
-                );
-                userStates.delete(chatId);
-                return;
-            }
-        } catch (error) {
-            // Продолжаем даже при ошибке проверки дубликатов
+            userStates.delete(chatId);
+            return;
         }
 
+        // Подготовка данных для сохранения
         const meaningsData = [];
         selectedTranslations.forEach(translation => {
-            const cambridgeMeanings = userState.meanings.filter(
+            const cambridgeMeanings = (userState.meanings || []).filter(
                 meaning => meaning.translation === translation
             );
             
@@ -390,10 +394,14 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
         success = await sheetsService.addWordWithMeanings(
             chatId,
             userState.tempWord,
-            userState.tempTranscription,
-            userState.tempAudioUrl,
+            userState.tempTranscription || '',
+            userState.tempAudioUrl || '',
             meaningsData
         );
+
+    } catch (error) {
+        console.error('Error saving word:', error);
+        success = false;
     }
 
     userStates.delete(chatId);
@@ -420,25 +428,29 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
 
 // Функции для ручного добавления перевода
 async function processCustomTranslation(chatId, userState, translation, example = '') {
-    const newTranslations = [translation, ...userState.tempTranslations];
+    if (!translation || translation.trim() === '') {
+        await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+        return;
+    }
+
+    const newTranslations = [translation, ...(userState.tempTranslations || [])];
     const newMeaning = {
         translation: translation,
         englishDefinition: '',
-        examples: example ? [{ english: example, russian: '' }] : []
+        examples: example ? [{ english: example, russian: '' }] : [],
+        partOfSpeech: ''
     };
-    const newMeanings = [newMeaning, ...userState.meanings];
+    const newMeanings = [newMeaning, ...(userState.meanings || [])];
     
-userStates.set(chatId, {
-    state: 'review_session',
-    reviewWords: wordsToReview,
-    originalWordsCount: wordsToReview.length,
-    currentReviewIndex: 0,
-    reviewedCount: 0,
-    lastActivity: Date.now()
-});
-
-    preloadAudioForWords(wordsToReview);
-    await showNextReviewWord(chatId);
+    // Сохраняем контекст добавления слова
+    userStates.set(chatId, {
+        ...userState,
+        state: 'choosing_translation',
+        tempTranslations: newTranslations,
+        meanings: newMeanings,
+        selectedTranslationIndices: [0], // автоматически выбираем пользовательский перевод
+        lastActivity: Date.now()
+    });
 
     let message = `✅ Ваш перевод "${translation}" добавлен!\n\n`;
     if (example) message += `📝 Пример: ${example}\n\n`;
@@ -1433,8 +1445,21 @@ bot.on('message', async (msg) => {
         }
     }
     else if (userState?.state === 'waiting_custom_translation') {
-        await processCustomTranslation(chatId, userState, text);
+        if (text && text.trim() !== '') {
+            await processCustomTranslation(chatId, userState, text.trim());
+        } else {
+            await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
+        }
     }
+        else if (userState?.state === 'waiting_custom_example') {
+        if (text && text.trim() !== '') {
+            await processCustomTranslation(chatId, userState, userState.customTranslation, text.trim());
+        } else {
+            // Если пример пустой, сохраняем без примера
+            await processCustomTranslation(chatId, userState, userState.customTranslation);
+        }
+    }
+
     else if (userState?.state === 'waiting_custom_example') {
         await processCustomTranslation(chatId, userState, userState.customTranslation, text);
     }
@@ -1485,6 +1510,11 @@ async function handleAddWord(chatId, englishWord) {
             'Пожалуйста, введите слово на английском:'
         );
         return;
+
+        if (!englishWord || englishWord.trim() === '') {
+    await bot.sendMessage(chatId, '❌ Слово не может быть пустым. Введите английское слово:');
+    return;
+}
     }
 
     await bot.sendMessage(chatId, '🔍 Ищу перевод, транскрипцию и произношение...');
@@ -2221,6 +2251,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
