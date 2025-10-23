@@ -1529,7 +1529,7 @@ async function handleAddWord(chatId, englishWord) {
         return;
     }
 
-    await bot.sendMessage(chatId, '🔍 Ищу перевод и произношение...');
+    await bot.sendMessage(chatId, '🔍 Ищу перевод в Cambridge Dictionary...');
 
     try {
         // Гарантируем инициализацию сервисов
@@ -1542,40 +1542,59 @@ async function handleAddWord(chatId, englishWord) {
         let meanings = [];
         let translations = [];
 
-        // Последовательные запросы для надежности
+        // ПЕРВЫЙ ПРИОРИТЕТ: Cambridge Dictionary для переводов
         try {
             const cambridgeData = await cambridgeService.getWordData(lowerWord);
             
-            if (cambridgeData.meanings) {
+            if (cambridgeData.meanings && cambridgeData.meanings.length > 0) {
                 meanings = cambridgeData.meanings;
                 translations = meanings
                     .map(m => m.translation)
                     .filter(t => t && t.trim() !== '')
                     .filter((t, i, arr) => arr.indexOf(t) === i);
+                
+                if (translations.length > 0) {
+                    await bot.sendMessage(chatId, '✅ Перевод найден в Cambridge Dictionary!');
+                } else {
+                    await bot.sendMessage(chatId, '❌ Переводы не найдены в Cambridge Dictionary');
+                }
+            } else {
+                await bot.sendMessage(chatId, '❌ Слово не найдено в Cambridge Dictionary');
             }
         } catch (cambridgeError) {
-            // Продолжаем без Cambridge данных
+            console.log('Cambridge Dictionary не доступен:', cambridgeError);
+            await bot.sendMessage(chatId, '❌ Cambridge Dictionary не доступен');
         }
 
+        // ВТОРОЙ ЭТАП: Yandex для транскрипции и аудио (всегда пробуем, независимо от результатов Cambridge)
+        await bot.sendMessage(chatId, '🎵 Ищу транскрипцию и произношение...');
+        
         try {
             const yandexData = await yandexService.getTranscriptionAndAudio(lowerWord);
             
             if (yandexData) {
                 transcription = yandexData.transcription || '';
                 audioUrl = yandexData.audioUrl || '';
+                
+                if (transcription || audioUrl) {
+                    await bot.sendMessage(chatId, '✅ Транскрипция и аудио найдены!');
+                } else {
+                    await bot.sendMessage(chatId, '❌ Транскрипция и аудио не найдены');
+                }
             }
         } catch (yandexError) {
-            // Продолжаем без Yandex данных
+            console.log('Yandex audio service не доступен:', yandexError);
+            await bot.sendMessage(chatId, '❌ Сервис произношения не доступен');
         }
 
-        // Fallback для аудио
+        // Fallback для аудио (если Yandex не сработал)
         if (!audioUrl) {
             audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(lowerWord)}&tl=en-gb&client=tw-ob`;
         }
 
         // Сохраняем состояние
         userStates.set(chatId, {
-            state: 'waiting_translation', // Изменено состояние
+            state: 'waiting_translation',
             tempWord: lowerWord,
             tempTranscription: transcription,
             tempAudioUrl: audioUrl,
@@ -1585,14 +1604,25 @@ async function handleAddWord(chatId, englishWord) {
             lastActivity: Date.now()
         });
 
-        // Формируем сообщение с запросом перевода
-        let message = `📝 Слово: **${lowerWord}**`;
+        // Формируем итоговое сообщение с результатами
+        let message = `📋 **Результаты поиска:**\n\n`;
+        message += `🇬🇧 Слово: **${lowerWord}**\n`;
         
         if (transcription) {
-            message += `\n🔤 Транскрипция: *${transcription}*`;
+            message += `🔤 Транскрипция: *${transcription}*\n`;
         }
         
-        message += `\n\n📝 Теперь введите перевод на русский язык:`;
+        if (translations.length > 0) {
+            message += `\n✅ Найдено переводов: ${translations.length}\n`;
+            message += `📚 Источник: Cambridge Dictionary\n\n`;
+            message += `💡 Вы можете:\n`;
+            message += `• Использовать найденные переводы\n`;
+            message += `• Добавить свой вариант перевода\n\n`;
+            message += `📝 Введите или выберите перевод:`;
+        } else {
+            message += `\n❌ Переводы не найдены\n`;
+            message += `💡 Введите перевод вручную:`;
+        }
 
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
@@ -1603,12 +1633,10 @@ async function handleAddWord(chatId, englishWord) {
         });
 
     } catch (error) {
+        console.error('Общая ошибка при поиске слова:', error);
+        
         let errorMessage = '❌ Произошла ошибка при поиске слова.\n\n';
-        errorMessage += 'Попробуйте:\n';
-        errorMessage += '• Проверить написание слова\n';
-        errorMessage += '• Попробовать позже\n';
-        errorMessage += '• Ввести перевод вручную\n\n';
-        errorMessage += '📝 Введите перевод на русский язык:';
+        errorMessage += '📝 Введите перевод на русский язык вручную:';
         
         // Сохраняем состояние для ручного ввода
         userStates.set(chatId, {
@@ -1631,7 +1659,6 @@ async function handleAddWord(chatId, englishWord) {
         });
     }
 }
-
 // Обработчики callback
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
@@ -2464,6 +2491,7 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
 
