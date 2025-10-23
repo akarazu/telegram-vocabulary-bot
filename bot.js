@@ -25,9 +25,9 @@ async function initializeServices() {
     if (servicesInitialized) return true;
     
     try {
-        sheetsService = new GoogleSheetsService();
-        yandexService = getYandexDictionaryService();
-        cambridgeService = getCambridgeService();
+sheetsService = new GoogleSheetsService();
+        yandexService = new YandexDictionaryService(); // Используем new вместо функции
+        cambridgeService = new CambridgeDictionaryService(); // Используем new вместо функции
         fsrsService = new FSRSService();
         
         // Быстрая инициализация Google Sheets
@@ -55,8 +55,8 @@ async function initializeServices() {
             addWordWithMeanings: async () => false,
             updateWordAfterFSRSReview: async () => false
         };
-        yandexService = getYandexDictionaryService();
-        cambridgeService = getCambridgeService();
+        yandexService = new YandexDictionaryService();
+        cambridgeService = new CambridgeDictionaryService();
         fsrsService = new FSRSService();
         servicesInitialized = true;
         return false;
@@ -2239,6 +2239,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 console.log('🤖 Бот запущен: оптимизированная версия с тренажером правописания');
+
 
 
 
