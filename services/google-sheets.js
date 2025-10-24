@@ -6,10 +6,10 @@ export class GoogleSheetsService {
         this.sheets = null;
         this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
         
-        // ОПТИМИЗАЦИЯ: Минимальный кеш
+        // ОПТИМИЗАЦИЯ: Улучшенный кеш с принудительным обновлением
         this.cache = new Map();
-        this.CACHE_TTL = 5 * 60 * 1000;
-        this.MAX_CACHE_SIZE = 40;
+        this.CACHE_TTL = 2 * 60 * 1000; // Уменьшено до 2 минут
+        this.MAX_CACHE_SIZE = 100;
 
         if (!this.spreadsheetId) console.error('❌ GOOGLE_SHEET_ID not set');
         this.init();
@@ -87,8 +87,13 @@ export class GoogleSheetsService {
         }
     }
 
-    // ОПТИМИЗАЦИЯ: Упрощенный кеш
-    async getCachedData(cacheKey, fetchFn) {
+    // ✅ ИСПРАВЛЕНО: Улучшенный кеш с принудительным обновлением
+    async getCachedData(cacheKey, fetchFn, forceRefresh = false) {
+        // Принудительное обновление для критических операций
+        if (forceRefresh) {
+            this.cache.delete(cacheKey);
+        }
+        
         const cached = this.cache.get(cacheKey);
         if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
             return cached.data;
@@ -105,29 +110,37 @@ export class GoogleSheetsService {
         return data;
     }
 
-    // ОПТИМИЗАЦИЯ: Автоочистка кеша
+    // ✅ ИСПРАВЛЕНО: Автоочистка кеша с логированием
     startCacheCleanup() {
         setInterval(() => {
             const now = Date.now();
+            let cleanedCount = 0;
+            
             for (const [key, val] of this.cache.entries()) {
                 if (now - val.timestamp > this.CACHE_TTL) {
                     this.cache.delete(key);
+                    cleanedCount++;
                 }
             }
-        }, 5 * 60 * 1000);
+            
+            if (cleanedCount > 0) {
+                console.log(`🧹 Auto-cleaned ${cleanedCount} cache entries`);
+            }
+        }, this.CACHE_TTL);
     }
 
-    // ОПТИМИЗАЦИЯ: Обновление слова с сохранением ВСЕХ полей FSRS
+    // ✅ ИСПРАВЛЕНО: Обновление слова с улучшенной очисткой кеша
     async updateWordAfterFSRSReview(userId, english, fsrsCard, rating) {
         if (!this.initialized) return false;
         try {
-            const words = await this.getUserWords(userId);
+            // Используем принудительное обновление для получения актуальных данных
+            const words = await this.getUserWords(userId, true);
             const word = words.find(w => w.english.toLowerCase() === english.toLowerCase());
             if (!word) return false;
 
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Words!A:V' // Обновлено до V для новых столбцов
+                range: 'Words!A:V'
             });
 
             const rows = response.data.values || [];
@@ -179,10 +192,11 @@ export class GoogleSheetsService {
                 }
             });
 
-            this.cache.delete(`words_${userId}`);
-            this.cache.delete(`review_${userId}`);
+            // ✅ УСИЛЕННАЯ ОЧИСТКА КЕША ПОСЛЕ ОБНОВЛЕНИЯ
+            this.clearUserCache(userId);
             return true;
         } catch (e) {
+            console.error('Error updating word:', e);
             return false;
         }
     }
@@ -191,7 +205,7 @@ export class GoogleSheetsService {
     async updateReverseCardProgress(chatId, englishWord, fsrsResult, rating) {
         if (!this.initialized) return false;
         try {
-            const words = await this.getUserWords(chatId);
+            const words = await this.getUserWords(chatId, true); // Принудительное обновление
             const word = words.find(w => w.english.toLowerCase() === englishWord.toLowerCase());
             if (!word) return false;
 
@@ -245,7 +259,7 @@ export class GoogleSheetsService {
                 }
             });
 
-            this.cache.delete(`words_${chatId}`);
+            this.clearUserCache(chatId);
             console.log(`✅ Reverse card updated for: ${englishWord}`);
             return true;
         } catch (error) {
@@ -341,8 +355,8 @@ export class GoogleSheetsService {
         }
     }
 
-    // ОПТИМИЗАЦИЯ: Чтение слов с извлечением данных FSRS
-    async getUserWords(userId) {
+    // ✅ ИСПРАВЛЕНО: Чтение слов с принудительным обновлением кеша
+    async getUserWords(userId, forceRefresh = false) {
         if (!this.initialized) return [];
         const cacheKey = `words_${userId}`;
         
@@ -350,7 +364,7 @@ export class GoogleSheetsService {
             try {
                 const response = await this.sheets.spreadsheets.values.get({
                     spreadsheetId: this.spreadsheetId,
-                    range: 'Words!A:V' // Обновлено до V для новых столбцов
+                    range: 'Words!A:V'
                 });
 
                 const rows = response.data.values || [];
@@ -392,12 +406,13 @@ export class GoogleSheetsService {
                         };
                     });
             } catch (e) {
+                console.error('Error fetching user words:', e);
                 return [];
             }
-        });
+        }, forceRefresh);
     }
 
-    // Остальные методы остаются без изменений, но с оптимизацией памяти
+    // ✅ ИСПРАВЛЕНО: Добавление слова с усиленной очисткой кеша
     async addWordWithMeanings(userId, english, transcription, audioUrl, meanings) {
         if (!this.initialized) return false;
         try {
@@ -431,15 +446,19 @@ export class GoogleSheetsService {
                 }
             });
 
-            this.cache.delete(`words_${userId}`);
+            // ✅ УСИЛЕННАЯ ОЧИСТКА КЕША
+            this.clearUserCache(userId);
+            console.log(`✅ Word added: ${english} for user ${userId}`);
             return true;
         } catch (e) {
+            console.error('Error adding word:', e);
             return false;
         }
     }
 
+    // ✅ ИСПРАВЛЕНО: Получение слов для повторения с принудительным обновлением
     async getWordsForReview(userId) {
-        const words = await this.getUserWords(userId);
+        const words = await this.getUserWords(userId, true); // forceRefresh = true
         const now = new Date();
         
         return words.filter(w => {
@@ -464,18 +483,57 @@ export class GoogleSheetsService {
         });
     }
     
+    // ✅ ИСПРАВЛЕНО: Получение количества слов для повторения
     async getReviewWordsCount(userId) {
         const reviewWords = await this.getWordsForReview(userId);
         return reviewWords.length;
     }
 
+    // ✅ ИСПРАВЛЕНО: Получение количества новых слов с ПРИНУДИТЕЛЬНЫМ обновлением
     async getNewWordsCount(userId) {
-        const words = await this.getUserWords(userId);
+        const words = await this.getUserWords(userId, true); // forceRefresh = true
         return words.filter(w => 
             w.status === 'active' && 
             w.interval === 1 &&
             (!w.firstLearnedDate || w.firstLearnedDate.trim() === '')
         ).length;
+    }
+
+    // ✅ ДОБАВЛЕНО: Получение сегодняшних новых слов (для точной проверки лимита)
+    async getTodaysNewWords(userId) {
+        const words = await this.getUserWords(userId, true); // forceRefresh = true
+        const today = new Date().toDateString();
+        
+        return words.filter(w => {
+            if (w.status !== 'active' || w.interval !== 1) return false;
+            
+            // Проверяем, было ли слово изучено сегодня
+            if (w.firstLearnedDate && w.firstLearnedDate.trim() !== '') {
+                const learnedDate = new Date(w.firstLearnedDate).toDateString();
+                return learnedDate === today;
+            }
+            
+            // Если firstLearnedDate нет, проверяем createdDate
+            if (w.createdDate) {
+                const createdDate = new Date(w.createdDate).toDateString();
+                return createdDate === today;
+            }
+            
+            return false;
+        });
+    }
+
+    // ✅ ДОБАВЛЕНО: Метод для полной очистки кеша пользователя
+    clearUserCache(userId) {
+        const prefix = `words_${userId}`;
+        const reviewPrefix = `review_${userId}`;
+        
+        for (const key of this.cache.keys()) {
+            if (key.startsWith(prefix) || key.startsWith(reviewPrefix)) {
+                this.cache.delete(key);
+            }
+        }
+        console.log(`🧹 Cache cleared for user ${userId}`);
     }
 
     getCredentialsFromEnv() {
