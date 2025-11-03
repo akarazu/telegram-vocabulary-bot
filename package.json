@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
@@ -12,10 +13,7 @@
     "openai": "^4.0.0",
     "cheerio": "^1.0.0-rc.12",
     "ts-fsrs": "^3.3.0"
-  },
-    "scripts": {
-    "start": "node your-main-file.js",
-    "dev": "nodemon your-main-file.js"
   }
 }
+
 
