@@ -476,6 +476,7 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
 
 // Функции для ручного добавления перевода
 async function processCustomTranslation(chatId, userState, translation, example = '') {
+    await processCustomTranslationWithDetails(chatId, userState, translation, '', example);
     if (!translation || translation.trim() === '') {
         await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
         return;
@@ -484,7 +485,7 @@ async function processCustomTranslation(chatId, userState, translation, example 
     const newTranslations = [translation, ...(userState.tempTranslations || [])];
     const newMeaning = {
         translation: translation,
-        englishDefinition: '',
+        englishDefinition: definition,
         examples: example ? [{ english: example, russian: '' }] : [],
         partOfSpeech: ''
     };
@@ -500,9 +501,19 @@ async function processCustomTranslation(chatId, userState, translation, example 
         lastActivity: Date.now()
     });
 
-    let message = `✅ Ваш перевод "${translation}" добавлен!\n\n`;
-    if (example) message += `📝 Пример: ${example}\n\n`;
-    message += '🎯 Теперь выберите переводы для сохранения:';
+    let message = `✅ **Ваш перевод добавлен!**\n\n`;
+    message += `🇬🇧 Слово: **${userState.tempWord}**\n`;
+    message += `🇷🇺 Перевод: **${translation}**\n`;
+    
+    if (definition) {
+        message += `📖 Определение: ${definition}\n`;
+    }
+    
+    if (example) {
+        message += `💡 Пример: ${example}\n`;
+    }
+    
+    message += `\n🎯 Теперь выберите переводы для сохранения:`;
     
     await bot.sendMessage(chatId, message, 
         getTranslationSelectionKeyboard(newTranslations, newMeanings, [0])
@@ -1458,18 +1469,63 @@ bot.on('message', async (msg) => {
         }
     }
     else if (userState?.state === 'waiting_custom_translation') {
-        if (text && text.trim() !== '') {
-            await processCustomTranslation(chatId, userState, text.trim());
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление перевода отменено.');
+        } else if (text && text.trim() !== '') {
+            // Сохраняем перевод и запрашиваем определение
+            userStates.set(chatId, {
+                ...userState,
+                state: 'waiting_custom_definition',
+                customTranslation: text.trim()
+            });
+
+            await bot.sendMessage(chatId, 
+                `✅ Перевод "${text.trim()}" сохранен.\n\n` +
+                `📖 Введите значение на английском (определение) или отправьте "-" чтобы пропустить:`,
+                {
+                    reply_markup: {
+                        keyboard: [['-', '❌ Отмена']],
+                        resize_keyboard: true
+                    }
+                }
+            );
         } else {
             await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
         }
     }
     else if (userState?.state === 'waiting_custom_example') {
-        if (text && text.trim() !== '') {
-            await processCustomTranslation(chatId, userState, userState.customTranslation, text.trim());
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление перевода отменено.');
         } else {
-            // Если пример пустой, сохраняем без примера
-            await processCustomTranslation(chatId, userState, userState.customTranslation);
+            // Сохраняем пример и завершаем процесс
+            const example = text === '-' ? '' : text.trim();
+            await processCustomTranslationWithDetails(chatId, userState, userState.customTranslation, userState.customDefinition, example);
+        }
+    }
+          else if (userState?.state === 'waiting_custom_definition') {
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление перевода отменено.');
+        } else {
+            // Сохраняем определение и запрашиваем пример
+            userStates.set(chatId, {
+                ...userState,
+                state: 'waiting_custom_example',
+                customDefinition: text === '-' ? '' : text.trim()
+            });
+
+            await bot.sendMessage(chatId, 
+                `✅ Определение сохранено.\n\n` +
+                `💡 Теперь введите пример использования (или отправьте "-" чтобы пропустить):`,
+                {
+                    reply_markup: {
+                        keyboard: [['-', '❌ Отмена']],
+                        resize_keyboard: true
+                    }
+                }
+            );
         }
     }
     else if (text === '🔁 Рус→Англ Тренировка') {
@@ -1804,29 +1860,35 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     // Пользовательский перевод
-    else if (data === 'custom_translation') {
-        if (userState?.state === 'choosing_translation') {
-            try {
-                userStates.set(chatId, {
-                    ...userState,
-                    state: 'waiting_custom_translation'
-                });
+else if (data === 'custom_translation') {
+    if (userState?.state === 'choosing_translation') {
+        try {
+            userStates.set(chatId, {
+                ...userState,
+                state: 'waiting_custom_translation'
+            });
 
-                let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
-                    `🇬🇧 Слово: **${userState.tempWord}**`;
-                if (userState.tempTranscription) {
-                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-                }
-                translationMessage += '\n\n📝 Введите ваш вариант перевода:';
-
-                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-                await bot.sendMessage(chatId, translationMessage, { parse_mode: 'Markdown' });
-            } catch (error) {
-                await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
+            let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
+                `🇬🇧 Слово: **${userState.tempWord}**`;
+            if (userState.tempTranscription) {
+                translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
             }
+            translationMessage += '\n\n📝 Введите ваш вариант перевода:';
+
+            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+            await bot.sendMessage(chatId, translationMessage, { 
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['❌ Отмена']],
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
         }
-        return;
     }
+    return;
+}
 
     // Отмена перевода
     else if (data === 'cancel_translation') {
@@ -2727,6 +2789,7 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
 
