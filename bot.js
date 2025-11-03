@@ -3,6 +3,44 @@ import { GoogleSheetsService } from './services/google-sheets.js';
 import { YandexDictionaryService } from './services/yandex-dictionary-service.js';
 import { CambridgeDictionaryService } from './services/cambridge-dictionary-service.js';
 import { FSRSService } from './services/fsrs-service.js';
+import express from 'express';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Health check endpoint для Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    message: 'Bot is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Корневой endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({
+    service: 'Telegram English Bot',
+    status: 'operational',
+    version: '1.0.0'
+  });
+});
+
+// Запускаем сервер
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check server running on port ${PORT}`);
+});
+
+// Обработка graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  process.exit(0);
+});
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
@@ -2689,6 +2727,7 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
 
