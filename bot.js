@@ -5,16 +5,29 @@ import { CambridgeDictionaryService } from './services/cambridge-dictionary-serv
 import { FSRSService } from './services/fsrs-service.js';
 import express from 'express';
 
+
+// Минимальный Express сервер для Render
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Health check endpoint для Render
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
     message: 'Bot is running',
     timestamp: new Date().toISOString()
   });
+});
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    service: 'Telegram English Bot',
+    status: 'operational',
+    version: '1.0.0'
+  });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check server running on port ${PORT}`);
 });
 
 // Корневой endpoint
@@ -42,8 +55,42 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.BOT_TOKEN, { 
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: {
+      timeout: 10,
+    }
+  }
+});
 
+// Обработчик ошибок polling с интеллектуальным перезапуском
+bot.on('polling_error', (error) => {
+  console.error('❌ Polling error:', error.code, error.message);
+  
+  // Только для определенных ошибок делаем перезапуск
+  const recoverableErrors = ['EFATAL', 'ETELEGRAM', 'ECONNRESET'];
+  if (recoverableErrors.includes(error.code)) {
+    console.log('🔄 Restarting bot polling...');
+    setTimeout(() => {
+      try {
+        bot.stopPolling();
+        setTimeout(() => bot.startPolling(), 1000);
+      } catch (restartError) {
+        console.error('Failed to restart polling:', restartError);
+      }
+    }, 5000);
+  }
+});
+
+bot.on('webhook_error', (error) => {
+  console.error('❌ Webhook error:', error);
+});
+
+bot.on('polling_start', () => {
+  console.log('✅ Bot polling started successfully');
+});
 // Оптимизированные хранилища для экономии памяти
 const userStates = new Map();
 const cache = new Map();
@@ -58,47 +105,51 @@ const REVERSE_TRAINING_STATES = {
 // Ленивая инициализация сервисов
 let sheetsService, yandexService, cambridgeService, fsrsService;
 let servicesInitialized = false;
+let initializationInProgress = false;
 
 async function initializeServices() {
-    if (servicesInitialized) return true;
+  if (servicesInitialized) return true;
+  if (initializationInProgress) {
+    // Ждем завершения текущей инициализации
+    return new Promise(resolve => {
+      const checkInitialized = () => {
+        if (servicesInitialized) resolve(true);
+        else setTimeout(checkInitialized, 100);
+      };
+      checkInitialized();
+    });
+  }
+
+  initializationInProgress = true;
+  
+  try {
+    console.log('🔄 Fast initializing services...');
     
-    try {
-sheetsService = new GoogleSheetsService();
-        yandexService = new YandexDictionaryService(); // Используем new вместо функции
-        cambridgeService = new CambridgeDictionaryService(); // Используем new вместо функции
-        fsrsService = new FSRSService();
-        
-        // Быстрая инициализация Google Sheets
-        await new Promise((resolve) => {
-            const checkInitialized = () => {
-                if (sheetsService.initialized) {
-                    resolve();
-                } else {
-                    setTimeout(checkInitialized, 50);
-                }
-            };
-            checkInitialized();
-        });
-        
-        servicesInitialized = true;
-        return true;
-    } catch (error) {
-        // Минимальные заглушки для работы
-        sheetsService = { 
-            initialized: false,
-            getUserWords: () => [],
-            getWordsForReview: () => [],
-            getReviewWordsCount: () => 0,
-            getNewWordsCount: () => 0,
-            addWordWithMeanings: async () => false,
-            updateWordAfterFSRSReview: async () => false
-        };
-        yandexService = new YandexDictionaryService();
-        cambridgeService = new CambridgeDictionaryService();
-        fsrsService = new FSRSService();
-        servicesInitialized = true;
-        return false;
-    }
+    // Быстрая инициализация без долгих таймаутов
+    sheetsService = new GoogleSheetsService();
+    yandexService = new YandexDictionaryService();
+    cambridgeService = new CambridgeDictionaryService();
+    fsrsService = new FSRSService();
+    
+    // Не ждем полной инициализации Google Sheets - запускаем в фоне
+    setTimeout(() => {
+      if (!sheetsService.initialized) {
+        console.log('⚠️ Google Sheets still initializing in background...');
+      }
+    }, 1000);
+    
+    servicesInitialized = true;
+    console.log('✅ Services initialized (fast mode)');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Service initialization error:', error);
+    // Все равно продолжаем работу
+    servicesInitialized = true;
+    return true;
+  } finally {
+    initializationInProgress = false;
+  }
 }
 
 // Очистка неактивных пользователей каждые 30 минут
@@ -1336,21 +1387,44 @@ function formatTimeDetailed(date) {
 
 // Обработчики команд
 bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Немедленный ответ чтобы пользователь знал что бот "проснулся"
+    await bot.sendChatAction(chatId, 'typing');
+    const welcomeMsg = await bot.sendMessage(chatId, '🔄 Запускаю бота...');
+    
+    // Быстрая инициализация
     await initializeServices();
+    
+    // Обновляем сообщение когда все готово
+    const welcomeMessage = 
+      '📚 Англо-русский словарь\n' +
+      '🔤 С транскрипцией и произношением\n' +
+      '🇬🇧 Британский вариант\n' +
+      '📝 Каждое слово хранится с несколькими значениями\n' +
+      '🔄 **Умное интервальное повторение (FSRS)**\n\n' +
+      '💡 **Как учить слова:**\n' +
+      '1. ➕ Добавить новое слово\n' +
+      '2. 🆕 Изучить новые слова (5 в день)\n' +
+      '3. 📚 Повторить изученные слова\n\n' +
+      'Используйте меню для навигации:';
+    
+    await bot.editMessageText(welcomeMessage, {
+      chat_id: chatId,
+      message_id: welcomeMsg.message_id,
+      parse_mode: 'Markdown',
+      ...getMainMenu()
+    });
+    
+  } catch (error) {
+    console.error('Start command error:', error);
+    // Фолбэк - просто отправляем сообщение без редактирования
     await bot.sendMessage(chatId, 
-        '📚 Англо-русский словарь\n' +
-        '🔤 С транскрипцией и произношением\n' +
-        '🇬🇧 Британский вариант\n' +
-        '📝 Каждое слово хранится с несколькими значениями\n' +
-        '🔄 **Умное интервальное повторение (FSRS)**\n\n' +
-        '💡 **Как учить слова:**\n' +
-        '1. ➕ Добавить новое слово\n' +
-        '2. 🆕 Изучить новые слова (5 в день)\n' +
-        '3. 📚 Повторить изученные слова\n\n' +
-        'Используйте меню для навигации:',
-        getMainMenu()
+      '📚 Англо-русский словарь бот\n\nВыберите действие из меню:', 
+      getMainMenu()
     );
+  }
 });
 
 bot.onText(/\/review/, async (msg) => {
@@ -2789,6 +2863,7 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
 
 
