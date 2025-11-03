@@ -5,10 +5,11 @@ import { CambridgeDictionaryService } from './services/cambridge-dictionary-serv
 import { FSRSService } from './services/fsrs-service.js';
 import express from 'express';
 
-
 // Минимальный Express сервер для Render
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
 
 app.get('/health', (req, res) => {
   res.status(200).json({ 
@@ -18,19 +19,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/', (req, res) => {
-  res.status(200).json({
-    service: 'Telegram English Bot',
-    status: 'operational',
-    version: '1.0.0'
-  });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Health check server running on port ${PORT}`);
-});
-
-// Корневой endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
     service: 'Telegram English Bot',
@@ -91,12 +79,13 @@ bot.on('webhook_error', (error) => {
 bot.on('polling_start', () => {
   console.log('✅ Bot polling started successfully');
 });
+
 // Оптимизированные хранилища для экономии памяти
 const userStates = new Map();
 const cache = new Map();
 const dailyLearnedWords = new Map();
 const learnedWords = new Map();
-const audioCache = new Map(); // Новый кэш для аудио
+const audioCache = new Map();
 const REVERSE_TRAINING_STATES = {
     ACTIVE: 'reverse_training',
     SPELLING: 'reverse_training_spelling'
@@ -264,6 +253,7 @@ async function getLearnedToday(chatId) {
         return 0;
     }
 }
+
 // Клавиатуры
 function getMainMenu() {
     return {
@@ -526,8 +516,7 @@ async function saveWordWithMeanings(chatId, userState, selectedTranslations) {
 }
 
 // Функции для ручного добавления перевода
-async function processCustomTranslation(chatId, userState, translation, example = '') {
-    await processCustomTranslationWithDetails(chatId, userState, translation, '', example);
+async function processCustomTranslationWithDetails(chatId, userState, translation, definition = '', example = '') {
     if (!translation || translation.trim() === '') {
         await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
         return;
@@ -601,7 +590,7 @@ async function startSpellingTraining(chatId, context) {
     await askSpellingQuestion(chatId, word);
 }
 
-async function askTrainingSpellingQuestion(chatId, word) {
+async function askSpellingQuestion(chatId, word) {
     const message = `✍️ **Тренировка правописания**\n\n` +
                    `🇷🇺 Перевод: **${word.meanings[0]?.translation || 'перевод'}**\n\n` +
                    `✏️ Напишите английское слово:`;
@@ -854,7 +843,7 @@ async function processReviewRating(chatId, rating) {
     }
 
     try {
-const cardData = {
+        const cardData = {
             due: word.nextReview ? new Date(word.nextReview) : new Date(),
             stability: word.stability || 0.1,
             difficulty: word.difficulty || 5.0,
@@ -866,10 +855,9 @@ const cardData = {
             last_review: word.lastReview ? new Date(word.lastReview) : new Date()
         };
 
-
-         const fsrsResult = await fsrsService.reviewCard(chatId, word, cardData, rating);
+        const fsrsResult = await fsrsService.reviewCard(chatId, word, cardData, rating);
         
- if (fsrsResult) {
+        if (fsrsResult) {
             // ВАЖНО: Адаптируем параметры FSRS на основе успехов пользователя
             const userWords = await getCachedUserWords(chatId);
             const successRate = fsrsService.calculateUserSuccessRate(userWords);
@@ -900,6 +888,7 @@ const cardData = {
         }
 
     } catch (error) {
+        console.error('Error in processReviewRating:', error);
         userState.reviewWords.splice(userState.currentReviewIndex, 1);
         
         if (userState.reviewWords.length === 0) {
@@ -1004,18 +993,20 @@ async function startNewWordsSession(chatId) {
         }
 
         userStates.set(chatId, {
-    state: 'learning_new_words',
-    newWords: availableNewWords,
-    currentWordIndex: 0,
-    learnedCount: 0,
-    originalWordsCount: availableNewWords.length,
-    lastActivity: Date.now()
-});
+            state: 'learning_new_words',
+            newWords: availableNewWords,
+            currentWordIndex: 0,
+            learnedCount: 0,
+            originalWordsCount: availableNewWords.length,
+            lastActivity: Date.now()
+        });
+        
         preloadAudioForWords(availableNewWords);
 
         await showNextNewWord(chatId);
         
     } catch (error) {
+        console.error('Error in startNewWordsSession:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке новых слов.');
     }
 }
@@ -1090,16 +1081,20 @@ async function showNextNewWord(chatId) {
     
     message += `\n🇷🇺 **Переводы:**\n`;
     
-    word.meanings.forEach((meaning, index) => {
-        message += `\n${index + 1}. ${meaning.translation}`;
-        if (meaning.definition) {
-            message += ` - ${meaning.definition}`;
-        }
-        
-        if (meaning.example && meaning.example.trim() !== '') {
-            message += `\n   📝 *Пример:* ${meaning.example}`;
-        }
-    });
+    if (word.meanings && Array.isArray(word.meanings)) {
+        word.meanings.forEach((meaning, index) => {
+            message += `\n${index + 1}. ${meaning.translation || 'перевод'}`;
+            if (meaning.definition) {
+                message += ` - ${meaning.definition}`;
+            }
+            
+            if (meaning.example && meaning.example.trim() !== '') {
+                message += `\n   📝 *Пример:* ${meaning.example}`;
+            }
+        });
+    } else {
+        message += `\n❌ Переводы не найдены`;
+    }
 
     // Используем кэшированное аудио
     if (word.english) {
@@ -1130,7 +1125,7 @@ async function processNewWordLearning(chatId, action) {
     try {
         if (action === 'learned') {
             const cardData = fsrsService.createNewCard();
-            const fsrsResult = await fsrsService.reviewCard(chatId, word.english, cardData, 'good');
+            const fsrsResult = await fsrsService.reviewCard(chatId, word, cardData, 'good');
             
             if (fsrsResult) {
                 // ✅ ВАЖНО: Для новых слов устанавливаем firstLearnedDate
@@ -1196,6 +1191,7 @@ async function processNewWordLearning(chatId, action) {
         await showNextNewWord(chatId);
 
     } catch (error) {
+        console.error('Error in processNewWordLearning:', error);
         await bot.sendMessage(chatId, 
             '❌ Ошибка при сохранении прогресса.\n' +
             'Попробуйте еще раз.'
@@ -1312,9 +1308,6 @@ async function showUserStats(chatId) {
             message += `✅ Дневной лимит достигнут!\n`;
         }
 
-        // Остальная часть функции статистики...
-        // [сохраняем существующий код]
-
         await bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
             ...getMainMenu()
@@ -1383,6 +1376,13 @@ function formatTimeDetailed(date) {
     const dayOfWeek = daysOfWeek[moscowDate.getDay()];
     
     return `${day}.${month}.${year} ${hours}:${minutes}:${seconds} (${dayOfWeek})`;
+}
+
+// ФУНКЦИЯ: Расчет корреляции между интервалами
+function calculateCorrelation(reverseInterval, mainInterval) {
+    if (mainInterval <= 0) return 1.0;
+    const ratio = reverseInterval / mainInterval;
+    return Math.min(Math.max(ratio, 0.5), 2.0); // Ограничиваем разницу от 0.5x до 2x
 }
 
 // Обработчики команд
@@ -1568,17 +1568,7 @@ bot.on('message', async (msg) => {
             await bot.sendMessage(chatId, '❌ Перевод не может быть пустым. Введите перевод:');
         }
     }
-    else if (userState?.state === 'waiting_custom_example') {
-        if (text === '❌ Отмена') {
-            userStates.delete(chatId);
-            await showMainMenu(chatId, '❌ Добавление перевода отменено.');
-        } else {
-            // Сохраняем пример и завершаем процесс
-            const example = text === '-' ? '' : text.trim();
-            await processCustomTranslationWithDetails(chatId, userState, userState.customTranslation, userState.customDefinition, example);
-        }
-    }
-          else if (userState?.state === 'waiting_custom_definition') {
+    else if (userState?.state === 'waiting_custom_definition') {
         if (text === '❌ Отмена') {
             userStates.delete(chatId);
             await showMainMenu(chatId, '❌ Добавление перевода отменено.');
@@ -1600,6 +1590,16 @@ bot.on('message', async (msg) => {
                     }
                 }
             );
+        }
+    }
+    else if (userState?.state === 'waiting_custom_example') {
+        if (text === '❌ Отмена') {
+            userStates.delete(chatId);
+            await showMainMenu(chatId, '❌ Добавление перевода отменено.');
+        } else {
+            // Сохраняем пример и завершаем процесс
+            const example = text === '-' ? '' : text.trim();
+            await processCustomTranslationWithDetails(chatId, userState, userState.customTranslation, userState.customDefinition, example);
         }
     }
     else if (text === '🔁 Рус→Англ Тренировка') {
@@ -1827,7 +1827,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
     console.log(`📨 Callback received: ${data}`);
 
-    // Обработка аудио через короткий ID - ИСПРАВЛЕНО: заменил else if на if
+    // Обработка аудио через короткий ID
     if (data.startsWith('audio_')) {
         const audioId = data.replace('audio_', '');
         const cachedAudio = audioCache.get(audioId);
@@ -1864,9 +1864,11 @@ bot.on('callback_query', async (callbackQuery) => {
         } else {
             await bot.sendMessage(chatId, '❌ Аудио произношение недоступно для этого слова.');
         }
+        return;
     }
+
     // Обработка деталей перевода
-    else if (data.startsWith('details_')) {
+    if (data.startsWith('details_')) {
         const translationIndex = parseInt(data.replace('details_', ''));
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
             await showTranslationDetails(chatId, translationIndex, userState);
@@ -1875,7 +1877,7 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     // Назад к переводам
-    else if (data === 'back_to_translations') {
+    if (data === 'back_to_translations') {
         if (userState?.state === 'choosing_translation') {
             await backToTranslationSelection(chatId, userState, callbackQuery);
         }
@@ -1883,7 +1885,7 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     // Переключение выбора перевода
-    else if (data.startsWith('toggle_translation_')) {
+    if (data.startsWith('toggle_translation_')) {
         const translationIndex = parseInt(data.replace('toggle_translation_', ''));
         if (userState?.state === 'choosing_translation' && userState.tempTranslations[translationIndex]) {
             try {
@@ -1911,7 +1913,7 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     // Сохранение выбранных переводов
-    else if (data === 'save_selected_translations') {
+    if (data === 'save_selected_translations') {
         if (userState?.state === 'choosing_translation' && userState.selectedTranslationIndices.length > 0) {
             try {
                 const selectedTranslations = userState.selectedTranslationIndices
@@ -1934,38 +1936,38 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     // Пользовательский перевод
-else if (data === 'custom_translation') {
-    if (userState?.state === 'choosing_translation') {
-        try {
-            userStates.set(chatId, {
-                ...userState,
-                state: 'waiting_custom_translation'
-            });
+    if (data === 'custom_translation') {
+        if (userState?.state === 'choosing_translation') {
+            try {
+                userStates.set(chatId, {
+                    ...userState,
+                    state: 'waiting_custom_translation'
+                });
 
-            let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
-                `🇬🇧 Слово: **${userState.tempWord}**`;
-            if (userState.tempTranscription) {
-                translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
-            }
-            translationMessage += '\n\n📝 Введите ваш вариант перевода:';
-
-            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-            await bot.sendMessage(chatId, translationMessage, { 
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    keyboard: [['❌ Отмена']],
-                    resize_keyboard: true
+                let translationMessage = '✏️ **Добавьте свой перевод**\n\n' +
+                    `🇬🇧 Слово: **${userState.tempWord}**`;
+                if (userState.tempTranscription) {
+                    translationMessage += `\n🔤 Транскрипция: ${userState.tempTranscription}`;
                 }
-            });
-        } catch (error) {
-            await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
+                translationMessage += '\n\n📝 Введите ваш вариант перевода:';
+
+                await bot.deleteMessage(chatId, callbackQuery.message.message_id);
+                await bot.sendMessage(chatId, translationMessage, { 
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['❌ Отмена']],
+                        resize_keyboard: true
+                    }
+                });
+            } catch (error) {
+                await bot.sendMessage(chatId, '❌ Ошибка при обработке запроса');
+            }
         }
+        return;
     }
-    return;
-}
 
     // Отмена перевода
-    else if (data === 'cancel_translation') {
+    if (data === 'cancel_translation') {
         if (userState) {
             try {
                 userStates.set(chatId, {
@@ -2000,20 +2002,20 @@ else if (data === 'custom_translation') {
     }
 
     // Показать ответ в режиме повторения
-    else if (data === 'show_answer') {
+    if (data === 'show_answer') {
         await showReviewAnswer(chatId);
         return;
     }
 
     // Оценка в режиме повторения
-    else if (data.startsWith('review_')) {
+    if (data.startsWith('review_')) {
         const rating = data.replace('review_', '');
         await processReviewRating(chatId, rating);
         return;
     }
 
     // Завершить повторение
-    else if (data === 'end_review') {
+    if (data === 'end_review') {
         if (userState?.state === 'review_session') {
             await completeReviewSession(chatId, userState);
         }
@@ -2021,18 +2023,18 @@ else if (data === 'custom_translation') {
     }
 
     // Изучение новых слов
-    else if (data === 'learned_word') {
+    if (data === 'learned_word') {
         await processNewWordLearning(chatId, 'learned');
         return;
     }
 
-    else if (data === 'need_repeat_word') {
+    if (data === 'need_repeat_word') {
         await processNewWordLearning(chatId, 'repeat');
         return;
     }
 
     // Тренировка правописания
-    else if (data === 'spelling_train') {
+    if (data === 'spelling_train') {
         const userState = userStates.get(chatId);
         
         if (userState?.state === 'review_session') {
@@ -2051,7 +2053,7 @@ else if (data === 'custom_translation') {
     }
 
     // Выбор перевода
-    else if (data === 'enter_translation') {
+    if (data === 'enter_translation') {
         console.log('🔍 Processing enter_translation callback');
         
         if (userState?.state === 'showing_transcription') {
@@ -2139,17 +2141,6 @@ else if (data === 'custom_translation') {
                 '❌ Неверное состояние. Начните добавление слова заново.'
             );
             userStates.delete(chatId);
-        }
-    }
-
-    // Обработка тренировки
-    else if (data.startsWith('training_')) {
-        await handleTrainingCallback(chatId, data);
-        
-        try {
-            await bot.deleteMessage(chatId, callbackQuery.message.message_id);
-        } catch (e) {
-            // Игнорируем ошибки удаления
         }
         return;
     }
@@ -2579,7 +2570,6 @@ async function completeTraining(chatId, state) {
     });
 }
 
-
 async function startTrainingSpelling(chatId) {
     const state = userStates.get(chatId);
     if (!state || state.state !== REVERSE_TRAINING_STATES.ACTIVE) return;
@@ -2601,6 +2591,20 @@ async function startTrainingSpelling(chatId) {
     });
 
     await askTrainingSpellingQuestion(chatId, meaning.translation);
+}
+
+async function askTrainingSpellingQuestion(chatId, translation) {
+    const message = `✍️ **Тренировка правописания**\n\n` +
+                   `🇷🇺 Перевод: **${translation}**\n\n` +
+                   `✏️ Напишите английское слово:`;
+
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            keyboard: [['🔙 Назад']],
+            resize_keyboard: true
+        }
+    });
 }
 
 async function checkTrainingSpellingAnswer(chatId, userAnswer) {
@@ -2658,7 +2662,7 @@ async function getCachedAudio(englishWord) {
         const cached = audioCache.get(cacheKey);
         // Проверяем, не устарел ли кэш (1 день)
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
-            return cached.audioUrl;
+            return cached.url;
         }
     }
     
@@ -2678,7 +2682,7 @@ async function getCachedAudio(englishWord) {
         // Сохраняем в кэш
         if (audioUrl) {
             audioCache.set(cacheKey, {
-                audioUrl: audioUrl,
+                url: audioUrl,
                 timestamp: Date.now()
             });
         }
@@ -2796,6 +2800,7 @@ async function saveWordWithManualInput(chatId, userState, example = '') {
         }
 
     } catch (error) {
+        console.error('Error in saveWordWithManualInput:', error);
         await showMainMenu(chatId, 
             '❌ Ошибка при сохранении слова.\n\n' +
             'Попробуйте еще раз.'
@@ -2846,13 +2851,6 @@ async function createReverseCard(chatId, englishWord, mainCardData) {
     };
 }
 
-// ✅ Вспомогательная функция для расчета корреляции
-function calculateCorrelation(reverseInterval, mainInterval) {
-    if (mainInterval <= 0) return 1.0;
-    const ratio = reverseInterval / mainInterval;
-    return Math.min(Math.max(ratio, 0.5), 2.0); // Ограничиваем разницу от 0.5x до 2x
-}
-
 // Запуск периодических задач
 setInterval(() => {
     resetDailyLimit();
@@ -2863,14 +2861,3 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
-
-
-
-
-
-
-
-
-
-
-
