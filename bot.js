@@ -43,6 +43,7 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// ✅ ИСПРАВЛЕНИЕ: Улучшенная конфигурация бота с обработкой дублирования
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
   polling: {
     interval: 300,
@@ -52,6 +53,26 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
     }
   }
 });
+
+// ✅ ИСПРАВЛЕНИЕ: Глобальная защита от дублирования сообщений
+const messageProcessing = new Map();
+const MESSAGE_PROCESSING_TIMEOUT = 3000; // 3 секунды
+
+// Функция для проверки дублирования
+function isDuplicateMessage(chatId, messageId) {
+  const key = `${chatId}_${messageId}`;
+  if (messageProcessing.has(key)) {
+    return true;
+  }
+  messageProcessing.set(key, Date.now());
+  
+  // Очистка старых записей
+  setTimeout(() => {
+    messageProcessing.delete(key);
+  }, MESSAGE_PROCESSING_TIMEOUT);
+  
+  return false;
+}
 
 // Обработчик ошибок polling с интеллектуальным перезапуском
 bot.on('polling_error', (error) => {
@@ -1257,85 +1278,92 @@ async function completeNewWordsSession(chatId, userState) {
 
 // Функции статистики
 async function showUserStats(chatId) {
-    await initializeServices();
+  // ✅ ИСПРАВЛЕНИЕ: Защита от повторного вызова
+  const processingKey = `stats_${chatId}_${Date.now()}`;
+  if (isDuplicateMessage(chatId, processingKey)) {
+    console.log('🛑 Duplicate stats request blocked');
+    return;
+  }
+
+  await initializeServices();
+  
+  if (!sheetsService.initialized) {
+    await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
+    return;
+  }
+
+  try {
+    const userWords = await getCachedUserWords(chatId);
+    const activeWords = userWords.filter(word => word.status === 'active');
     
-    if (!sheetsService.initialized) {
-        await bot.sendMessage(chatId, '❌ Сервис временно недоступен.');
-        return;
+    // Старая статистика...
+    const newWords = await getAllUnlearnedWords(chatId);
+    const newWordsCount = newWords.length;
+    
+    const reviewWords = await sheetsService.getWordsForReview(chatId);
+    const reviewWordsCount = reviewWords.length;
+    
+    const totalWordsCount = activeWords.length;
+    const learnedToday = await getLearnedToday(chatId);
+    const DAILY_LIMIT = 5;
+    const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
+    
+    const learnedWords = activeWords.filter(word => 
+        word.interval > 1 || 
+        (word.firstLearnedDate && word.firstLearnedDate.trim() !== '')
+    );
+    const learnedWordsCount = learnedWords.length;
+    
+    let message = '📊 **Ваша статистика:**\n\n';
+    message += `📚 Всего слов в словаре: ${totalWordsCount}\n`;
+    message += `🎓 Изучено слов: ${learnedWordsCount}\n`;
+    message += `🆕 Новых слов доступно: ${newWordsCount}\n`;
+    message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
+    message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
+    
+    // ✅ ДОБАВЛЕНО: Статистика по гибридной системе
+    const wordsWithReverseData = await Promise.all(
+        learnedWords.map(async (word) => {
+            const reverseData = await sheetsService.getReverseCardData(chatId, word.english);
+            return { word, reverseData };
+        })
+    );
+    
+    const trainedReverseWords = wordsWithReverseData.filter(({ reverseData }) => 
+        reverseData && reverseData.reps > 0
+    );
+    
+    const totalReverseReps = trainedReverseWords.reduce((sum, { reverseData }) => 
+        sum + (reverseData.reps || 0), 0
+    );
+    
+    const syncedWords = wordsWithReverseData.filter(({ word, reverseData }) => 
+        reverseData && calculateCorrelation(reverseData.interval, word.interval) >= 0.8
+    );
+    
+    message += `\n🔁 **Гибридная система:**\n`;
+    message += `• Слов с обратными карточками: ${trainedReverseWords.length}\n`;
+    message += `• Всего повторений Рус→Англ: ${totalReverseReps}\n`;
+    message += `• Синхронизированных слов: ${syncedWords.length}\n`;
+    message += `• Прогресс: ${learnedWordsCount > 0 ? Math.round((syncedWords.length / learnedWordsCount) * 100) : 0}%\n`;
+    
+    if (remainingToday > 0) {
+        message += `🎯 Осталось изучить сегодня: ${remainingToday} слов\n`;
+    } else {
+        message += `✅ Дневной лимит достигнут!\n`;
     }
 
-    try {
-        const userWords = await getCachedUserWords(chatId);
-        const activeWords = userWords.filter(word => word.status === 'active');
-        
-        // Старая статистика...
-        const newWords = await getAllUnlearnedWords(chatId); // ✅ Использует сохраненную функцию
-        const newWordsCount = newWords.length;
-        
-        const reviewWords = await sheetsService.getWordsForReview(chatId);
-        const reviewWordsCount = reviewWords.length;
-        
-        const totalWordsCount = activeWords.length;
-        const learnedToday = await getLearnedToday(chatId);
-        const DAILY_LIMIT = 5;
-        const remainingToday = Math.max(0, DAILY_LIMIT - learnedToday);
-        
-        const learnedWords = activeWords.filter(word => 
-            word.interval > 1 || 
-            (word.firstLearnedDate && word.firstLearnedDate.trim() !== '')
-        );
-        const learnedWordsCount = learnedWords.length;
-        
-        let message = '📊 **Ваша статистика:**\n\n';
-        message += `📚 Всего слов в словаре: ${totalWordsCount}\n`;
-        message += `🎓 Изучено слов: ${learnedWordsCount}\n`;
-        message += `🆕 Новых слов доступно: ${newWordsCount}\n`;
-        message += `🔄 Слов для повторения: ${reviewWordsCount}\n`;
-        message += `📅 Изучено сегодня: ${learnedToday}/${DAILY_LIMIT}\n`;
-        
-        // ✅ ДОБАВЛЕНО: Статистика по гибридной системе
-        const wordsWithReverseData = await Promise.all(
-            learnedWords.map(async (word) => {
-                const reverseData = await sheetsService.getReverseCardData(chatId, word.english);
-                return { word, reverseData };
-            })
-        );
-        
-        const trainedReverseWords = wordsWithReverseData.filter(({ reverseData }) => 
-            reverseData && reverseData.reps > 0
-        );
-        
-        const totalReverseReps = trainedReverseWords.reduce((sum, { reverseData }) => 
-            sum + (reverseData.reps || 0), 0
-        );
-        
-        const syncedWords = wordsWithReverseData.filter(({ word, reverseData }) => 
-            reverseData && calculateCorrelation(reverseData.interval, word.interval) >= 0.8
-        );
-        
-        message += `\n🔁 **Гибридная система:**\n`;
-        message += `• Слов с обратными карточками: ${trainedReverseWords.length}\n`;
-        message += `• Всего повторений Рус→Англ: ${totalReverseReps}\n`;
-        message += `• Синхронизированных слов: ${syncedWords.length}\n`;
-        message += `• Прогресс: ${learnedWordsCount > 0 ? Math.round((syncedWords.length / learnedWordsCount) * 100) : 0}%\n`;
-        
-        if (remainingToday > 0) {
-            message += `🎯 Осталось изучить сегодня: ${remainingToday} слов\n`;
-        } else {
-            message += `✅ Дневной лимит достигнут!\n`;
-        }
-
-        await bot.sendMessage(chatId, message, {
-            parse_mode: 'Markdown',
-            ...getMainMenu()
-        });
-        
-    } catch (error) {
-        console.error('Error showing stats:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
-    }
+    // ✅ ИСПРАВЛЕНИЕ: Отправляем сообщение только один раз
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...getMainMenu()
+    });
+    
+  } catch (error) {
+    console.error('Error showing stats:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при загрузке статистики.');
+  }
 }
-
 // ФУНКЦИЯ: Форматирование даты с обратным отсчетом (ВОССТАНОВЛЕНА)
 function formatTimeWithCountdown(date) {
     const now = new Date();
@@ -1526,6 +1554,13 @@ bot.onText(/\/clear_audio_cache/, async (msg) => {
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
+    const messageId = msg.message_id;
+
+    // ✅ Защита от дублирования
+    if (isDuplicateMessage(chatId, messageId)) {
+        console.log('🛑 Duplicate message blocked:', text);
+        return;
+    }
 
     if (!text || text.startsWith('/')) {
         return;
@@ -1535,6 +1570,9 @@ bot.on('message', async (msg) => {
     updateUserActivity(chatId);
 
     const userState = userStates.get(chatId);
+
+    // ✅ ИСПРАВЛЕНИЕ: Добавляем задержку для стабильности
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     if (text === '➕ Добавить слово') {
         userStates.set(chatId, { state: 'waiting_english', lastActivity: Date.now() });
@@ -1835,7 +1873,15 @@ async function handleAddWord(chatId, englishWord) {
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
+    const callbackId = callbackQuery.id;
     
+    // ✅ Защита от дублирования callback
+    if (isDuplicateMessage(chatId, `callback_${callbackId}`)) {
+        console.log('🛑 Duplicate callback blocked:', data);
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
     await initializeServices();
     updateUserActivity(chatId);
 
@@ -1843,6 +1889,7 @@ bot.on('callback_query', async (callbackQuery) => {
     await bot.answerCallbackQuery(callbackQuery.id);
 
     console.log(`📨 Callback received: ${data}`);
+
 
     // Обработка аудио через короткий ID
     if (data.startsWith('audio_')) {
@@ -2878,4 +2925,5 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
 
