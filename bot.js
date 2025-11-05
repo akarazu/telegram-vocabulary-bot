@@ -979,7 +979,8 @@ async function startNewWordsSession(chatId) {
             return;
         }
 
-        const availableNewWords = await getAllUnlearnedWords(chatId);
+        // ✅ ИЗМЕНЕНИЕ: Получаем 5 случайных не изученных слов
+        const availableNewWords = await getRandomUnlearnedWords(chatId, 5);
         
         if (availableNewWords.length === 0) {
             await bot.sendMessage(chatId, 
@@ -1009,6 +1010,25 @@ async function startNewWordsSession(chatId) {
         console.error('Error in startNewWordsSession:', error);
         await bot.sendMessage(chatId, '❌ Ошибка при загрузке новых слов.');
     }
+}
+
+// Функция для перемешивания массива (Fisher-Yates shuffle)
+function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
+// ✅ НОВАЯ ФУНКЦИЯ: Получение случайных не изученных слов
+async function getRandomUnlearnedWords(chatId, count = 5) {
+    const unlearnedWords = await getAllUnlearnedWords(chatId);
+    
+    // Перемешиваем массив и берем нужное количество слов
+    const shuffledWords = shuffleArray(unlearnedWords);
+    return shuffledWords.slice(0, count);
 }
 
 async function getAllUnlearnedWords(chatId) {
@@ -1249,10 +1269,7 @@ async function showUserStats(chatId) {
         const activeWords = userWords.filter(word => word.status === 'active');
         
         // Старая статистика...
-        const newWords = activeWords.filter(word => 
-            word.interval === 1 && 
-            (!word.firstLearnedDate || word.firstLearnedDate.trim() === '')
-        );
+        const newWords = await getAllUnlearnedWords(chatId); // ✅ Использует сохраненную функцию
         const newWordsCount = newWords.length;
         
         const reviewWords = await sheetsService.getWordsForReview(chatId);
@@ -2861,3 +2878,4 @@ initializeServices().then(() => {
 }).catch(error => {
     console.error('❌ Failed to start bot:', error);
 });
+
